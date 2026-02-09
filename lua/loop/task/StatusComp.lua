@@ -21,6 +21,8 @@ vim.api.nvim_set_hl(0, _highlights.failure, { link = "ErrorMsg" })
 
 local _line_id = 0
 
+---@alias loop.comp.StatusComp.Status "waiting"|"running"|"success"|"failure"|nil
+
 ---@param id any
 ---@param data table
 ---@return loop.comp.ItemList.Chunk[]
@@ -34,30 +36,34 @@ local function _item_formatter(id, data)
         return chunks
     end
 
-    local hl = _highlights.pending
-    local icon = symbols.waiting
+    local hl = nil
+    local icon = nil
 
-    if data.event == "start" then
+    ---@type loop.comp.StatusComp.Status
+    local status = data.status
+
+    if status == "running" then
         icon = symbols.running
         hl = _highlights.running
-    elseif data.event == "stop" then
-        if data.success then
-            icon = symbols.success
-            hl = _highlights.success
-        else
-            icon = symbols.failure
-            hl = _highlights.failure
-        end
+    elseif status == "success" then
+        icon = symbols.success
+        hl = _highlights.success
+    elseif status == "waiting" then
+        icon = symbols.waiting
+        hl = _highlights.pending
+    elseif status == "failure" then
+        icon = symbols.failure
+        hl = _highlights.failure
     end
 
     -- icon prefix
-    table.insert(chunks, { "[" .. icon .. "]", hl })
+    table.insert(chunks, { "[" .. (icon or "?") .. "]", hl })
 
     -- main name
     table.insert(chunks, { data.name })
 
     -- optional error message
-    if data.error_msg then
+    if type(data.error_msg) == "string" and #data.error_msg > 0 then
         table.insert(chunks, { " - " .. data.error_msg, _highlights.failure })
     end
 
@@ -78,31 +84,33 @@ function TasksStatusComp:init()
 end
 
 ---@param name string
+---@param status loop.comp.StatusComp.Status
 ---@return number
-function TasksStatusComp:add_task(name)
+function TasksStatusComp:add_task(name, status)
     _line_id = _line_id + 1
     local id = _line_id
     ---@type loop.comp.ItemList.Item
     local item = {
-        id = name,
+        id = _line_id,
         data = {
-            name = name
+            name = name,
+            status = status
         }
     }
-    self:upsert_item(item)
+    self:upsert_item(item, {
+        index = 1
+    })
     return id
 end
 
----@param name string
----@param event "start"|"stop"
----@param success boolean
----@param reason string?
-function TasksStatusComp:set_task_status(name, event, success, reason)
-    local item = self:get_item(name)
+---@param id number
+---@param status loop.comp.StatusComp.Status
+---@param msg string?
+function TasksStatusComp:set_task_status(id, status, msg)
+    local item = self:get_item(id)
     if item then
-        item.data.event = event
-        item.data.success = success
-        item.data.error_msg = (not success) and reason or nil
+        item.data.status = status
+        item.data.error_msg = msg
         self:refresh_content()
     end
 end

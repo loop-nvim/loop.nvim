@@ -17,7 +17,6 @@ local M = {}
 ---@class loop.TaskScheduler.PlanData
 ---@field base_scheduler loop.tools.Scheduler
 ---@field running_tasks loop.TaskScheduler.PlanTasks
----@field task_name_to_dependents table<string, table<string,boolean>>
 
 ---@type table<number, loop.TaskScheduler.PlanData>
 local _plans = {}
@@ -41,21 +40,6 @@ local function _get_failure_message(trigger, param)
     else
         return "Task failed (" .. tostring(param) .. ")"
     end
-end
-
----@param tasks loop.Task[]
----@return table<string, table<string,boolean>> task_name_to_dependents
-local function _build_task_dependents(tasks)
-    local dependents_map = {}
-    for _, task in ipairs(tasks) do
-        for _, dep_name in ipairs(task.depends_on or {}) do
-            if dep_name ~= task.name then
-                dependents_map[dep_name] = dependents_map[dep_name] or {}
-                dependents_map[dep_name][task.name] = true
-            end
-        end
-    end
-    return dependents_map
 end
 
 ---@param tasks loop.Task[]
@@ -175,11 +159,8 @@ local function _start_plan_task(plan_id, task, start_task, on_exit)
             if pt.task.stop_on_dependency_change
                 and pt.control ~= control
                 and pt.task.name ~= task.name
-            then
-                local dependants = plan_data.task_name_to_dependents[task.name]
-                if dependants and dependants[pt.task.name] then
-                    table.insert(tasks_to_wait, pt)
-                end
+                and vim.tbl_contains(pt.task.depends_on, task.name) then
+                table.insert(tasks_to_wait, pt)
             end
         end
     end
@@ -224,8 +205,6 @@ function M.run_plan(tasks, root, start_task, on_task_event, on_exit)
     _last_plan_id = _last_plan_id + 1
     local plan_id = _last_plan_id
 
-    local task_name_to_dependents = _build_task_dependents(tasks)
-
     ---@type loop.scheduler.StartNodeFn
     local start_node = function(id, on_node_exit)
         local task = name_to_task[id] --[[@as loop.Task]]
@@ -237,7 +216,6 @@ function M.run_plan(tasks, root, start_task, on_task_event, on_exit)
     _plans[plan_id] = {
         base_scheduler = scheduler,
         running_tasks = {},
-        task_name_to_dependents = task_name_to_dependents
     }
 
     ---@type loop.scheduler.NodeEventFn

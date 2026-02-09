@@ -137,7 +137,8 @@ function ItemList:set_items(items)
 end
 
 ---@param item loop.comp.ItemList.Item
-function ItemList:upsert_item(item)
+---@param opts {index:number}|nil
+function ItemList:upsert_item(item, opts)
     assert(item and item.id and item.data)
 
     local idx = self._index[item.id]
@@ -146,9 +147,18 @@ function ItemList:upsert_item(item)
         self._items[idx] = item
     else
         -- Insert new item
-        idx = #self._items + 1
-        self._items[idx] = item
-        self._index[item.id] = idx
+        if opts and opts.index and opts.index >= 1 and opts.index <= #self._items + 1 then
+            table.insert(self._items, opts.index, item)
+            -- Rebuild _index after insertion
+            for i, it in ipairs(self._items) do
+                self._index[it.id] = i
+            end
+        else
+            -- Append to the end
+            idx = #self._items + 1
+            self._items[idx] = item
+            self._index[item.id] = idx
+        end
     end
 
     -- If this item is the current one, keep reference stable
@@ -156,7 +166,6 @@ function ItemList:upsert_item(item)
         self._current_item = item
     end
 
-    -- Schedule a render (throttled)
     self:_request_render()
 end
 

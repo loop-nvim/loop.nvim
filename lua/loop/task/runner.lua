@@ -15,9 +15,10 @@ local _workspace_info
 ---@type loop.PageManagerFactory?
 local _page_manager_fact
 
----@
 ---@type loop.task.TasksStatusComp?,loop.PageController?,loop.PageGroup?
 local _status_comp, _status_page, _status_pagegroup
+
+local _last_run_id   = 0
 
 ---@param task_name string
 ---@param name_to_task table<string, loop.Task>
@@ -78,7 +79,12 @@ local function _generate_task_plan(tasks, root)
     local tree, err = _build_task_tree(root, name_to_task, visiting, visited)
     if err then return nil, nil, err end
 
-    local used_tasks = vim.tbl_map(function(name) return name_to_task[name] end, vim.tbl_keys(visited))
+    ---@type loop.Task[]
+    local used_tasks = {}
+    for name, _ in pairs(visited) do
+        table.insert(used_tasks, name_to_task[name])
+    end
+
     return tree, used_tasks, nil
 end
 
@@ -108,11 +114,11 @@ local function _start_task(task, on_exit)
     assert(_page_manager_fact)
 
     local pm = _page_manager_fact()
-    
+
     ---@type loop.TaskExitHandler
-    local on_task_exit = function (ok, reason)
+    local on_task_exit = function(ok, reason)
         -- TODO: add delay and store old pages in files for history inspection
-        vim.defer_fn(function ()
+        vim.defer_fn(function()
             pm.delete_all_groups(true)
         end, 3000)
         on_exit(ok, reason)
@@ -187,32 +193,45 @@ function M.run_task(all_tasks, root_name)
     -- Log task start
     logs.user_log("Task started: " .. root_name, "task")
     local symbols = config.current.window.symbols
-    _status_page.set_ui_flags(symbols.waiting)
-
-    _status_comp:add_task(root_name)
-    local function report_failure(msg)
-        logs.user_log(msg, "task")
-        _status_page.set_ui_flags(symbols.failure)
-        _status_comp:set_task_status(root_name, "stop", false, msg)
-    end
+    --_status_page.set_ui_flags(symbols.waiting)
 
     if #all_tasks == 0 then
+        vim.notify("No tasks found")
         logs.user_log("No tasks found")
         return
     end
 
     local node_tree, used_tasks, plan_error_msg = _generate_task_plan(all_tasks, root_name)
     if not node_tree or not used_tasks then
-        report_failure(plan_error_msg or "Failed to build task plan")
+        logs.user_log(plan_error_msg or "Failed to build task plan", "task")
+        vim.notify("Failed to start task, use ':Loop log' for details")
         return
     end
 
     logs.user_log("Scheduling tasks:\n" .. _print_task_tree(node_tree))
 
+    _last_run_id = _last_run_id + 1
+    local run_id = _last_run_id
+
+    local run_status_items = {}
     for _, task in ipairs(used_tasks) do
-        if task.name ~= root_name then
-            _status_comp:add_task(task.name)
-        end
+        run_status_items[task.name] = _status_comp:add_task(task.name, "waiting")
+    end
+
+    local function remove_status_items()
+        vim.defer_fn(function()
+            for _, id in pairs(run_status_items) do
+                _status_comp:remove_item(id)
+            end
+        end, 300 * 1000)
+    end
+
+    ---@param task_name string
+    ---@param status loop.comp.StatusComp.Status
+    ---@param msg string?
+    local function report_status(task_name, status, msg)
+        if msg then logs.user_log(("%s: %s"):format(task_name, msg), "task") end
+        _status_comp:set_task_status(run_status_items[task_name], status, msg)
     end
 
     local vars, _ = _load_variables(config_dir)
@@ -228,10 +247,12 @@ function M.run_task(all_tasks, root_name)
     resolver.resolve_macros(used_tasks, task_ctx, function(resolve_ok, resolved_tasks, resolve_error)
         if not resolve_ok or not resolved_tasks then
             local err_msg = resolve_error or "Failed to resolve macros in tasks"
-            report_failure(err_msg)
+            for _, task in ipairs(used_tasks) do
+                report_status(task.name, "failure", err_msg)
+            end
+            remove_status_items()
             return
         end
-
         -- Check if any task in the chain requires saving buffers
         local needs_save = false
         for _, task in ipairs(resolved_tasks) do
@@ -240,7 +261,6 @@ function M.run_task(all_tasks, root_name)
                 break
             end
         end
-
         -- Save workspace buffers if any task requires it
         if needs_save then
             local workspace = require("loop.workspace")
@@ -251,27 +271,26 @@ function M.run_task(all_tasks, root_name)
                     "save")
             end
         end
-
+        --_status_page.set_ui_flags(config.current.window.symbols.running)
         task_scheduler.run_plan(
             resolved_tasks,
             root_name,
             function(task, on_exit)
-                _status_page.set_ui_flags(config.current.window.symbols.running)
+                --_status_page.set_ui_flags(config.current.window.symbols.running)
                 return _start_task(task, on_exit)
             end,
             function(name, event, success, reason) -- on task event
                 logs.user_log(("%s: %s"):format(name, reason ~= "" and reason or event), "task")
-                _status_comp:set_task_status(name, event, success, reason)
+                local status = (event == "start") and "running" or (success and "success" or "failure")
+                report_status(name, status, reason)
             end,
             function(success, reason) -- on exit
-                _status_page.set_ui_flags(success and symbols.success or symbols.failure)
-                -- Log task completion
-                if success then
-                    logs.user_log("Task completed: " .. root_name, "task")
-                else
-                    local error_msg = reason or "Unknown error"
-                    logs.user_log("Task failed: " .. root_name .. " - " .. error_msg, "task")
-                end
+                remove_status_items()
+                --local status = success and "success" or "failure"
+                --local error_msg = reason or "Unknown error"
+                --for _, task in ipairs(used_tasks) do
+                --    report_status(task.name, status, error_msg)
+                --end
             end
         )
     end)

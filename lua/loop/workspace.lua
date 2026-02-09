@@ -478,6 +478,7 @@ function M.task_command(command, arg1, arg2)
         window.show_window()
         runner.load_and_run_task("task", arg1)
     elseif command == "repeat" then
+        window.show_window()
         runner.load_and_run_task("repeat")
     elseif command == "configure" then
         taskmgr.configure_tasks(config_dir)
