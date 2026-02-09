@@ -5,7 +5,7 @@ local task_scheduler = require("loop.task.taskscheduler")
 describe("loop.task.taskscheduler", function()
     -- Helpers to create mock tasks
     ---@param order "parallel"|"sequence"|nil
-    ---@param concurrency "restart"|"refuse"|"parallel"|nil
+    ---@param concurrency "restart"|"refuse"|"parallel"|"wait"|nil
     local function mock_task(name, deps, order, concurrency)
         ---@type loop.Task
         return {

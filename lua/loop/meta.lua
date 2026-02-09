@@ -12,7 +12,7 @@ error('Cannot require a meta file')
 ---@field depends_on string[]? # optional list of dependent task names
 ---@field depends_order "sequence"|"parallel"|nil # default is sequence
 ---@field save_buffers boolean? # if true, ensures workspace buffers are saved before this task starts
----@field concurrency "restart"|"refuse"|"parallel"|nil
+---@field concurrency "restart"|"refuse"|"parallel"|"wait"|nil
 ---@field stop_dependents boolean?
 
 ---@class loop.taskTemplate

@@ -252,7 +252,7 @@ function M.run_task(all_tasks, root_name)
             end
         end
 
-        task_scheduler.start(
+        task_scheduler.run_plan(
             resolved_tasks,
             root_name,
             function(task, on_exit)

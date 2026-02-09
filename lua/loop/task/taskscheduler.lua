@@ -122,12 +122,6 @@ local function _start_plan_task(plan_id, task, start_task, on_exit)
 
     local start_and_attach_control = function()
         if not is_terminated then
-            -- extra assersion to detect bugs
-            for _, plan in pairs(_plans) do
-                if plan ~= plan_data then
-                    assert(not plan.running_tasks[task.name])
-                end
-            end
             -- run the task now
             sub_control, sub_err = start_task(task, finalize_and_wake)
         end
@@ -140,39 +134,35 @@ local function _start_plan_task(plan_id, task, start_task, on_exit)
     -- Register the control early so it can be waited on by others
     plan_data.running_tasks[task.name] = { control = control, waiters = {} }
 
+    ---@type loop.TaskScheduler.PlanTask[]
+    local tasks_to_wait = {}
     if task.concurrency ~= "parallel" then
-        ---@type loop.TaskScheduler.PlanTask[]
-        local tasks_to_stop = {}
         for _, plan in pairs(_plans) do
             ---@type loop.TaskScheduler.PlanTask
             local pt = plan.running_tasks[task.name]
             -- Don't terminate our own placeholder
             if pt and pt.control ~= control then
-                table.insert(tasks_to_stop, pt)
+                table.insert(tasks_to_wait, pt)
             end
-        end
-
-        if #tasks_to_stop > 0 then
-            local nb_running = #tasks_to_stop
-            local on_task_ended = function()
-                nb_running = nb_running - 1
-                if nb_running == 0 then
-                    start_and_attach_control()
-                end
-            end
-            for _, pt in ipairs(tasks_to_stop) do
-                table.insert(pt.waiters, on_task_ended)
-                pt.control.terminate()
-            end
-            -- Important: Return the control table so the scheduler has a handle
-            return control
         end
     end
 
-    sub_control, sub_err = start_task(task, finalize_and_wake)
-    if not sub_control then
-        plan_data.running_tasks[task.name] = nil -- Clean up on failure
-        return nil, sub_err
+    if #tasks_to_wait > 0 then
+        local nb_running = #tasks_to_wait
+        local on_task_ended = function()
+            nb_running = nb_running - 1
+            if nb_running == 0 then
+                start_and_attach_control()
+            end
+        end
+        for _, pt in ipairs(tasks_to_wait) do
+            table.insert(pt.waiters, on_task_ended)
+            if task.concurrency ~= "wait" then
+                pt.control.terminate()
+            end
+        end
+    else
+        start_and_attach_control()
     end
 
     return control
@@ -183,7 +173,7 @@ end
 ---@param start_task loop.TaskScheduler.StartTaskFn
 ---@param on_task_event loop.TaskScheduler.TaskEventFn
 ---@param on_exit? fun(success:boolean, reason?:string)
-function M.start(tasks, root, start_task, on_task_event, on_exit)
+function M.run_plan(tasks, root, start_task, on_task_event, on_exit)
     local call_on_exit = function(success, reason)
         if on_exit then on_exit(success, reason) end
     end
