@@ -5,15 +5,15 @@ local task_scheduler = require("loop.task.taskscheduler")
 describe("loop.task.taskscheduler", function()
     -- Helpers to create mock tasks
     ---@param order "parallel"|"sequence"|nil
-    ---@param concurrency "restart"|"refuse"|"parallel"|"wait"|nil
-    local function mock_task(name, deps, order, concurrency)
+    ---@param if_running "restart"|"refuse"|"parallel"|"wait"|nil
+    local function mock_task(name, deps, order, if_running)
         ---@type loop.Task
         return {
             name = name,
             type = "none",
             depends_on = deps or {},
             depends_order = order or "sequence",
-            concurrency = concurrency,
+            if_running = if_running,
         }
     end
 
@@ -30,7 +30,7 @@ describe("loop.task.taskscheduler", function()
         local event_called = false
         local exit_called = false
 
-        task_scheduler.start(
+        task_scheduler.run_plan(
             tasks,
             "root",
             sync_start_task(true),
@@ -51,7 +51,7 @@ describe("loop.task.taskscheduler", function()
         local tasks = { mock_task("not_root") }
         local exit_called = false
 
-        task_scheduler.start(
+        task_scheduler.run_plan(
             tasks,
             "root",
             sync_start_task(true),
@@ -72,7 +72,7 @@ describe("loop.task.taskscheduler", function()
 
         -- Start first instance (will stay running)
         local finish_first = false
-        task_scheduler.start(
+        task_scheduler.run_plan(
             { long_task },
             "busy",
             function(_, on_exit)
@@ -88,7 +88,7 @@ describe("loop.task.taskscheduler", function()
         )
 
         -- Try to start second instance
-        task_scheduler.start(
+        task_scheduler.run_plan(
             { long_task },
             "busy",
             sync_start_task(true),
@@ -111,7 +111,7 @@ describe("loop.task.taskscheduler", function()
         local log = {}
 
         -- Start first instance
-        task_scheduler.start(
+        task_scheduler.run_plan(
             { restart_task },
             "reboot",
             function(_, on_exit)
@@ -132,7 +132,7 @@ describe("loop.task.taskscheduler", function()
 
         -- Trigger restart
         local second_finished = false
-        task_scheduler.start(
+        task_scheduler.run_plan(
             { restart_task },
             "reboot",
             function(_, on_exit)
@@ -159,7 +159,7 @@ describe("loop.task.taskscheduler", function()
         }
         local error_msg = nil
 
-        task_scheduler.start(
+        task_scheduler.run_plan(
             tasks,
             "a",
             sync_start_task(true),
@@ -177,7 +177,7 @@ describe("loop.task.taskscheduler", function()
         local tasks = { mock_task("t1") }
         local t1_stopped = false
 
-        task_scheduler.start(
+        task_scheduler.run_plan(
             tasks,
             "t1",
             function(_, on_exit)
@@ -203,11 +203,13 @@ end)
 
 describe("loop.task.taskscheduler - Restart Scenarios", function()
     local function mock_task(name)
+        ---@type loop.Task
         return {
             name = name,
             depends_on = {},
             depends_order = "sequence",
-            concurrency = "restart",
+            if_running = "restart",
+            type = "process",
         }
     end
 
@@ -216,7 +218,7 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
         local task_def = mock_task("service")
 
         -- 1. Start the first instance
-        task_scheduler.start({ task_def }, "service", function(_, on_exit)
+        task_scheduler.run_plan({ task_def }, "service", function(_, on_exit)
             table.insert(log, "start_1")
             return {
                 terminate = function()
@@ -234,7 +236,7 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
 
         -- 2. Start the second instance (triggers restart)
         local second_done = false
-        task_scheduler.start({ task_def }, "service", function(_, on_exit)
+        task_scheduler.run_plan({ task_def }, "service", function(_, on_exit)
             table.insert(log, "start_2")
             on_exit(true)
             return { terminate = function() end }
@@ -256,7 +258,7 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
         local task_def = mock_task("queued_service")
 
         -- Start original
-        task_scheduler.start({ task_def }, "queued_service", function(_, on_exit)
+        task_scheduler.run_plan({ task_def }, "queued_service", function(_, on_exit)
             table.insert(log, "start_orig")
             return {
                 terminate = function()
@@ -268,8 +270,6 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
             }
         end, function() end)
 
-        vim.wait(10)
-
         -- Fire two restarts at nearly the same time
         local final_done = 0
         local start_fn = function(_, on_exit)
@@ -278,9 +278,12 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
             return { terminate = function() end }
         end
 
-        task_scheduler.start({ task_def }, "queued_service", start_fn, function() end,
+        vim.wait(300)
+        print("test2")
+
+        task_scheduler.run_plan({ task_def }, "queued_service", start_fn, function() end,
             function() final_done = final_done + 1 end)
-        task_scheduler.start({ task_def }, "queued_service", start_fn, function() end,
+        task_scheduler.run_plan({ task_def }, "queued_service", start_fn, function() end,
             function() final_done = final_done + 1 end)
 
         vim.wait(300, function() return final_done == 2 end)
@@ -301,7 +304,7 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
         local second_started = false
 
         -- 1. Start instance 1 that takes forever to terminate
-        task_scheduler.start({ task_def }, "stuck", function(_, on_exit)
+        task_scheduler.run_plan({ task_def }, "stuck", function(_, on_exit)
             return {
                 terminate = function()
                     -- This task is "stubborn" and doesn't call on_exit immediately
@@ -313,7 +316,7 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
         vim.wait(10)
 
         -- 2. Start instance 2 (will be a 'waiter')
-        task_scheduler.start({ task_def }, "stuck", function(_, on_exit)
+        task_scheduler.run_plan({ task_def }, "stuck", function(_, on_exit)
             second_started = true
             on_exit(true)
             return { terminate = function() end }
@@ -332,14 +335,14 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
         local error_received = nil
 
         -- Start healthy instance
-        task_scheduler.start({ task_def }, "fail_restart", function(_, on_exit)
+        task_scheduler.run_plan({ task_def }, "fail_restart", function(_, on_exit)
             return { terminate = function() on_exit(true) end }
         end, function() end)
 
         vim.wait(10)
 
         -- Restart with a failing start_task
-        task_scheduler.start(
+        task_scheduler.run_plan(
             { task_def },
             "fail_restart",
             function(_, on_exit)
@@ -353,5 +356,52 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
 
         vim.wait(100, function() return error_received ~= nil end)
         assert.equals("OS Error: Binary not found", error_received)
+    end)
+
+    it("handles 'wait' concurrency by starting only after the running task exits", function()
+        local wait_task = mock_task("waiter")
+        wait_task.if_running = "wait"
+        local log = {}
+
+        -- Start first instance (long-running)
+        task_scheduler.run_plan(
+            { wait_task },
+            "waiter",
+            function(_, on_exit)
+                table.insert(log, "start_1")
+                return {
+                    terminate = function()
+                        -- Let it finish naturally after a delay
+                        vim.defer_fn(function()
+                            table.insert(log, "exit_1")
+                            on_exit(true)
+                        end, 200)
+                    end
+                }
+            end,
+            function() end
+        )
+
+        -- Start second instance (should WAIT, not terminate the first)
+        local second_done = false
+        task_scheduler.run_plan(
+            { wait_task },
+            "waiter",
+            function(_, on_exit)
+                table.insert(log, "start_2")
+                on_exit(true)
+                return { terminate = function() end }
+            end,
+            function() end,
+            function() second_done = true end
+        )
+
+        vim.wait(1000, function() return second_done end)
+
+        assert.are.same({
+            "start_1",
+            "exit_1",
+            "start_2",
+        }, log)
     end)
 end)

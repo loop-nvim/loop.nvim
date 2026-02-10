@@ -11,7 +11,17 @@ local Scheduler = require("loop.tools.Scheduler")
 
 local M = {}
 
----@alias loop.TaskScheduler.TaskData { control: loop.TaskControl, task: loop.Task, waiters:function[] }
+---@class loop.TaskScheduler.TaskData
+---@field task_id number
+---@field task_name string
+---@field control loop.TaskControl?
+---@field task loop.Task
+---@field waiters function[]
+---@field sub_control loop.TaskControl?
+---@field termination_reason string?
+---@field is_terminated boolean?
+---@field is_finalized boolean?
+---@field exit_callback fun(ok:boolean, reason:string|nil)
 
 ---@type number
 local _last_plan_id = 0
@@ -69,14 +79,59 @@ local function _validate_and_build_nodes(tasks, root)
     return name_to_task, nodes, nil
 end
 
+---@param task_data loop.TaskScheduler.TaskData
+local function _finalize_and_wake(task_data, ok)
+    if task_data.is_finalized then return end
+    task_data.is_finalized = true
+
+    local waiters = task_data.waiters
+    task_data.waiters = {}
+
+    -- Remove from running tasks if still present
+    local task_runs = _running_tasks[task_data.task_name]
+    if task_runs then
+        task_runs[task_data.task_id] = nil
+        if next(task_runs) == nil then
+            _running_tasks[task_data.task_name] = nil
+        end
+    end
+
+    local reason = task_data.termination_reason
+
+    vim.schedule(function()
+        -- print("exit cb for: " .. tostring(task_data.task.name .. ", #waiters: " .. tostring(#waiters)) .. ", id " .. task_data.task_id)
+        task_data.exit_callback(ok, reason)
+        for _, waiter in ipairs(waiters) do
+            waiter()
+        end
+    end)
+end
+
+---@param data loop.TaskScheduler.TaskData
+---@param reason string?
+local function _terminate_task(data, reason)
+    -- print("terminate_task: " .. tostring(data.task.name) .. ", id " .. data.task_id)
+    if not data.is_terminated then
+        data.is_terminated = true
+        data.termination_reason = reason
+        if data.sub_control then
+            -- print("sub_control terminate: " .. tostring(data.task.name) .. ", id " .. data.task_id)
+            data.sub_control.terminate()
+        else
+            -- print("direct finalize: " .. tostring(data.task.name) .. ", id " .. data.task_id)
+            _finalize_and_wake(data, false)
+        end
+    end
+end
+
 ---@param task loop.Task
 ---@param start_task loop.TaskScheduler.StartTaskFn
 ---@param on_exit fun(ok:boolean, reason:string|nil)
 ---@return loop.TaskControl?, string?
 local function _start_plan_task(task, start_task, on_exit)
-    if task.concurrency == "refuse" then
-        local data = _running_tasks[task.name]
-        if data and not vim.tbl_isempty(data) then
+    if task.if_running == "refuse" then
+        local instances = _running_tasks[task.name]
+        if instances and not vim.tbl_isempty(instances) then
             return nil, "Task refused (already running)"
         end
     end
@@ -86,78 +141,56 @@ local function _start_plan_task(task, start_task, on_exit)
     local task_id = _last_task_id
 
     ---@type loop.TaskScheduler.TaskData
-    local task_data = nil
-
-    local finalized = false
-    local function finalize_and_wake(ok, reason)
-        if finalized then return end
-        finalized = true
-        local task_runs = _running_tasks[task_name]
-        if task_runs then
-            task_runs[task_id] = nil
-            if next(task_runs) == nil then
-                _running_tasks[task_name] = nil
-            end
-            if task_data then
-                -- We schedule this to remain thread-safe/async-safe for the UI
-                vim.schedule(function()
-                    on_exit(ok, reason)
-                    local waiters = task_data.waiters
-                    task_data.waiters = {}
-                    for _, waiter in ipairs(waiters) do
-                        waiter()
-                    end
-                end)
-            end
-        end
-    end
-
-    local control_ctx = {
+    local task_data = {
+        task_id = task_id,
+        task_name = task_name,
+        task = task,
+        control = nil,
         sub_control = nil,
+        waiters = {},
         is_terminated = false,
-        terminate_reason = nil,
+        is_finalized = false,
+        exit_callback = on_exit,
     }
+
+    -- Register the control early so it can be waited on by others
+    _running_tasks[task_name] = _running_tasks[task_name] or {}
+    if _running_tasks[task_name][task_id] then return nil, "Internal error (task id already used)" end
+    _running_tasks[task_name][task_id] = task_data
+
     ---@type loop.TaskControl
     local control = {
         terminate = function()
-            if not control_ctx.is_terminated then
-                control_ctx.is_terminated = true
-                if control_ctx.sub_control then
-                    control_ctx.sub_control.terminate()
-                else
-                    finalize_and_wake(false, control_ctx.terminate_reason or "Interrupted")
-                end
-            end
+            _terminate_task(task_data, "Interrupted")
         end
     }
+    task_data.control = control
 
     local start_and_attach_control = function()
-        local sub_err
-        if not control_ctx.is_terminated then
+        if not task_data.is_terminated then
+            local sub_err
+            -- print("effective task start: " .. task_name .. ", id " .. task_id)
             -- run the task now
-            control_ctx.sub_control, sub_err = start_task(task, finalize_and_wake)
-        end
-        if not control_ctx.sub_control then
-            control_ctx.terminate_reason = sub_err
-            control.terminate()
+            task_data.sub_control, sub_err = start_task(task, function(ok, reason)
+                task_data.termination_reason = task_data.termination_reason or reason
+                _finalize_and_wake(task_data, ok)
+            end)
+            if not task_data.sub_control then
+                _terminate_task(task_data, sub_err)
+            end
         end
     end
 
-    -- Register the control early so it can be waited on by others
-    task_data = { control = control, task = task, waiters = {} }
-    _running_tasks[task_name] = _running_tasks[task_name] or {}
-    _running_tasks[task_name][task_id] = task_data
-
     ---@type loop.TaskScheduler.TaskData[]
-    local tasks_to_wait = {}
+    local blockers = {}
 
     -- same task concurrency
-    if task.concurrency ~= "parallel" then
+    if task.if_running ~= "parallel" then
         local instances = _running_tasks[task_name]
         if instances then
             for id, data in pairs(instances) do
-                if task_id ~= id then
-                    table.insert(tasks_to_wait, data)
+                if task_id ~= id and not data.is_finalized then
+                    table.insert(blockers, data)
                 end
             end
         end
@@ -166,27 +199,42 @@ local function _start_plan_task(task, start_task, on_exit)
     -- dependants that require stopping
     for _, instances in pairs(_running_tasks) do
         for id, data in pairs(instances) do
-            if task_id ~= id and data.task.depends_on and vim.tbl_contains(data.task.depends_on, task_name) then
-                table.insert(tasks_to_wait, data)
+            if task_id ~= id
+                and not data.is_finalized
+                and data.task.stop_on_dependency_change
+                and data.task.depends_on
+                and vim.tbl_contains(data.task.depends_on, task_name) then
+                table.insert(blockers, data)
             end
         end
     end
 
-    if #tasks_to_wait > 0 then
-        local nb_running = #tasks_to_wait
+    if #blockers > 0 then
+        -- print("new task: " .. task_name .. ", #blockers " .. tostring(#blockers) .. ", id " .. task_id)
+        local nb_running = #blockers
         local on_task_ended = function()
             nb_running = nb_running - 1
+            -- print("on_task_ended in the context of " .. task_name .. ", remaining " .. tostring(nb_running) .. ", id " .. task_id)
             if nb_running == 0 then
                 start_and_attach_control()
             end
         end
-        for _, pt in ipairs(tasks_to_wait) do
-            table.insert(pt.waiters, on_task_ended)
-            if task.concurrency ~= "wait" then
-                pt.control.terminate()
+        for _, data in ipairs(blockers) do
+            table.insert(data.waiters, on_task_ended)
+            if task.if_running ~= "wait" then
+                local reason
+                if task_name == data.task.name then
+                    reason = "Interrupted by restart"
+                else
+                    reason = ("Interrupted by task: '%s'"):format(task_name)
+                end
+                _terminate_task(data, reason)
+            else
+                -- print("task waiting: " .. task_name .. ", id " .. task_id)
             end
         end
     else
+        -- print("start direct: " .. task_name .. ", id " .. task_id)
         start_and_attach_control()
     end
 
@@ -230,6 +278,7 @@ function M.run_plan(tasks, root, start_task, on_task_event, on_exit)
 
     ---@type loop.scheduler.exit_fn
     local on_schedule_end = function(success, trigger, param)
+        -- print("schedule end")
         local msg = success and "" or _get_failure_message(trigger, param)
         vim.schedule(function()
             _plan_schedulers[plan_id] = nil

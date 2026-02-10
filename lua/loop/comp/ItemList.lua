@@ -44,7 +44,7 @@ function ItemList:init(args)
     -- NEW: current item tracking
     self._current_item = nil
     if args.show_current_prefix then
-        self._current_prefix = (args.current_prefix or "⇒") .. " "
+        self._current_prefix = (args.current_prefix or ">") .. " "
         self._noncurrent_prefix = (" "):rep(vim.fn.strdisplaywidth(self._current_prefix))
     end
 end

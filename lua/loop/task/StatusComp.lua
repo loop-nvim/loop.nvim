@@ -64,7 +64,8 @@ local function _item_formatter(id, data)
 
     -- optional error message
     if type(data.error_msg) == "string" and #data.error_msg > 0 then
-        table.insert(chunks, { " - " .. data.error_msg, _highlights.failure })
+        table.insert(chunks, {" - "})
+        table.insert(chunks, {data.error_msg, _highlights.failure })
     end
 
     return chunks

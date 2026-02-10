@@ -27,7 +27,7 @@ local base_items = {
     description = "Definition of a single task",
     additionalProperties = false,
     required = { "name", "type" },
-    ["x-order"] = { "name", "type", "save_buffers", "concurrency", "depends_on", "depends_order", "stop_on_dependency_change" },
+    ["x-order"] = { "name", "type", "save_buffers", "if_running", "depends_on", "depends_order", "stop_on_dependency_change" },
 
     properties = {
         -- Unique identifier for the task
@@ -44,7 +44,7 @@ local base_items = {
         },
 
         -- Behavior when multiple instances of the task are started
-        concurrency = {
+        if_running = {
             type = "string",
             description = [[
 Specifies what happens if the task is already running:
