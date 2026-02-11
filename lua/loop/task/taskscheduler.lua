@@ -221,17 +221,13 @@ local function _start_plan_task(task, start_task, on_exit)
         end
         for _, data in ipairs(blockers) do
             table.insert(data.waiters, on_task_ended)
-            if task.if_running ~= "wait" then
-                local reason
-                if task_name == data.task.name then
-                    reason = "Interrupted by restart"
-                else
-                    reason = ("Interrupted by task: '%s'"):format(task_name)
-                end
-                _terminate_task(data, reason)
+            local reason
+            if task_name == data.task.name then
+                reason = "Interrupted by restart"
             else
-                -- print("task waiting: " .. task_name .. ", id " .. task_id)
+                reason = ("Interrupted by task: '%s'"):format(task_name)
             end
+            _terminate_task(data, reason)
         end
     else
         -- print("start direct: " .. task_name .. ", id " .. task_id)

@@ -121,7 +121,7 @@ local function _validate(schema, data, path)
 
     -- enum
     if schema.enum and not check_enum(schema.enum, data) then
-        add_error(errors, path, "value not in enum: " .. table.concat(schema.enum, ", "))
+        add_error(errors, path, "valid values: " .. table.concat(schema.enum, ", "))
         return errors
     end
 

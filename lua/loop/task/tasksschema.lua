@@ -52,9 +52,8 @@ Specifies what happens if the task is already running:
 - "restart": Stop the current instance and start a new one
 - "refuse": Do not start a new instance if one is already running
 - "parallel": Start a new instance alongside any existing ones
-- "wait": For the existing instances to finish first
 ]],
-            enum = { "restart", "refuse", "parallel", "wait" }
+            enum = { "restart", "refuse", "parallel", }
         },
 
         -- Stop if dependency restart restarts

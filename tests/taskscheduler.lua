@@ -5,7 +5,7 @@ local task_scheduler = require("loop.task.taskscheduler")
 describe("loop.task.taskscheduler", function()
     -- Helpers to create mock tasks
     ---@param order "parallel"|"sequence"|nil
-    ---@param if_running "restart"|"refuse"|"parallel"|"wait"|nil
+    ---@param if_running "restart"|"refuse"|"parallel"|nil
     local function mock_task(name, deps, order, if_running)
         ---@type loop.Task
         return {
@@ -356,52 +356,5 @@ describe("loop.task.taskscheduler - Restart Scenarios", function()
 
         vim.wait(100, function() return error_received ~= nil end)
         assert.equals("OS Error: Binary not found", error_received)
-    end)
-
-    it("handles 'wait' concurrency by starting only after the running task exits", function()
-        local wait_task = mock_task("waiter")
-        wait_task.if_running = "wait"
-        local log = {}
-
-        -- Start first instance (long-running)
-        task_scheduler.run_plan(
-            { wait_task },
-            "waiter",
-            function(_, on_exit)
-                table.insert(log, "start_1")
-                return {
-                    terminate = function()
-                        -- Let it finish naturally after a delay
-                        vim.defer_fn(function()
-                            table.insert(log, "exit_1")
-                            on_exit(true)
-                        end, 200)
-                    end
-                }
-            end,
-            function() end
-        )
-
-        -- Start second instance (should WAIT, not terminate the first)
-        local second_done = false
-        task_scheduler.run_plan(
-            { wait_task },
-            "waiter",
-            function(_, on_exit)
-                table.insert(log, "start_2")
-                on_exit(true)
-                return { terminate = function() end }
-            end,
-            function() end,
-            function() second_done = true end
-        )
-
-        vim.wait(1000, function() return second_done end)
-
-        assert.are.same({
-            "start_1",
-            "exit_1",
-            "start_2",
-        }, log)
     end)
 end)
