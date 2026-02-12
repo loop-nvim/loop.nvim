@@ -103,6 +103,7 @@ local function _setup_tabs()
                 table.insert(winbar_parts, "%#LoopPluginTabGroup#")
                 table.insert(winbar_parts, tab.label)
                 table.insert(winbar_parts, "%#LoopPluginInactiveTab#")
+                table.insert(winbar_parts, " ")
                 for idx, page in ipairs(tab.pages) do
                     local active_page = is_active_tab and idx == page_idx
                     if active_page then tab.changed_pages[idx] = nil end
@@ -703,7 +704,7 @@ function M.init()
 
     do
         vim.api.nvim_set_hl(0, "LoopPluginInactiveTab", { link = "WinBar" })
-        vim.api.nvim_set_hl(0, "LoopPluginTabGroup", { link = "Title" })
+        vim.api.nvim_set_hl(0, "LoopPluginTabGroup", { link = "WinBar" })
         vim.api.nvim_set_hl(0, "LoopPluginActiveTab", { link = "Special" })
         vim.api.nvim_set_hl(0, "LoopPluginEventWarn", { link = "WarningMsg" })
         vim.api.nvim_set_hl(0, "LoopPluginEventsError", { link = "ErrorMsg" })
