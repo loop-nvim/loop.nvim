@@ -11,9 +11,6 @@ local _extension_states = {}
 ---@type table<string,loop.ExtensionData>
 local _extension_data = {}
 
----@type loop.PageManager[]
-local _page_managers = {}
-
 ---@type table<string,loop.UserCommandProvider>
 local _cmd_providers = {}
 local _reserved_cmd_providers = {
@@ -110,13 +107,10 @@ function M.get_cmd_provider(lead_cmd)
 end
 
 ---@param wsinfo loop.ws.WorkspaceInfo
----@param page_manager_factory loop.PageManagerFactory
-function M.on_workspace_load(wsinfo, page_manager_factory)
+function M.on_workspace_load(wsinfo)
 	local names = extensions.ext_names()
 	for _, name in ipairs(names) do
 		_load_state(wsinfo.config_dir, name)
-		local page_manager = page_manager_factory()
-		table.insert(_page_managers, page_manager)
 		---@type loop.ExtensionData
 		local ext_data = {
 			ws_name = wsinfo.name,
@@ -124,7 +118,6 @@ function M.on_workspace_load(wsinfo, page_manager_factory)
 			get_config_file_path = function(key, fileext)
 				return _get_config_file_path(wsinfo.config_dir, name, key, fileext)
 			end,
-			page_manager = page_manager,
 			state = _make_state_handler(name),
 			register_user_command = _register_cmd_provider,
 			register_task_type = _register_task_type_provider,
@@ -153,10 +146,6 @@ function M.on_workspace_unload(wsinfo)
 	end
 	_extension_data = {}
 	_extension_states = {}
-	for _, pm in ipairs(_page_managers) do
-		pm.delete_all_groups(true)
-	end
-	_page_managers = {}
 end
 
 ---@param wsinfo loop.ws.WorkspaceInfo

@@ -32,7 +32,6 @@ error('Cannot require a meta file')
 ---@field ws_name string
 ---@field ws_dir string
 ---@field state loop.ExtensionState
----@field page_manager loop.PageManager
 ---@field get_config_file_path fun(key:string,fileext:string?):string
 ---@field register_task_type fun(task_type:string, provider:loop.TaskTypeProvider)
 ---@field register_task_templates fun(category:string, provider:loop.TaskTemplateProvider)

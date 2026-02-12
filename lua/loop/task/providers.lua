@@ -12,8 +12,7 @@ local _template_providers = {}
 local M = {}
 
 ---@param ws_dir string
----@param page_manager_fact loop.PageManagerFactory
-function M.reset_to_default(ws_dir, page_manager_fact)
+function M.reset_to_default(ws_dir)
     _task_type_providers = {
         process   = coreproviders.get_process_task_provider(ws_dir),
         composite = coreproviders.get_composite_task_provider(),

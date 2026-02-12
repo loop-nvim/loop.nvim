@@ -169,9 +169,8 @@ local function _load_tasks(config_dir)
 end
 
 ---@param ws_dir string
----@param page_manager_fact loop.PageManagerFactory
-function M.reset_provider_list(ws_dir, page_manager_fact)
-    providers.reset_to_default(ws_dir, page_manager_fact)
+function M.reset_provider_list(ws_dir)
+    providers.reset_to_default(ws_dir)
 end
 
 ---@param name string

@@ -203,9 +203,9 @@ local function _load_workspace(dir)
     window.load_settings(config_dir)
 
     local page_manager_fact = window.get_page_manager_factory()
-    taskmgr.reset_provider_list(dir, page_manager_fact)
+    taskmgr.reset_provider_list(dir)
     runner.on_workspace_open(_workspace_info, page_manager_fact)
-    extdata.on_workspace_load(_workspace_info, page_manager_fact)
+    extdata.on_workspace_load(_workspace_info)
 
     if not _save_timer then
         local config = require('loop.config')
