@@ -88,31 +88,33 @@ local function _setup_tabs()
         if #tab.pages > 0 then
             tabidx = tabidx + 1
             table.insert(winbar_parts, ' ')
-            if is_active_tab then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
-            local uiflags1 = ''
             if #tab.pages == 1 then
+                if is_active_tab then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
+                local uiflags1 = ''
                 if is_active_tab then tab.changed_pages[1] = nil end
                 local change_flag = tab.changed_pages[1] and symbols.change or ''
                 uiflags1 = (change_flag or "") .. (tab.pages[1]:get_ui_flags() or "")
                 uiflags1 = uiflags1 ~= "" and (' ' .. uiflags1) or uiflags1
-            end
-            local str1 = ("[%s%s]"):format(tab.label, uiflags1)
-            table.insert(winbar_parts,
-                string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000, str1))
-            if is_active_tab then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
-        end
-        if #tab.pages > 1 then
-            for idx, page in ipairs(tab.pages) do
-                local active_page = is_active_tab and idx == page_idx
-                if active_page then tab.changed_pages[idx] = nil end
-                local change_flag = tab.changed_pages[idx] and symbols.change or ''
-                local uiflags2 = (change_flag or "") .. (page:get_ui_flags() or "")
-                uiflags2 = uiflags2 ~= "" and (' ' .. uiflags2) or uiflags2
-                local str2 = ("[%d%s]"):format(idx, uiflags2)
-                if active_page then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
+                local str1 = ("[%s%s]"):format(tab.label, uiflags1)
                 table.insert(winbar_parts,
-                    string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000 + idx, str2))
-                if active_page then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
+                    string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000, str1))
+                if is_active_tab then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
+            else
+                table.insert(winbar_parts, "%#LoopPluginTabGroup#")
+                table.insert(winbar_parts, tab.label)
+                table.insert(winbar_parts, "%#LoopPluginInactiveTab#")
+                for idx, page in ipairs(tab.pages) do
+                    local active_page = is_active_tab and idx == page_idx
+                    if active_page then tab.changed_pages[idx] = nil end
+                    local change_flag = tab.changed_pages[idx] and symbols.change or ''
+                    local uiflags2 = (change_flag or "") .. (page:get_ui_flags() or "")
+                    uiflags2 = uiflags2 ~= "" and (' ' .. uiflags2) or uiflags2
+                    local str2 = ("[%s%s]"):format(page:get_name(), uiflags2)
+                    if active_page then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
+                    table.insert(winbar_parts,
+                        string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000 + idx, str2))
+                    if active_page then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
+                end
             end
         end
     end
@@ -701,6 +703,7 @@ function M.init()
 
     do
         vim.api.nvim_set_hl(0, "LoopPluginInactiveTab", { link = "WinBar" })
+        vim.api.nvim_set_hl(0, "LoopPluginTabGroup", { link = "Title" })
         vim.api.nvim_set_hl(0, "LoopPluginActiveTab", { link = "Special" })
         vim.api.nvim_set_hl(0, "LoopPluginEventWarn", { link = "WarningMsg" })
         vim.api.nvim_set_hl(0, "LoopPluginEventsError", { link = "ErrorMsg" })
