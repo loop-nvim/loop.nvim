@@ -100,6 +100,10 @@ function BaseBuffer:get_buf()
     return self._buf
 end
 
+function BaseBuffer:is_destroyed()
+    return self._destroyed
+end
+
 ---@return number -- buffer number
 ---@return boolean refresh_needed
 function BaseBuffer:get_or_create_buf()

@@ -131,7 +131,7 @@ end
 ---@param on_exit fun(ok:boolean, reason:string|nil)
 ---@return loop.TaskControl?, string?
 local function _start_plan_task(task, start_task, on_exit)
-    if task.if_running == "refuse" then
+    if task.if_running ~= "restart" and task.if_running ~= "parallel" then
         local instances = _running_tasks[task.name]
         if instances and not vim.tbl_isempty(instances) then
             return nil, "Task refused (already running)"
@@ -187,7 +187,7 @@ local function _start_plan_task(task, start_task, on_exit)
     local blockers = {}
 
     -- same task concurrency
-    if task.if_running ~= "parallel" then
+    if task.if_running == "restart" then
         local instances = _running_tasks[task_name]
         if instances then
             for id, data in pairs(instances) do
@@ -230,19 +230,25 @@ end
 ---@param root string
 ---@param start_task loop.TaskScheduler.StartTaskFn
 ---@param on_task_update loop.TaskScheduler.OnTaskUpdate
----@param on_exit? fun(success:boolean, reason?:string)
-function M.run_plan(tasks, root, start_task, on_task_update, on_exit)
+---@param on_plan_exit? fun(success:boolean, reason?:string)
+function M.run_plan(tasks, root, start_task, on_task_update, on_plan_exit)
+    ---@type loop.TaskScheduler.StartTaskFn
+    local effective_start = function(task, on_task_exit)
+        on_task_update(task.name, "running")
+        return start_task(task, on_task_exit)
+    end
+
     for _, task in ipairs(tasks) do
         on_task_update(task.name, "waiting")
     end
 
-    local call_on_exit = function(success, reason)
-        if on_exit then on_exit(success, reason) end
+    local call_on_plan_exit = function(success, reason)
+        if on_plan_exit then on_plan_exit(success, reason) end
     end
 
     local name_to_task, nodes, validation_err = _validate_and_build_nodes(tasks, root)
     if validation_err or not name_to_task or not nodes then
-        vim.schedule_wrap(call_on_exit)(false, validation_err)
+        vim.schedule_wrap(call_on_plan_exit)(false, validation_err)
         return
     end
 
@@ -253,18 +259,20 @@ function M.run_plan(tasks, root, start_task, on_task_update, on_exit)
     local start_node = function(id, on_node_exit)
         local task = name_to_task[id] --[[@as loop.Task]]
         assert(task)
-        return _start_plan_task(task, start_task, on_node_exit)
+        return _start_plan_task(task, effective_start, on_node_exit)
     end
 
     local scheduler = Scheduler:new()
     _plan_schedulers[plan_id] = scheduler
 
     ---@type loop.scheduler.NodeEventFn
-    local function on_node_event(id, event, success, reason, param)
-        ---@type loop.TaskScheduler.TaskState
-        local status = event == "start" and "running" or (success and "success" or "failure")
-        local msg = success and "" or _get_failure_message(reason, param)
-        on_task_update(id, status, msg)
+    local function on_node_event(node_id, event, success, reason, param)
+        if event == "stop" then
+            ---@type loop.TaskScheduler.TaskState
+            local status = success and "success" or "failure"
+            local msg = success and "" or _get_failure_message(reason, param)
+            on_task_update(node_id, status, msg)
+        end
     end
 
     ---@type loop.scheduler.exit_fn
@@ -273,7 +281,7 @@ function M.run_plan(tasks, root, start_task, on_task_update, on_exit)
         local msg = success and "" or _get_failure_message(trigger, param)
         vim.schedule(function()
             _plan_schedulers[plan_id] = nil
-            call_on_exit(success, msg)
+            call_on_plan_exit(success, msg)
         end)
     end
 

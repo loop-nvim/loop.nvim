@@ -73,6 +73,7 @@ end
 ---Sends output text to the buffer and redraws the prompt
 ---@param text string
 function ReplBuffer:send_line(text)
+	if self:is_destroyed() then return end
 	self:get_or_create_buf() -- ensure initialization to have the channel
 	if self._chan then
 		local formatted = "\r\27[K" .. text .. "\r\n" .. self._prompt .. self._current_line
