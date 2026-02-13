@@ -283,9 +283,8 @@ function M.run_task(all_tasks, root_name)
                 --_status_page.set_ui_flags(config.current.window.symbols.running)
                 return _start_task(task, on_exit)
             end,
-            function(name, event, success, reason) -- on task event
-                logs.user_log(("%s: %s"):format(name, reason ~= "" and reason or event), "task")
-                local status = (event == "start") and "running" or (success and "success" or "failure")
+            function(name, status, reason) -- on task event
+                logs.user_log(("%s: %s - %s"):format(name, status, reason), "task")
                 report_status(name, status, reason)
             end,
             function(success, reason) -- on exit

@@ -101,7 +101,8 @@ local function _setup_tabs()
                 if is_active_tab then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
             else
                 table.insert(winbar_parts, "%#LoopPluginTabGroup#")
-                table.insert(winbar_parts, tab.label)
+                table.insert(winbar_parts,
+                    string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000 + 1, tab.label))
                 table.insert(winbar_parts, "%#LoopPluginInactiveTab#")
                 table.insert(winbar_parts, " ")
                 for idx, page in ipairs(tab.pages) do

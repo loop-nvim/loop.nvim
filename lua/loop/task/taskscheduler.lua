@@ -2,7 +2,9 @@ local class = require("loop.tools.class")
 local Scheduler = require("loop.tools.Scheduler")
 
 ---@alias loop.TaskScheduler.StartTaskFn fun(task: loop.Task, on_exit: fun(ok:boolean, reason:string|nil)): { terminate:fun() }|nil, string|nil
----@alias loop.TaskScheduler.TaskEventFn fun(taskname: string, event: loop.scheduler.NodeEvent, success:boolean,reason?:string)
+
+---@alias loop.TaskScheduler.TaskState "waiting"|"running"|"success"|"failure"
+---@alias loop.TaskScheduler.OnTaskUpdate fun(taskname: string, state: loop.TaskScheduler.TaskState,reason?:string)
 
 ---@class loop.TaskTreeNode
 ---@field name string                       -- Task name
@@ -227,9 +229,13 @@ end
 ---@param tasks loop.Task[]
 ---@param root string
 ---@param start_task loop.TaskScheduler.StartTaskFn
----@param on_task_event loop.TaskScheduler.TaskEventFn
+---@param on_task_update loop.TaskScheduler.OnTaskUpdate
 ---@param on_exit? fun(success:boolean, reason?:string)
-function M.run_plan(tasks, root, start_task, on_task_event, on_exit)
+function M.run_plan(tasks, root, start_task, on_task_update, on_exit)
+    for _, task in ipairs(tasks) do
+        on_task_update(task.name, "waiting")
+    end
+
     local call_on_exit = function(success, reason)
         if on_exit then on_exit(success, reason) end
     end
@@ -255,8 +261,10 @@ function M.run_plan(tasks, root, start_task, on_task_event, on_exit)
 
     ---@type loop.scheduler.NodeEventFn
     local function on_node_event(id, event, success, reason, param)
+        ---@type loop.TaskScheduler.TaskState
+        local status = event == "start" and "running" or (success and "success" or "failure")
         local msg = success and "" or _get_failure_message(reason, param)
-        on_task_event(id, event, success, msg)
+        on_task_update(id, status, msg)
     end
 
     ---@type loop.scheduler.exit_fn

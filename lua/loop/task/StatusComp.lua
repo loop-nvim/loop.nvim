@@ -21,7 +21,7 @@ vim.api.nvim_set_hl(0, _highlights.failure, { link = "ErrorMsg" })
 
 local _line_id = 0
 
----@alias loop.comp.StatusComp.Status "waiting"|"running"|"success"|"failure"|nil
+---@alias loop.comp.StatusComp.Status loop.TaskScheduler.TaskState?
 
 ---@param id any
 ---@param data table
