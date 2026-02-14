@@ -3,6 +3,7 @@ local config = require("loop.config")
 local Page = require('loop.ui.Page')
 local throttle = require('loop.tools.throttle')
 local uitools = require('loop.tools.uitools')
+local strtools = require('loop.tools.strtools')
 local jsoncodec = require('loop.json.codec')
 local selector = require("loop.tools.selector")
 local BaseBuffer = require('loop.buf.BaseBuffer')
@@ -43,10 +44,122 @@ local function _get_placeholder_buf()
     local buf = _placeholder_page:get_or_create_buf()
     return buf
 end
+
+---@param win number
+---@param active_tab loop.TabInfo
+---@param page_idx number
+local function _assign_buffer(win, active_tab, page_idx)
+    local page_assigned = false
+    for arr_idx, tab in ipairs(_tabs_arr) do
+        if active_tab == tab then
+            _active_tab_idx = arr_idx
+            local page = tab.pages[page_idx]
+            if page then
+                local buf = page:get_or_create_buf()
+                vim.wo[win].winfixbuf = false
+                vim.api.nvim_win_set_buf(win, buf)
+                vim.wo[win].winfixbuf = true
+                page_assigned = true
+            end
+        end
+    end
+
+    if not page_assigned then
+        local buf = _get_placeholder_buf()
+        vim.wo[win].winfixbuf = false
+        vim.api.nvim_win_set_buf(win, buf)
+        vim.wo[win].winfixbuf = true
+    end
+end
+
+---@param width number
+---@param active_tab loop.TabInfo
+---@param page_idx number
+---@return string
+local function _build_winbar(width, active_tab, page_idx)
+    local symbols = config.current.window.symbols
+    local winbar_data = { { 3, "%#LoopPluginInactiveTab#" } }
+    local tabidx = 0
+
+    for arr_idx, tab in ipairs(_tabs_arr) do
+        local is_active_tab = active_tab == tab
+        if #tab.pages > 0 then
+            tabidx = tabidx + 1
+            table.insert(winbar_data, { 2, ' ' })
+            if #tab.pages > 1 then
+                if is_active_tab then table.insert(winbar_data, { 3, "%#LoopPluginActiveTab#" }) end
+                table.insert(winbar_data,
+                    { 3, string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@", arr_idx * 1000) })
+                table.insert(winbar_data, { 1, tab.label })
+                if is_active_tab then table.insert(winbar_data, { 3, "%#LoopPluginInactiveTab#" }) end
+                table.insert(winbar_data, { 2, " " })
+            end
+            for idx, page in ipairs(tab.pages) do
+                local is_active_page = is_active_tab and idx == page_idx
+                local change_flag = tab.changed_pages[idx] and symbols.change or ''
+                local uiflags = (change_flag or "") .. (page:get_ui_flags() or "")
+                uiflags = uiflags ~= "" and (' ' .. uiflags) or uiflags
+                if is_active_page then table.insert(winbar_data, { 3, "%#LoopPluginActiveTab#" }) end
+                table.insert(winbar_data,
+                    { 3, string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@", arr_idx * 1000 + idx) })
+                table.insert(winbar_data, { 2, '[' })
+                table.insert(winbar_data, { 1, page:get_name() })
+                table.insert(winbar_data, { 2, uiflags .. ']' })
+                if is_active_page then table.insert(winbar_data, { 3, "%#LoopPluginInactiveTab#" }) end
+            end
+        end
+    end
+
+    local visible_len = 0
+    local croppable_len = 0
+    local nb_croppable = 0
+    for _, item in ipairs(winbar_data) do
+        if item[1] ~= 3 then
+            local len = vim.fn.strdisplaywidth(item[2])
+            visible_len = visible_len + len
+            if item[1] == 1 then
+                croppable_len = croppable_len + len
+                nb_croppable = nb_croppable + 1
+            end
+        end
+    end
+
+    local winbar_parts = {}
+    if visible_len > width and nb_croppable > 0 then
+        local overflow = visible_len - width
+        local base_reduce = math.floor(overflow / nb_croppable)
+        local remainder = overflow % nb_croppable
+        local croppable_index = 0
+        for _, item in ipairs(winbar_data) do
+            local is_croppable = item[1] == 1
+            local text = item[2]
+            if is_croppable then
+                croppable_index = croppable_index + 1
+                local reduce = base_reduce
+                if croppable_index <= remainder then
+                    reduce = reduce + 1
+                end
+                local current_w = vim.fn.strdisplaywidth(text)
+                local target_w = math.max(current_w - reduce, 1)
+                if target_w < current_w then
+                    text = strtools.crop_string_for_ui(text, target_w)
+                end
+            end
+            table.insert(winbar_parts, text)
+        end
+    else
+        for _, item in ipairs(winbar_data) do
+            table.insert(winbar_parts, item[2])
+        end
+    end
+    return table.concat(winbar_parts, "")
+end
+
 local function _setup_tabs()
     if _loop_win == -1 then
         return
     end
+    local win = _loop_win
 
     local active_tab = _tabs_arr[_active_tab_idx]
     if not active_tab or vim.tbl_isempty(active_tab.pages) then
@@ -59,71 +172,14 @@ local function _setup_tabs()
     end
     local page_idx = 1
     if active_tab and active_tab.pages[active_tab.active_page_idx] then
-        page_idx = active_tab.active_page_idx
+        page_idx = active_tab.active_page_idx or page_idx
     end
 
-    local symbols = config.current.window.symbols
-    -- update window if visible
-    local win = _loop_win
-    local winbar_parts = { "%#LoopPluginInactiveTab#" }
-    local tabidx = 0
-    local page_assigned = false
-    for arr_idx, tab in ipairs(_tabs_arr) do
-        local is_active_tab = false
-        if active_tab == tab then
-            _active_tab_idx = arr_idx
-            is_active_tab = true
-            local page = tab.pages[page_idx]
-            if page then
-                local buf = page:get_or_create_buf()
-                vim.wo[win].winfixbuf = false
-                vim.api.nvim_win_set_buf(win, buf)
-                vim.wo[win].winfixbuf = true
-                page_assigned = true
-            end
-        end
-        if #tab.pages > 0 then
-            tabidx = tabidx + 1
-            table.insert(winbar_parts, ' ')
-            if #tab.pages == 1 then
-                if is_active_tab then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
-                local uiflags1 = ''
-                if is_active_tab then tab.changed_pages[1] = nil end
-                local change_flag = tab.changed_pages[1] and symbols.change or ''
-                uiflags1 = (change_flag or "") .. (tab.pages[1]:get_ui_flags() or "")
-                uiflags1 = uiflags1 ~= "" and (' ' .. uiflags1) or uiflags1
-                local str1 = ("[%s%s]"):format(tab.label, uiflags1)
-                table.insert(winbar_parts,
-                    string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000, str1))
-                if is_active_tab then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
-            else
-                table.insert(winbar_parts, "%#LoopPluginTabGroup#")
-                table.insert(winbar_parts,
-                    string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000 + 1, tab.label))
-                table.insert(winbar_parts, "%#LoopPluginInactiveTab#")
-                table.insert(winbar_parts, " ")
-                for idx, page in ipairs(tab.pages) do
-                    local active_page = is_active_tab and idx == page_idx
-                    if active_page then tab.changed_pages[idx] = nil end
-                    local change_flag = tab.changed_pages[idx] and symbols.change or ''
-                    local uiflags2 = (change_flag or "") .. (page:get_ui_flags() or "")
-                    uiflags2 = uiflags2 ~= "" and (' ' .. uiflags2) or uiflags2
-                    local str2 = ("[%s%s]"):format(page:get_name(), uiflags2)
-                    if active_page then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
-                    table.insert(winbar_parts,
-                        string.format("%%%d@v:lua._LoopPluginGlobalState.wbc@%s%%T", arr_idx * 1000 + idx, str2))
-                    if active_page then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
-                end
-            end
-        end
-    end
+    _assign_buffer(win, active_tab, page_idx)
 
-    if not page_assigned then
-        local buf = _get_placeholder_buf()
-        vim.wo[win].winfixbuf = false
-        vim.api.nvim_win_set_buf(win, buf)
-        vim.wo[win].winfixbuf = true
-    end
+    local width = vim.api.nvim_win_get_width(win)
+    local winbar = _build_winbar(width, active_tab, page_idx)
+
 
     -- add right aligned current page/buffer info
     --if #_active_tab.pages > 0 then
@@ -131,7 +187,7 @@ local function _setup_tabs()
     --    table.insert(winbar_parts, "%=" .. name)
     --end
     -- set the winbar
-    vim.wo[win].winbar = table.concat(winbar_parts, '')
+    vim.wo[win].winbar = winbar
 end
 
 local _throttled_setup_tabs = throttle.throttle_wrap(100, _setup_tabs)
