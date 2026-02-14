@@ -39,7 +39,7 @@ error('Cannot require a meta file')
 
 ---@class loop.TaskTypeProvider
 ---@field get_task_schema fun():table
----@field start_one_task fun(task:loop.Task, page_manager:loop.PageManager,on_exit:loop.TaskExitHandler):(loop.TaskControl|nil,string|nil)
+---@field start_one_task fun(task:loop.Task, page_group:loop.PageGroup,on_exit:loop.TaskExitHandler):(loop.TaskControl|nil,string|nil)
 ---@field on_tasks_cleanup fun()?
 
 ---@class loop.TaskTemplateProvider
@@ -113,4 +113,3 @@ error('Cannot require a meta file')
 ---@field add_page_group fun(label:string):loop.PageGroup|nil
 ---@field delete_all_groups fun(expire:boolean)
 
----@alias loop.PageManagerFactory fun():loop.PageManager

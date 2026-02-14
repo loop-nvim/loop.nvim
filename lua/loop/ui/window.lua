@@ -34,9 +34,6 @@ local _tabs_arr = {}
 ---@type number
 local _active_tab_idx = 1
 
----@type loop.PageManagerFactory
-local _page_manger_factory
-
 ---@type loop.pages.Page
 local _placeholder_page
 
@@ -669,13 +666,9 @@ local function _create_page_manager()
     }
 end
 
-function M.get_page_manager_factory()
-    if not _page_manger_factory then
-        _page_manger_factory = function()
-            return _create_page_manager()
-        end
-    end
-    return _page_manger_factory
+---@return loop.PageManager
+function M.create_page_manager()
+    return _create_page_manager()
 end
 
 ---@param config_dir string

@@ -12,11 +12,8 @@ local strtools       = require("loop.tools.strtools")
 ---@type loop.ws.WorkspaceInfo?
 local _workspace_info
 
----@type loop.PageManagerFactory?
-local _page_manager_fact
-
----@type table<string,loop.PageManager>
-local _last_pm_by_task = {}
+---@type loop.PageManager?
+local _page_manager
 
 ---@type loop.task.TasksStatusComp?,loop.PageController?,loop.PageGroup?
 local _status_comp, _status_page, _status_pagegroup
@@ -114,21 +111,16 @@ end
 ---@return loop.TaskControl|nil, string|nil
 local function _start_task(task, on_exit)
     logs.user_log("Starting task:\n" .. vim.inspect(task), "task")
-    assert(_page_manager_fact)
+    assert(_page_manager)
 
-    local pm = _last_pm_by_task[task.name]
-    if pm and task.if_running ~= "parallel" then
-        pm.delete_all_groups(true)
-    end
-    pm = _page_manager_fact()
-    _last_pm_by_task[task.name] = pm
+    local page_group = _page_manager.add_page_group(task.name)
 
     ---@type loop.TaskExitHandler
     local on_task_exit = function(ok, reason)
         on_exit(ok, reason)
     end
 
-    return taskmgr.run_one_task(task, pm, on_task_exit)
+    return taskmgr.run_one_task(task, page_group, on_task_exit)
 end
 
 ---@param config_dir string
@@ -145,12 +137,12 @@ local function _load_variables(config_dir)
 end
 
 ---@param ws_info loop.ws.WorkspaceInfo
----@param page_manager_fact loop.PageManagerFactory
-function M.on_workspace_open(ws_info, page_manager_fact)
+---@param page_manager loop.PageManager
+function M.on_workspace_open(ws_info, page_manager)
     _workspace_info = ws_info
-    _page_manager_fact = page_manager_fact
+    _page_manager = page_manager
     if (_status_comp or _status_page or _status_pagegroup) then return end
-    local group = page_manager_fact().add_page_group("Status")
+    local group = _page_manager.add_page_group("Status")
     assert(group, "page mgr error")
     local page_data = group.add_page({
         type = "comp",
@@ -166,7 +158,7 @@ function M.on_workspace_open(ws_info, page_manager_fact)
 end
 
 function M.on_workspace_close()
-    _page_manager_fact = nil
+    _page_manager = nil
     _workspace_info = nil
 end
 

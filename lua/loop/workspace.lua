@@ -28,6 +28,9 @@ local _init_err_msg = "init() not called"
 ---@type loop.ws.WorkspaceInfo?
 local _workspace_info = nil
 
+---@type loop.PageManager?
+local _page_manager  = nil
+
 local _save_timer = nil
 
 -- New: recent workspaces persistence
@@ -114,6 +117,10 @@ local function _close_workspace(quiet)
         logs.user_log("Workspace closed: " .. label, "workspace")
         vim.notify("Workspace closed")
     end
+
+    if _page_manager then
+        _page_manager.delete_all_groups(true)
+    end
     _workspace_info = nil
     statusline.set_workspace_name(nil)
 end
@@ -194,6 +201,7 @@ local function _load_workspace(dir)
         config_dir = config_dir,
         config = ws_config,
     }
+
     if not _workspace_info.name or _workspace_info.name == "" then
         _workspace_info.name = vim.fn.fnamemodify(dir, ":p:h:t")
     end
@@ -202,9 +210,10 @@ local function _load_workspace(dir)
 
     window.load_settings(config_dir)
 
-    local page_manager_fact = window.get_page_manager_factory()
     taskmgr.reset_provider_list(dir)
-    runner.on_workspace_open(_workspace_info, page_manager_fact)
+
+    _page_manager = window.create_page_manager()
+    runner.on_workspace_open(_workspace_info, _page_manager)
     extdata.on_workspace_load(_workspace_info)
 
     if not _save_timer then

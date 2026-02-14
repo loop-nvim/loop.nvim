@@ -378,17 +378,17 @@ function M.get_or_select_task(config_dir, mode, task_name, handler)
 end
 
 ---@param task loop.Task
----@param page_manager loop.PageManager
+---@param page_group loop.PageGroup
 ---@param exit_handler loop.TaskExitHandler
 ---@return loop.TaskControl|nil, string|nil
-function M.run_one_task(task, page_manager, exit_handler)
+function M.run_one_task(task, page_group, exit_handler)
     assert(task.type)
     local provider = M.get_task_type_provider(task.type)
     if not provider then
         vim.notify("Invalid task type: " .. tostring(task.type))
         return nil, "Invalid task type"
     end
-    return provider.start_one_task(task, page_manager, exit_handler)
+    return provider.start_one_task(task, page_group, exit_handler)
 end
 
 return M
