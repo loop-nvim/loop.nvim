@@ -26,16 +26,21 @@ local function _build_taskfile_schema()
             assert(provider.get_task_schema, "get_task_schema() not implemented for: " .. type)
             local provider_schema = provider.get_task_schema()
             if provider_schema then
+                local providers_props = provider_schema.properties or {}
+                assert(type(providers_props) == "table")
+                for name, _ in pairs(providers_props) do
+                    assert(not base_items.properties[name], ("task provider '%' defines a reserved property: '%s'"))
+                end
                 local oneOfItem = {
                     type = "object",
-                    properties = vim.tbl_extend("error", base_items.properties, provider_schema.properties or {}),
+                    properties = vim.tbl_extend("error", base_items.properties, providers_props),
                     required = vim.deepcopy(base_items.required),
                     ["x-order"] = base_items["x-order"] or {},
                 }
                 oneOfItem.__name = type
                 if provider_schema["x-order"] then vim.list_extend(oneOfItem["x-order"], provider_schema["x-order"]) end
                 oneOfItem.properties.type = { const = type, description = base_items.properties.type.description }
-                oneOfItem.additionalProperties = provider_schema.additionalProperties or false
+                oneOfItem.additionalProperties = false -- providers are not allowed to change this
                 for _, req in ipairs(provider_schema.required or {}) do
                     table.insert(oneOfItem.required, req)
                 end
@@ -317,7 +322,7 @@ local function _select_task(args, task_handler)
         items = choices,
         formatter = _task_preview,
         callback = function(task)
-        if task then
+            if task then
                 task_handler(task)
             end
         end

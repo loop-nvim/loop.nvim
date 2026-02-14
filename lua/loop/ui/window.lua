@@ -263,7 +263,7 @@ local function _create_window()
 
     local prev_win = vim.api.nvim_get_current_win()
     -- Open a bottom split.
-    vim.cmd('bot split')
+    vim.cmd('bot 1split')
 
     -- Get the new window ID.
     _loop_win = vim.api.nvim_get_current_win()
