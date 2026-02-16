@@ -16,65 +16,92 @@ local _workspace_info
 ---@type loop.PageManager?
 local _page_manager
 
----@type table<string,{run_id:number,pg:loop.PageGroup?,tast_ended:boolean?}[]>
+---@class LoopPageGroupEntry
+---@field run_id number
+---@field pg loop.PageGroup?
+---@field task_ended boolean
+
+---@type table<string, LoopPageGroupEntry[]>
+-- task_name -> list of run entries
 local _page_groups    = {}
 
 local _last_run_id    = 0
 
----@type fun(text:string)?
+---@class LoopRunState
+---@field waiting integer
+---@field running integer
+
+---@type table<number, LoopRunState>
+-- run_id -> counters
+local _run_state      = {}
+
+---@type fun(nb_waiting:number,nb_running:number)?
 local _status_handler = nil
 
 ---@param run_id number
 ---@param task_name string
----@return {run_id:number,pg:loop.PageGroup?,tast_ended:boolean?}?
+---@return LoopPageGroupEntry
 local function _get_pg_data(run_id, task_name)
     assert(_page_manager)
-    local task_pgdata = _page_groups[task_name]
-    if not task_pgdata then
-        task_pgdata = {}
-        _page_groups[task_name] = task_pgdata
+    local list = _page_groups[task_name]
+    if not list then
+        list = {}
+        _page_groups[task_name] = list
     end
-    do
-        -- if pg_data exists, return it
-        local pg_data = task_pgdata[run_id]
-        if pg_data and pg_data.pg and not pg_data.tast_ended then
-            return pg_data
+    local recyclable
+    for _, entry in ipairs(list) do
+        -- Reuse same run if still active
+        if entry.run_id == run_id and not entry.task_ended then
+            return entry
+        end
+
+        -- Track first recyclable entry
+        if entry.task_ended and not recyclable then
+            recyclable = entry
         end
     end
-    -- try to recycle a terminated pg_data from this task
-    local tgt_group
-    for _, pg_data in pairs(task_pgdata) do
-        if pg_data.tast_ended then
-            tgt_group = pg_data
-            break
+    local entry
+    if recyclable then
+        entry = recyclable
+        if entry.pg then
+            entry.pg.delete_group()
         end
+    else
+        entry = {}
+        table.insert(list, entry)
     end
-    -- or create a new pg_data
-    if not tgt_group then
-        tgt_group = task_pgdata[run_id] or {}
-        task_pgdata[run_id] = tgt_group
+    entry.run_id = run_id
+    entry.task_ended = false
+    entry.pg = _page_manager.add_page_group(task_name)
+    return entry
+end
+
+local function _report_state()
+    if not _status_handler then return end
+    local nb_waiting, nb_running = 0, 0
+    for _, state in pairs(_run_state) do
+        nb_waiting = nb_waiting + state.waiting
+        nb_running = nb_running + state.running
     end
-    if tgt_group.pg then
-        tgt_group.pg.delete_group()
-    end
-    tgt_group.pg = _page_manager.add_page_group(task_name)
-    return tgt_group
+    _status_handler(nb_waiting, nb_running)
 end
 
 ---@param run_id number
 ---@param root_name string
 ---@param err_msg string
 local function _report_run_failure(run_id, root_name, err_msg)
+    ---@type LoopPageGroupEntry
     local pg_data = _get_pg_data(run_id, root_name)
     if pg_data and pg_data.pg then
         local page = pg_data.pg.add_page({
             label = "Status",
-            type = "output"
+            type = "output",
+            activate = true,
         })
         if page then
-            page.output_buf.add_lines(err_msg)
+            page.output_buf.add_lines(err_msg or "Task failed")
         end
-        pg_data.tast_ended = true
+        pg_data.task_ended = true
     end
 end
 
@@ -91,7 +118,7 @@ local function _start_task(run_id, task, on_exit)
     end
     ---@type loop.TaskExitHandler
     local exit_handler = function(success, reason)
-        pg_data.tast_ended = true
+        pg_data.task_ended = true
         on_exit(success, reason)
     end
     return taskmgr.run_one_task(task, page_group, exit_handler)
@@ -137,7 +164,7 @@ function M.load_and_run_task(mode, task_name)
     end)
 end
 
----@param handler fun(text:string)
+---@param handler fun(nb_waiting:number,nb_running:number)
 function M.set_status_handler(handler)
     _status_handler = handler
 end
@@ -170,24 +197,12 @@ function M.run_task(all_tasks, root_name)
 
     _last_run_id = _last_run_id + 1
     local run_id = _last_run_id
-    ---@param task_name string
-    ---@param status loop.comp.StatusComp.Status
-    ---@param msg string?
-    local function report_status(task_name, status, msg)
-        local symbols = config.current.window.symbols
-        if msg then logs.user_log(("%s: %s"):format(task_name, msg), "task") end
-        if _status_handler then
-            local nb_waiting, nb_running = 0, 0 -- TODO
-            local parts = {}
-            if nb_waiting > 0 then
-                table.insert(parts, ("%s %d"):format(symbols.waiting, nb_waiting))
-            end
-            if nb_running > 0 then
-                table.insert(parts, ("%s %d"):format(symbols.running, nb_running))
-            end
-            _status_handler(table.concat(parts, "  "))
-        end
-    end
+
+    _run_state[run_id] = {
+        waiting = #used_tasks, -- initially all tasks are waiting
+        running = 0,
+    }
+    _report_state()
 
     local vars, _ = _load_variables(config_dir)
 
@@ -202,10 +217,10 @@ function M.run_task(all_tasks, root_name)
     resolver.resolve_macros(used_tasks, task_ctx, function(resolve_ok, resolved_tasks, resolve_error)
         if not resolve_ok or not resolved_tasks then
             local err_msg = resolve_error or "Failed to resolve macros in tasks"
-            for _, task in ipairs(used_tasks) do
-                report_status(task.name, "failure", err_msg)
-            end
+            logs.user_log(err_msg, "task")
             _report_run_failure(run_id, root_name, err_msg)
+            _run_state[run_id] = nil
+            _report_state()
             return
         end
         -- Check if any task in the chain requires saving buffers
@@ -236,12 +251,22 @@ function M.run_task(all_tasks, root_name)
             end,
             function(name, status, reason) -- on task event
                 logs.user_log(("%s: %s - %s"):format(name, status, reason), "task")
-                report_status(name, status, reason)
+                local state = _run_state[run_id]
+                if not state then return end
+                if status == "running" then
+                    state.waiting = math.max(0, state.waiting - 1)
+                    state.running = state.running + 1
+                elseif status == "success" or status == "failure" then
+                    state.running = math.max(0, state.running - 1)
+                end
+                if reason then
+                    logs.user_log(("%s: %s"):format(name, reason), "task")
+                end
+                _report_state()
             end,
             function(success, reason) -- on exit
-                if not success then
-                    _report_run_failure(run_id, root_name, reason)
-                end
+                _run_state[run_id] = nil
+                _report_state()
             end
         )
     end)

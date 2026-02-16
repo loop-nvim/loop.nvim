@@ -183,10 +183,11 @@ local function _setup_tabs()
 
     local width = vim.api.nvim_win_get_width(win)
     local status_text = _status_text or ""
+    local status = "%#LoopPluginStatusText#".. status_text .. "%#Winbar#"
 
     local remaining_with = math.max(width - #status_text, 2)
     local winbar = _build_winbar(remaining_with, active_tab, page_idx)
-    local full_winbar = ("%s %%=%%#LoopPluginStatusText#%s"):format(winbar, status_text)
+    local full_winbar = ("%s %%=%s"):format(winbar, status)
     -- set the winbar
     vim.wo[win].winbar = full_winbar
 end
@@ -751,7 +752,7 @@ function M.init()
         vim.api.nvim_set_hl(0, "LoopPluginActiveTab", { link = "Special" })
         vim.api.nvim_set_hl(0, "LoopPluginEventWarn", { link = "WarningMsg" })
         vim.api.nvim_set_hl(0, "LoopPluginEventsError", { link = "ErrorMsg" })
-        vim.api.nvim_set_hl(0, "LoopPluginStatusText", { link = "Title" })
+        vim.api.nvim_set_hl(0, "LoopPluginStatusText", { link = "DiagnosticInfo" })
     end
 
     vim.api.nvim_create_autocmd("WinClosed", {

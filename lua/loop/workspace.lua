@@ -1,5 +1,6 @@
 local M = {}
 
+local loopconfig = require("loop.config")
 local logs = require('loop.logs')
 local taskmgr = require("loop.task.taskmgr")
 local variablesmgr = require("loop.task.variablesmgr")
@@ -29,12 +30,12 @@ local _init_err_msg = "init() not called"
 local _workspace_info = nil
 
 ---@type loop.PageManager?
-local _page_manager  = nil
+local _page_manager   = nil
 
-local _save_timer = nil
+local _save_timer     = nil
 
 -- New: recent workspaces persistence
-local MAX_RECENTS = 50
+local MAX_RECENTS     = 50
 
 local function _get_recent_file()
     local data_dir = vim.fn.stdpath('data')
@@ -193,7 +194,6 @@ local function _load_workspace(dir)
         return false, "Failed to load workspace configuration (:Loop logs for details)"
     end
 
-    local loopconfig = require('loop.config')
     ---@type loop.ws.WorkspaceInfo
     _workspace_info = {
         name = ws_config.name,
@@ -624,8 +624,17 @@ function M.init()
 
     window.init()
 
-    runner.set_status_handler(function (text)
-        window.set_status_text(text)
+    runner.set_status_handler(function(nb_waiting, nb_running)
+        local symbols = loopconfig.current.window.symbols
+        local parts = {}
+        if nb_waiting > 0 then
+            table.insert(parts, ("%s %d"):format(symbols.waiting, nb_waiting))
+        end
+
+        if nb_running > 0 then
+            table.insert(parts, ("%s %d"):format(symbols.running, nb_running))
+        end
+        window.set_status_text(table.concat(parts, " "))
     end)
 
     vim.api.nvim_create_autocmd("VimLeavePre", {
