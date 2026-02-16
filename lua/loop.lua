@@ -20,7 +20,7 @@ local DEFAULT_CONFIG = {
             success = "✓",
             failure = "✗",
             waiting = "⧗",
-            running = "⚙",
+            running = "▶",
         },
     },
     macros = {},

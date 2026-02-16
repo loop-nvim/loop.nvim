@@ -1,13 +1,14 @@
-local M                = {}
+local M               = {}
 
-local taskmgr          = require("loop.task.taskmgr")
-local resolver         = require("loop.tools.resolver")
-local logs             = require("loop.logs")
-local task_scheduler   = require("loop.task.taskscheduler")
-local StatusComp       = require("loop.task.StatusComp")
-local config           = require("loop.config")
-local variablesmgr     = require("loop.task.variablesmgr")
-local strtools         = require("loop.tools.strtools")
+local taskmgr         = require("loop.task.taskmgr")
+local resolver        = require("loop.tools.resolver")
+local logs            = require("loop.logs")
+local task_scheduler  = require("loop.task.taskscheduler")
+local StatusComp      = require("loop.task.StatusComp")
+local config          = require("loop.config")
+local variablesmgr    = require("loop.task.variablesmgr")
+local strtools        = require("loop.tools.strtools")
+local planner         = require("loop.task.planner")
 
 ---@type loop.ws.WorkspaceInfo?
 local _workspace_info
@@ -15,130 +16,85 @@ local _workspace_info
 ---@type loop.PageManager?
 local _page_manager
 
----@type table<string,loop.PageGroup>
-local _last_page_group = {}
+---@type table<string,{run_id:number,pg:loop.PageGroup?,tast_ended:boolean?}[]>
+local _page_groups    = {}
 
----@type loop.task.TasksStatusComp?,loop.PageController?,loop.PageGroup?
-local _status_comp, _status_page, _status_pagegroup
-
-local _last_run_id     = 0
+local _last_run_id    = 0
 
 ---@type fun(text:string)?
-local _status_handler  = nil
+local _status_handler = nil
 
+---@param run_id number
 ---@param task_name string
----@param name_to_task table<string, loop.Task>
----@param visiting table<string, boolean>
----@param visited table<string, boolean>
----@return loop.TaskTreeNode? node, string? error
-local function _build_task_tree(task_name, name_to_task, visiting, visited)
-    -- True cycle (back-edge)
-    if visiting[task_name] then
-        return nil, "Cycle detected at task: " .. task_name
+---@return {run_id:number,pg:loop.PageGroup?,tast_ended:boolean?}?
+local function _get_pg_data(run_id, task_name)
+    assert(_page_manager)
+    local task_pgdata = _page_groups[task_name]
+    if not task_pgdata then
+        task_pgdata = {}
+        _page_groups[task_name] = task_pgdata
     end
-    local task = name_to_task[task_name]
-    if not task then
-        return nil, "Unknown task: " .. task_name
-    end
-    -- Option B: already expanded elsewhere → return leaf
-    if visited[task_name] then
-        return {
-            name = task.name,
-            order = task.depends_order or "sequence",
-            deps = {}, -- no re-expansion
-        }, nil
-    end
-    visiting[task_name] = true
-    local deps = {}
-    for _, dep_name in ipairs(task.depends_on or {}) do
-        local dep_node, err =
-            _build_task_tree(dep_name, name_to_task, visiting, visited)
-        if err then
-            return nil, err
-        end
-        table.insert(deps, dep_node)
-    end
-    visiting[task_name] = nil
-    visited[task_name] = true
-    return {
-        name = task.name,
-        order = task.depends_order or "sequence",
-        deps = deps,
-    }, nil
-end
-
----@param tasks loop.Task[]
----@param root string
----@return loop.TaskTreeNode|nil task_tree
----@return loop.Task[]? used_tasks
----@return string? error_msg
-local function _generate_task_plan(tasks, root)
-    local name_to_task = {}
-    for _, t in ipairs(tasks) do
-        if name_to_task[t.name] then
-            return nil, nil, "Duplicate task: " .. t.name
-        end
-        name_to_task[t.name] = t
-    end
-    local visited = {}
-    local visiting = {}
-    local tree, err = _build_task_tree(root, name_to_task, visiting, visited)
-    if err then return nil, nil, err end
-
-    ---@type loop.Task[]
-    local used_tasks = {}
-    for name, _ in pairs(visited) do
-        table.insert(used_tasks, name_to_task[name])
-    end
-
-    return tree, used_tasks, nil
-end
-
----@param node table Task node from generate_task_plan_tree
----@param prefix? string Internal use for indentation
----@param is_last? boolean Internal use to determine tree branch
-local function _print_task_tree(node, prefix, is_last)
-    prefix = prefix or ""
-    is_last = is_last or true
-
-    local branch = is_last and "└─ " or "├─ "
-    local line = prefix .. branch .. node.name .. " (" .. (node.order or "sequence") .. ")"
-    local new_prefix = prefix .. (is_last and "   " or "│  ")
-    if node.deps then
-        for i, child in ipairs(node.deps) do
-            line = line .. '\n' .. _print_task_tree(child, new_prefix, i == #node.deps)
+    do
+        -- if pg_data exists, return it
+        local pg_data = task_pgdata[run_id]
+        if pg_data and pg_data.pg and not pg_data.tast_ended then
+            return pg_data
         end
     end
-    return line
+    -- try to recycle a terminated pg_data from this task
+    local tgt_group
+    for _, pg_data in pairs(task_pgdata) do
+        if pg_data.tast_ended then
+            tgt_group = pg_data
+            break
+        end
+    end
+    -- or create a new pg_data
+    if not tgt_group then
+        tgt_group = task_pgdata[run_id] or {}
+        task_pgdata[run_id] = tgt_group
+    end
+    if tgt_group.pg then
+        tgt_group.pg.delete_group()
+    end
+    tgt_group.pg = _page_manager.add_page_group(task_name)
+    return tgt_group
 end
 
+---@param run_id number
+---@param root_name string
+---@param err_msg string
+local function _report_run_failure(run_id, root_name, err_msg)
+    local pg_data = _get_pg_data(run_id, root_name)
+    if pg_data and pg_data.pg then
+        local page = pg_data.pg.add_page({
+            label = "Status",
+            type = "output"
+        })
+        if page then
+            page.output_buf.add_lines(err_msg)
+        end
+        pg_data.tast_ended = true
+    end
+end
+
+---@param run_id number
 ---@param task loop.Task
 ---@param on_exit loop.TaskExitHandler
 ---@return loop.TaskControl|nil, string|nil
-local function _start_task(task, on_exit)
+local function _start_task(run_id, task, on_exit)
     logs.user_log("Starting task:\n" .. vim.inspect(task), "task")
-    assert(_page_manager)
-
-    if task.if_running ~= "parallel" then
-        local last_pg = _last_page_group[task.name]
-        if last_pg then
-            last_pg.delete_group()
-            _last_page_group[task.name] = nil
-        end
-    end
-
-    local page_group = _page_manager.add_page_group(task.name)
+    local pg_data = _get_pg_data(run_id, task.name)
+    local page_group = pg_data and pg_data.pg
     if not page_group then
         return nil, "failed to create page group"
     end
-
     ---@type loop.TaskExitHandler
-    local on_task_exit = function(ok, reason)
-        on_exit(ok, reason)
-        _last_page_group[task.name] = page_group
+    local exit_handler = function(success, reason)
+        pg_data.tast_ended = true
+        on_exit(success, reason)
     end
-
-    return taskmgr.run_one_task(task, page_group, on_task_exit)
+    return taskmgr.run_one_task(task, page_group, exit_handler)
 end
 
 ---@param config_dir string
@@ -159,20 +115,6 @@ end
 function M.on_workspace_open(ws_info, page_manager)
     _workspace_info = ws_info
     _page_manager = page_manager
-    if (_status_comp or _status_page or _status_pagegroup) then return end
-    local group = _page_manager.add_page_group("Status")
-    assert(group, "page mgr error")
-    local page_data = group.add_page({
-        type = "comp",
-        label = "Status",
-        buftype = "status",
-        activate = false,
-    })
-    assert(page_data)
-    page_data.comp_buf.disable_change_events()
-    local comp = StatusComp:new()
-    comp:link_to_buffer(page_data.comp_buf)
-    _status_comp, _status_page, _status_pagegroup = comp, page_data.page, group
 end
 
 function M.on_workspace_close()
@@ -204,7 +146,6 @@ end
 ---@param root_name string
 function M.run_task(all_tasks, root_name)
     assert(_workspace_info)
-    assert(_status_comp and _status_page and _status_pagegroup)
 
     local ws_dir = _workspace_info.ws_dir
     local config_dir = _workspace_info.config_dir
@@ -218,40 +159,25 @@ function M.run_task(all_tasks, root_name)
         return
     end
 
-    local node_tree, used_tasks, plan_error_msg = _generate_task_plan(all_tasks, root_name)
+    local node_tree, used_tasks, plan_error_msg = planner.generate_task_plan(all_tasks, root_name)
     if not node_tree or not used_tasks then
         logs.user_log(plan_error_msg or "Failed to build task plan", "task")
         vim.notify("Failed to start task, use ':Loop log' for details")
         return
     end
 
-    logs.user_log("Scheduling tasks:\n" .. _print_task_tree(node_tree))
+    logs.user_log("Scheduling tasks:\n" .. planner.print_task_tree(node_tree))
 
     _last_run_id = _last_run_id + 1
     local run_id = _last_run_id
-
-    local run_status_items = {}
-    for _, task in ipairs(used_tasks) do
-        run_status_items[task.name] = _status_comp:add_task(task.name, "waiting")
-    end
-
-    local function remove_status_items()
-        vim.defer_fn(function()
-            for _, id in pairs(run_status_items) do
-                _status_comp:remove_item(id)
-            end
-        end, 1000)
-    end
-
     ---@param task_name string
     ---@param status loop.comp.StatusComp.Status
     ---@param msg string?
     local function report_status(task_name, status, msg)
         local symbols = config.current.window.symbols
         if msg then logs.user_log(("%s: %s"):format(task_name, msg), "task") end
-        _status_comp:set_task_status(run_status_items[task_name], status, msg)
         if _status_handler then
-            local nb_waiting, nb_running = _status_comp:get_stats()
+            local nb_waiting, nb_running = 0, 0 -- TODO
             local parts = {}
             if nb_waiting > 0 then
                 table.insert(parts, ("%s %d"):format(symbols.waiting, nb_waiting))
@@ -279,7 +205,7 @@ function M.run_task(all_tasks, root_name)
             for _, task in ipairs(used_tasks) do
                 report_status(task.name, "failure", err_msg)
             end
-            remove_status_items()
+            _report_run_failure(run_id, root_name, err_msg)
             return
         end
         -- Check if any task in the chain requires saving buffers
@@ -306,14 +232,16 @@ function M.run_task(all_tasks, root_name)
             root_name,
             function(task, on_exit)
                 --_status_page.set_ui_flags(config.current.window.symbols.running)
-                return _start_task(task, on_exit)
+                return _start_task(run_id, task, on_exit)
             end,
             function(name, status, reason) -- on task event
                 logs.user_log(("%s: %s - %s"):format(name, status, reason), "task")
                 report_status(name, status, reason)
             end,
             function(success, reason) -- on exit
-                remove_status_items()
+                if not success then
+                    _report_run_failure(run_id, root_name, reason)
+                end
             end
         )
     end)
