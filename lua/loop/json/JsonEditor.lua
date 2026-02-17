@@ -452,7 +452,7 @@ end
 function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, errors)
     assert(type(tbl) == "table")
 
-    ---@type loop.comp.ItemTree.Item[]
+    ---@type loop.comp.ItemTree.ItemDef[]
     local items = {}
 
     if vim.islist(tbl) then
@@ -467,7 +467,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
 
             local e = errors[p]
 
-            ---@type loop.comp.ItemTree.Item
+            ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
                 expanded = self._fold_cache[p] ~= false,
@@ -503,7 +503,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
 
             local e = errors[p]
 
-            ---@type loop.comp.ItemTree.Item
+            ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
                 parent_id = parent_id,
