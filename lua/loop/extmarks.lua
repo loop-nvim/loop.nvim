@@ -155,7 +155,8 @@ local function _ensure_init()
 
     local augroup = vim.api.nvim_create_augroup("loopplugin_extmarks", { clear = true })
 
-    vim.api.nvim_create_autocmd({ "BufReadPost", "BufWinEnter" }, {
+    -- "BufWinEnter" most likely not needed, adding will cause double callback
+    vim.api.nvim_create_autocmd({ "BufReadPost" }, {
         group = augroup,
         callback = function(ev)
             for group in pairs(_defined_groups) do
