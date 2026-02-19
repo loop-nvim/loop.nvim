@@ -49,7 +49,7 @@ local function _get_placeholder_buf()
 end
 
 ---@param win number
----@param active_tab loop.TabInfo
+---@param active_tab loop.TabInfo?
 ---@param page_idx number
 local function _assign_buffer(win, active_tab, page_idx)
     local page_assigned = false
@@ -169,6 +169,7 @@ local function _setup_tabs()
     if not active_tab or vim.tbl_isempty(active_tab.pages) then
         for i, t in ipairs(_tabs_arr) do
             if #t.pages > 0 then
+                active_tab = t
                 _active_tab_idx = i
                 break
             end
@@ -178,12 +179,15 @@ local function _setup_tabs()
     if active_tab and active_tab.pages[active_tab.active_page_idx] then
         page_idx = active_tab.active_page_idx or page_idx
     end
+    if active_tab then
+        active_tab.changed_pages[page_idx] = false
+    end
 
     _assign_buffer(win, active_tab, page_idx)
 
     local width = vim.api.nvim_win_get_width(win)
     local status_text = _status_text or ""
-    local status = "%#LoopPluginStatusText#".. status_text .. "%#Winbar#"
+    local status = "%#LoopPluginStatusText#" .. status_text .. "%#Winbar#"
 
     local remaining_with = math.max(width - #status_text, 2)
     local winbar = _build_winbar(remaining_with, active_tab, page_idx)
@@ -303,15 +307,7 @@ end
 function M.winbar_click(id, clicks, button, mods)
     local tab_idx = math.floor(id / 1000)
     local page_idx = id % 1000
-
-    if _active_tab_idx ~= tab_idx then
-        _set_active_tab(tab_idx, nil)
-    else
-        local tab = _tabs_arr[tab_idx]
-        if tab and page_idx and page_idx > 0 then
-            _set_active_tab(tab_idx, page_idx)
-        end
-    end
+    _set_active_tab(tab_idx, page_idx)
 end
 
 local function _create_window()
