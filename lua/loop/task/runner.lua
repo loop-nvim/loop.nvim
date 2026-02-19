@@ -17,7 +17,6 @@ local _workspace_info
 local _page_manager
 
 ---@class LoopPageGroupEntry
----@field run_id number
 ---@field pg loop.PageGroup?
 ---@field task_ended boolean
 
@@ -38,12 +37,10 @@ local _run_state      = {}
 ---@type fun(nb_waiting:number,nb_running:number)?
 local _status_handler = nil
 
----@param run_id number
 ---@param task_name string
 ---@return LoopPageGroupEntry
-local function _get_pg_data(run_id, task_name)
+local function _get_pg_data(task_name)
     assert(_page_manager)
-    assert(_run_state[run_id])
     local list = _page_groups[task_name]
     if not list then
         list = {}
@@ -51,14 +48,10 @@ local function _get_pg_data(run_id, task_name)
     end
     local recyclable
     for _, entry in ipairs(list) do
-        -- Reuse same run if still active
-        if entry.run_id == run_id and not entry.task_ended then
-            return entry
-        end
-
         -- Track first recyclable entry
         if entry.task_ended and not recyclable then
             recyclable = entry
+            break
         end
     end
     local entry
@@ -71,7 +64,6 @@ local function _get_pg_data(run_id, task_name)
         entry = {}
         table.insert(list, entry)
     end
-    entry.run_id = run_id
     entry.task_ended = false
     entry.pg = _page_manager.add_page_group(task_name)
     return entry
@@ -92,7 +84,7 @@ end
 ---@param err_msg string?
 local function _report_prelaunch_error(run_id, root_name, err_msg)
     ---@type LoopPageGroupEntry
-    local pg_data = _get_pg_data(run_id, root_name)
+    local pg_data = _get_pg_data(root_name)
     if pg_data then
         pg_data.task_ended = true
         if pg_data.pg and not pg_data.pg.have_pages() then
@@ -116,13 +108,12 @@ local function _on_run_end(run_id)
     _report_state()
 end
 
----@param run_id number
 ---@param task loop.Task
 ---@param on_exit loop.TaskExitHandler
 ---@return loop.TaskControl|nil, string|nil
-local function _start_task(run_id, task, on_exit)
+local function _start_task(task, on_exit)
     logs.user_log("Starting task:\n" .. vim.inspect(task), "task")
-    local pg_data = _get_pg_data(run_id, task.name)
+    local pg_data = _get_pg_data(task.name)
     local page_group = pg_data and pg_data.pg
     if not page_group then
         pg_data.task_ended = true
@@ -272,7 +263,7 @@ function M.run_task(all_tasks, root_name)
             root_name,
             function(task, on_exit)
                 --_status_page.set_ui_flags(config.current.window.symbols.running)
-                return _start_task(run_id, task, on_exit)
+                return _start_task(task, on_exit)
             end,
             function(name, status, reason) -- on task event
                 logs.user_log(("%s: %s - %s"):format(name, status, reason), "task")
