@@ -120,7 +120,8 @@ local function _close_workspace(quiet)
     end
 
     if _page_manager then
-        _page_manager.delete_all_groups(true)
+        _page_manager.delete_groups()
+        _page_manager.expire(true)
     end
     _workspace_info = nil
     statusline.set_workspace_name(nil)
@@ -341,6 +342,13 @@ function M.open_workspace(dir, at_startup)
     end
 
     dir = dir or vim.fn.getcwd()
+    if _workspace_info and dir == _workspace_info.ws_dir then
+        vim.notify("Workspace already open")
+        return
+    end
+
+    _close_workspace()
+
     local ok, err_msg = _load_workspace(dir)
     if ok and _workspace_info then
         -- add to recent list (MRU)
@@ -465,7 +473,7 @@ end
 ---@return string[]
 function M.task_subcommands(args)
     if #args == 0 then
-        return { "run", "repeat", "terminate_all", "clean", "configure" }
+        return { "run", "repeat", "terminate_all", "configure" }
     end
     return {}
 end
@@ -495,8 +503,6 @@ function M.task_command(command, arg1, arg2)
         runner.terminate_task(arg1)
     elseif command == "terminate_all" then
         runner.terminate_tasks()
-    elseif command == "clean" then
-        runner.clean_pages()
     else
         vim.notify('Invalid task command: ' .. command)
     end
@@ -536,7 +542,7 @@ end
 
 function M.ui_subcommands(args)
     if #args == 0 then
-        return { "toggle", "show", "hide" }
+        return { "toggle", "show", "hide", "clean" }
     end
     return {}
 end
@@ -574,6 +580,8 @@ function M.ui_command(command)
         M.show_window()
     elseif command == "hide" then
         M.hide_window()
+    elseif command == "clean" then
+        if _page_manager then _page_manager.delete_expired_groups() end
     else
         vim.notify("Invalid command: " .. command)
     end

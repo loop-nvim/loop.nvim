@@ -104,13 +104,15 @@ error('Cannot require a meta file')
 
 ---@class loop.PageGroup
 ---@field have_pages fun():boolean
----@field expired fun():boolean
 ---@field add_page fun(opts:loop.PageOpts):loop.PageData?,string?
 ---@field delete_pages fun()
 ---@field delete_group fun()
+---@field expire fun(delete_pages:boolean?)
+---@field is_expired fun():boolean
 
 ---@class loop.PageManager
----@field expired fun():boolean
 ---@field add_page_group fun(label:string):loop.PageGroup|nil
----@field delete_all_groups fun(expire:boolean)
-
+---@field delete_groups fun()
+---@field delete_expired_groups fun()
+---@field expire fun(delete_groups:boolean)
+---@field is_expired fun():boolean

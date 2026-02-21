@@ -88,7 +88,12 @@ end
 ---@return fun(name:string):loop.PageGroup?
 local function _make_request_page_group_fn(ext_context, page_manager)
 	return function(name)
+		---@type loop.PageGroup?
 		local group = ext_context.page_groups[name]
+		if group and group.is_expired() then
+			group.delete_group()
+			group = nil
+		end
 		if not group then
 			group = page_manager.add_page_group(name)
 			ext_context.page_groups[name] = group

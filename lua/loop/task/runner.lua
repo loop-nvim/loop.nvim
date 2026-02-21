@@ -1,14 +1,14 @@
-local M               = {}
+local M                   = {}
 
-local taskmgr         = require("loop.task.taskmgr")
-local resolver        = require("loop.tools.resolver")
-local logs            = require("loop.logs")
-local task_scheduler  = require("loop.task.taskscheduler")
-local StatusComp      = require("loop.task.StatusComp")
-local config          = require("loop.config")
-local variablesmgr    = require("loop.task.variablesmgr")
-local strtools        = require("loop.tools.strtools")
-local planner         = require("loop.task.planner")
+local taskmgr             = require("loop.task.taskmgr")
+local resolver            = require("loop.tools.resolver")
+local logs                = require("loop.logs")
+local task_scheduler      = require("loop.task.taskscheduler")
+local StatusComp          = require("loop.task.StatusComp")
+local config              = require("loop.config")
+local variablesmgr        = require("loop.task.variablesmgr")
+local strtools            = require("loop.tools.strtools")
+local planner             = require("loop.task.planner")
 
 ---@type loop.ws.WorkspaceInfo?
 local _workspace_info
@@ -16,15 +16,11 @@ local _workspace_info
 ---@type loop.PageManager?
 local _page_manager
 
----@class LoopPageGroupEntry
----@field pg loop.PageGroup?
----@field task_ended boolean
-
----@type table<string, LoopPageGroupEntry[]>
+---@type table<string, loop.PageGroup[]>
 -- task_name -> list of run entries
-local _page_groups    = {}
+local _expired_pagegroups = {}
 
-local _last_run_id    = 0
+local _last_run_id        = 0
 
 ---@class LoopRunState
 ---@field waiting integer
@@ -32,42 +28,10 @@ local _last_run_id    = 0
 
 ---@type table<number, LoopRunState>
 -- run_id -> counters
-local _run_state      = {}
+local _run_state          = {}
 
 ---@type fun(nb_waiting:number,nb_running:number)?
-local _status_handler = nil
-
----@param task_name string
----@return LoopPageGroupEntry
-local function _get_pg_data(task_name)
-    assert(_page_manager)
-    local list = _page_groups[task_name]
-    if not list then
-        list = {}
-        _page_groups[task_name] = list
-    end
-    local recyclable
-    for _, entry in ipairs(list) do
-        -- Track first recyclable entry
-        if entry.task_ended and not recyclable then
-            recyclable = entry
-            break
-        end
-    end
-    local entry
-    if recyclable then
-        entry = recyclable
-        if entry.pg then
-            entry.pg.delete_group()
-        end
-    else
-        entry = {}
-        table.insert(list, entry)
-    end
-    entry.task_ended = false
-    entry.pg = _page_manager.add_page_group(task_name)
-    return entry
-end
+local _status_handler     = nil
 
 local function _report_state()
     if not _status_handler then return end
@@ -80,52 +44,47 @@ local function _report_state()
 end
 
 ---@param run_id number
----@param root_name string
----@param err_msg string?
-local function _report_prelaunch_error(run_id, root_name, err_msg)
-    ---@type LoopPageGroupEntry
-    local pg_data = _get_pg_data(root_name)
-    if pg_data then
-        pg_data.task_ended = true
-        if pg_data.pg and not pg_data.pg.have_pages() then
-            local page = pg_data.pg.add_page({
-                label = "Error",
-                type = "output",
-                activate = true,
-            })
-            if page then
-                page.output_buf.add_lines(err_msg or "Task failed")
-            end
-        end
-    end
-end
-
-
----@param run_id number
 local function _on_run_end(run_id)
-    ---@type LoopPageGroupEntry
     _run_state[run_id] = nil
     _report_state()
 end
 
+---@param task_name string
+---@param page_group loop.PageGroup
+local function _expire_page_group(task_name, page_group)
+    page_group.expire()
+    _expired_pagegroups[task_name] = _expired_pagegroups[task_name] or {}
+    table.insert(_expired_pagegroups[task_name], page_group)
+end
+
+---@param task_name  string
+local function _delete_expired_groups(task_name)
+    local expired_groups = _expired_pagegroups[task_name]
+    if expired_groups then
+        for _, group in ipairs(expired_groups) do
+            group.delete_group()
+        end
+        _expired_pagegroups[task_name] = {}
+    end
+end
+
 ---@param task loop.Task
+---@param page_group loop.PageGroup
 ---@param on_exit loop.TaskExitHandler
 ---@return loop.TaskControl|nil, string|nil
-local function _start_task(task, on_exit)
+local function _start_task(task, page_group, on_exit)
     logs.user_log("Starting task:\n" .. vim.inspect(task), "task")
-    local pg_data = _get_pg_data(task.name)
-    local page_group = pg_data and pg_data.pg
-    if not page_group then
-        pg_data.task_ended = true
-        return nil, "failed to create page group"
-    end
     ---@type loop.TaskExitHandler
     local exit_handler = function(success, reason)
-        pg_data.task_ended = true
+        _expire_page_group(task.name, page_group)
         on_exit(success, reason)
     end
+
     local taskctrl, err_msg = taskmgr.run_one_task(task, page_group, exit_handler)
-    if not taskctrl and err_msg and not page_group.have_pages() then
+    if not taskctrl then
+        _expire_page_group(task.name, page_group)
+    end
+    if err_msg and not page_group.have_pages() then
         local page = page_group.add_page({
             label = "Error",
             type = "output",
@@ -134,9 +93,6 @@ local function _start_task(task, on_exit)
         if page then
             page.output_buf.add_lines(err_msg or "Task failed")
         end
-    end
-    if not taskctrl then
-        pg_data.task_ended = true
     end
     return taskctrl, err_msg
 end
@@ -210,6 +166,32 @@ function M.run_task(all_tasks, root_name)
         return
     end
 
+    for _, task in ipairs(used_tasks) do
+        _delete_expired_groups(task.name)
+    end
+
+    local root_page_group = _page_manager and _page_manager.add_page_group(root_name)
+    if not root_page_group then
+        logs.user_log(plan_error_msg or "Failed to create page group", "task")
+        vim.notify("Failed to start task, use ':Loop log' for details")
+        return
+    end
+
+    ---@param err_msg string
+    local function on_run_failed(err_msg)
+        logs.user_log(err_msg, "task")
+        if not root_page_group.have_pages() then
+            local page = root_page_group.add_page({
+                label = "Error",
+                type = "output",
+                activate = true,
+            })
+            if page then
+                page.output_buf.add_lines(err_msg or "Task failed")
+            end
+        end
+        _expire_page_group(root_name, root_page_group)
+    end
     logs.user_log("Scheduling tasks:\n" .. planner.print_task_tree(node_tree))
 
     _last_run_id = _last_run_id + 1
@@ -234,8 +216,7 @@ function M.run_task(all_tasks, root_name)
     resolver.resolve_macros(used_tasks, task_ctx, function(resolve_ok, resolved_tasks, resolve_error)
         if not resolve_ok or not resolved_tasks then
             local err_msg = resolve_error or "Failed to resolve macros in tasks"
-            logs.user_log(err_msg, "task")
-            _report_prelaunch_error(run_id, root_name, err_msg)
+            on_run_failed(err_msg)
             _on_run_end(run_id)
             return
         end
@@ -262,8 +243,16 @@ function M.run_task(all_tasks, root_name)
             resolved_tasks,
             root_name,
             function(task, on_exit)
-                --_status_page.set_ui_flags(config.current.window.symbols.running)
-                return _start_task(task, on_exit)
+                local page_group
+                if task.name == root_name then
+                    page_group = root_page_group
+                else
+                    page_group = _page_manager and _page_manager.add_page_group(task.name)
+                end
+                if not page_group then
+                    return nil, "failed to create page group"
+                end
+                return _start_task(task, page_group, on_exit)
             end,
             function(name, status, reason) -- on task event
                 logs.user_log(("%s: %s - %s"):format(name, status, reason), "task")
@@ -281,20 +270,13 @@ function M.run_task(all_tasks, root_name)
                 _report_state()
             end,
             function(success, reason) -- on exit
-                _on_run_end(run_id, root_name, success, reason)
+                if not success then
+                    on_run_failed(reason)
+                end
+                _on_run_end(run_id)
             end
         )
     end)
-end
-
-function M.clean_pages()
-    for _, list in pairs(_page_groups) do
-        for _, pg_data in ipairs(list) do
-            if pg_data.task_ended and pg_data.pg then
-                pg_data.pg.delete_group()
-            end
-        end
-    end
 end
 
 --- Check if a task plan is currently running or terminating

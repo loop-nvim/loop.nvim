@@ -197,9 +197,7 @@ local function _setup_tabs()
     local winbar = _build_winbar(remaining_with, active_tab, page_idx)
 
     local full_winbar
-    if winbar == "" and status_text == "" then
-        full_winbar = "No tasks"
-    else
+    if winbar ~= "" or status_text ~= "" then
         full_winbar = ("%s %%=%s"):format(winbar, status)
     end
     -- set the winbar
@@ -654,28 +652,30 @@ local function _create_page_manager()
     ---@param tab loop.TabInfo
     ---@return loop.PageGroup
     local function make_page_group(tab)
-        local deleted = false
+        local expired, deleted = false, false
         ---@type loop.PageGroup
         return {
             have_pages = function()
                 return #tab.pages > 0
             end,
-            expired = function()
-                return deleted
+            is_expired = function()
+                return expired
             end,
             add_page = function(opts)
-                if deleted then return nil end
+                if expired or deleted then return nil end
                 local page_data, err = _add_tab_page(tab, opts)
                 return page_data, err
             end,
             delete_pages = function()
-                if deleted then return end
                 _delete_tab_pages(tab)
             end,
             delete_group = function()
                 if deleted then return end
                 _delete_tab(tab)
-                deleted = true
+                expired, deleted = true, true
+            end,
+            expire = function(delete_pages)
+                expired = true
             end
         }
     end
@@ -686,7 +686,7 @@ local function _create_page_manager()
 
     ---@type loop.PageManager
     return {
-        expired = function()
+        is_expired = function()
             return is_expired
         end,
         add_page_group = function(label)
@@ -696,12 +696,25 @@ local function _create_page_manager()
             table.insert(groups, group)
             return group
         end,
-        delete_all_groups = function(expire)
-            if is_expired then return end
+        delete_groups = function()
             for _, grp in ipairs(groups) do
                 grp.delete_group()
             end
-            if expire then is_expired = true end
+            groups = {}
+        end,
+        delete_expired_groups = function()
+            local remaining = {}
+            for _, grp in ipairs(groups) do
+                if grp.is_expired() then
+                    grp.delete_group()
+                else
+                    table.insert(remaining, grp)
+                end
+            end
+            groups = remaining
+        end,
+        expire = function()
+            is_expired = true
         end
     }
 end
