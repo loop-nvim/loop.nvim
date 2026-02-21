@@ -81,10 +81,8 @@ local function _start_task(task, page_group, on_exit)
     end
 
     local taskctrl, err_msg = taskmgr.run_one_task(task, page_group, exit_handler)
-    if not taskctrl then
-        _expire_page_group(task.name, page_group)
-    end
     if err_msg and not page_group.have_pages() then
+        -- add the error before expiring the page group
         local page = page_group.add_page({
             label = "Error",
             type = "output",
@@ -94,6 +92,9 @@ local function _start_task(task, page_group, on_exit)
             page.output_buf.add_lines(err_msg or "Task failed")
         end
     end
+    if not taskctrl then
+        _expire_page_group(task.name, page_group)
+    end    
     return taskctrl, err_msg
 end
 
