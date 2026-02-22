@@ -80,6 +80,8 @@ local function _start_task(task, page_group, on_exit)
         on_exit(success, reason)
     end
 
+    _delete_expired_groups(task.name)
+
     local taskctrl, err_msg = taskmgr.run_one_task(task, page_group, exit_handler)
     if err_msg and not page_group.have_pages() then
         -- add the error before expiring the page group
@@ -94,7 +96,7 @@ local function _start_task(task, page_group, on_exit)
     end
     if not taskctrl then
         _expire_page_group(task.name, page_group)
-    end    
+    end
     return taskctrl, err_msg
 end
 
@@ -156,28 +158,27 @@ function M.run_task_with_deps(all_tasks, root_name)
         _delete_expired_groups(task.name)
     end
 
-    local root_page_group = _page_manager and _page_manager.add_page_group(root_name)
-    if not root_page_group then
-        logs.user_log(plan_error_msg or "Failed to create page group", "task")
-        vim.notify("Failed to start task, use ':Loop log' for details")
-        return
-    end
-
+    ---@type loop.PageGroup?
+    local root_page_group
     ---@param err_msg string
     local function on_run_failed(err_msg)
         logs.user_log(err_msg, "task")
-        if not root_page_group.have_pages() then
-            local page = root_page_group.add_page({
-                label = "Error",
-                type = "output",
-                activate = true,
-            })
-            if page then
-                page.output_buf.add_lines(err_msg or "Task failed")
+        if not root_page_group or not root_page_group.have_pages() then
+            root_page_group = _page_manager and _page_manager.add_page_group(root_name)
+            if root_page_group then
+                local page = root_page_group.add_page({
+                    label = "Error",
+                    type = "output",
+                    activate = true,
+                })
+                if page then
+                    page.output_buf.add_lines(err_msg or "Task failed")
+                end
+                _expire_page_group(root_name, root_page_group)
             end
         end
-        _expire_page_group(root_name, root_page_group)
     end
+
     logs.user_log("Scheduling tasks:\n" .. planner.print_task_tree(node_tree))
 
     _last_run_id = _last_run_id + 1
@@ -229,11 +230,9 @@ function M.run_task_with_deps(all_tasks, root_name)
             resolved_tasks,
             root_name,
             function(task, on_exit)
-                local page_group
+                local page_group = _page_manager and _page_manager.add_page_group(task.name)
                 if task.name == root_name then
-                    page_group = root_page_group
-                else
-                    page_group = _page_manager and _page_manager.add_page_group(task.name)
+                    root_page_group = page_group
                 end
                 if not page_group then
                     return nil, "failed to create page group"
