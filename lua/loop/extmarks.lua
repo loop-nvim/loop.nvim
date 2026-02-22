@@ -4,15 +4,24 @@ local M = {}
 -- Types
 -- ===================================================================
 
----@class loop.extmarks.Mark
+---@class loop.extmarks.MarkInfo
+---@field id number
+---@field file string
+---@field lnum number        -- 1-based
+---@field col number        -- 0-based
+---@field opts vim.api.keyset.set_extmark
+---@field user_data any
+
+---@class loop.extmarks.MarkData
 ---@field id number
 ---@field group string
 ---@field ns number
 ---@field lnum number        -- 1-based
 ---@field col number        -- 0-based
 ---@field opts vim.api.keyset.set_extmark
+---@field user_data any
 
----@alias loop.extmarks.ById table<number, loop.extmarks.Mark>
+---@alias loop.extmarks.ById table<number, loop.extmarks.MarkData>
 ---@alias loop.extmarks.ByFile table<string, loop.extmarks.ById>
 
 ---@class loop.extmarks.GroupData
@@ -22,7 +31,6 @@ local M = {}
 
 ---@class loop.extmarks.GroupInfo
 ---@field priority number
----@field update_handler fun(file:string,marks:loop.extmarks.ById)?
 ---@field data loop.extmarks.GroupData
 
 ---@type table<string, loop.extmarks.GroupInfo>
@@ -46,8 +54,8 @@ local function _get_loaded_bufnr(file)
 end
 
 ---@param bufnr integer
----@param mark loop.extmarks.Mark
-local function _place_extmark(bufnr, mark)
+---@param mark loop.extmarks.MarkData
+local function _set_extmark(bufnr, mark)
     if not vim.api.nvim_buf_is_loaded(bufnr) then return end
 
     local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -85,31 +93,8 @@ local function _apply_buffer_extmarks(bufnr, group)
     if not file_data then return end
 
     for _, mark in pairs(file_data) do
-        _place_extmark(bufnr, mark)
+        _set_extmark(bufnr, mark)
     end
-end
-
----@param group string
----@param file string
-local function _notify_group_update(group, file)
-    local group_info = _defined_groups[group]
-    assert(group_info)
-
-    if not group_info.update_handler then return end
-
-    ---@type loop.extmarks.ById
-    local update = {}
-
-    local group_data = group_info.data
-    local file_table = group_data.byfile[file]
-    if file_table then
-        for id, mark in pairs(file_table) do
-            ---@type loop.extmarks.Mark
-            update[id] = mark
-        end
-    end
-
-    group_info.update_handler(file, update)
 end
 
 ---@param bufnr number
@@ -125,7 +110,7 @@ local function _sync_file_extmarks(bufnr)
             goto continue
         end
 
-        local placed = vim.api.nvim_buf_get_extmarks(
+        local is_set = vim.api.nvim_buf_get_extmarks(
             bufnr,
             group_data.ns,
             0,
@@ -133,7 +118,7 @@ local function _sync_file_extmarks(bufnr)
             { details = false }
         )
 
-        for _, m in ipairs(placed) do
+        for _, m in ipairs(is_set) do
             local id, row, col = m[1], m[2], m[3]
             local mark = file_table[id]
             if mark then
@@ -141,8 +126,6 @@ local function _sync_file_extmarks(bufnr)
                 mark.col = col
             end
         end
-
-        _notify_group_update(group, file)
 
         ::continue::
     end
@@ -155,7 +138,8 @@ local function _ensure_init()
 
     local augroup = vim.api.nvim_create_augroup("loopplugin_extmarks", { clear = true })
 
-    vim.api.nvim_create_autocmd({ "BufReadPost", "BufWinEnter" }, {
+    -- "BufWinEnter" most likely not needed, adding will cause double callback
+    vim.api.nvim_create_autocmd({ "BufReadPost" }, {
         group = augroup,
         callback = function(ev)
             for group in pairs(_defined_groups) do
@@ -184,8 +168,9 @@ end
 ---@param col number        -- 0-based
 ---@param group string
 ---@param opts vim.api.keyset.set_extmark       -- extmark opts
+---@param user_data any
 ---@see vim.api.nvim_buf_set_extmark
-local function _place_file_extmark(id, file, lnum, col, group, opts)
+local function _set_file_extmark(id, file, lnum, col, group, opts, user_data)
     _ensure_init()
 
     assert(lnum >= 1, "lnum must be 1-based")
@@ -210,7 +195,7 @@ local function _place_file_extmark(id, file, lnum, col, group, opts)
     group_data.id_to_file[id] = file
     group_data.byfile[file] = group_data.byfile[file] or {}
 
-    ---@type loop.extmarks.Mark
+    ---@type loop.extmarks.MarkData
     local mark = {
         id = id,
         group = group,
@@ -221,12 +206,13 @@ local function _place_file_extmark(id, file, lnum, col, group, opts)
             id = id,
             priority = group_info.priority,
         }, opts or {}),
+        user_data = user_data,
     }
 
     group_data.byfile[file][id] = mark
 
     if bufnr >= 0 then
-        _place_extmark(bufnr, mark)
+        _set_extmark(bufnr, mark)
     end
 end
 
@@ -305,6 +291,213 @@ local function _remove_extmarks(group)
     group_data.id_to_file = {}
 end
 
+---@param id number
+---@param group string
+---@return loop.extmarks.MarkInfo?
+local function _get_extmark_by_id(id, group)
+    _ensure_init()
+
+    local group_info = _defined_groups[group]
+    assert(group_info)
+
+    local group_data = group_info.data
+    local file = group_data.id_to_file[id]
+    if not file then return nil end
+
+    local file_table = group_data.byfile[file]
+    if not file_table then return nil end
+
+    local mark = file_table[id]
+    if not mark then return nil end
+
+    return {
+        id = mark.id,
+        file = file,
+        lnum = mark.lnum,
+        col = mark.col,
+        opts = mark.opts,
+        user_data = mark.user_data,
+    }
+end
+
+---@param file string
+---@param line number
+---@param group string
+---@param committed boolean
+---@return loop.extmarks.MarkInfo?
+local function _get_extmark_by_location(file, line, group, committed)
+    _ensure_init()
+
+    assert(type(committed) == "boolean")
+    assert(line >= 1, "line must be 1-based")
+
+    local group_info = _defined_groups[group]
+    assert(group_info)
+
+    file = _normalize_file(file)
+    local group_data = group_info.data
+
+    -- live buffer lookup
+    local bufnr = committed and -1 or _get_loaded_bufnr(file)
+    if bufnr >= 0 then
+        local extmarks = vim.api.nvim_buf_get_extmarks(
+            bufnr,
+            group_data.ns,
+            { line - 1, 0 },
+            { line - 1, -1 },
+            { details = false }
+        )
+        if #extmarks == 0 then
+            return nil
+        end
+        local id = extmarks[1][1]
+        return _get_extmark_by_id(id, group)
+    end
+
+    local file_table = group_data.byfile[file]
+    if not file_table then return nil end
+
+    for id, mark in pairs(file_table) do
+        if mark.lnum == line then
+            return {
+                id = id,
+                file = file,
+                lnum = mark.lnum,
+                col = mark.col,
+                opts = mark.opts,
+                user_data = mark.user_data,
+            }
+        end
+    end
+
+    return nil
+end
+
+---@param group string
+---@param committed boolean
+---@return loop.extmarks.MarkInfo[]
+local function _get_extmarks(group, committed)
+    _ensure_init()
+
+    assert(type(committed) == "boolean")
+
+    local group_info = _defined_groups[group]
+    assert(group_info)
+
+    local group_data = group_info.data
+
+    ---@type loop.extmarks.MarkInfo[]
+    local result = {}
+
+    -- Return stored model (last synced state)
+    for file, file_table in pairs(group_data.byfile) do
+        local bufnr = committed and -1 or _get_loaded_bufnr(file)
+        if bufnr >= 0 then
+            local items = vim.api.nvim_buf_get_extmarks(
+                bufnr,
+                group_data.ns,
+                0,
+                -1,
+                { details = false }
+            )
+            for _, m in ipairs(items) do
+                local id, row, col = m[1], m[2], m[3]
+                local mark = file_table[id]
+                if mark then
+                    result[#result + 1] = {
+                        id = id,
+                        file = file,
+                        lnum = row + 1,
+                        col = col,
+                        opts = mark.opts,
+                        user_data = mark.user_data,
+                    }
+                end
+            end
+        else
+            for id, mark in pairs(file_table) do
+                result[#result + 1] = {
+                    id = id,
+                    file = file,
+                    lnum = mark.lnum,
+                    col = mark.col,
+                    opts = mark.opts,
+                    user_data = mark.user_data,
+                }
+            end
+        end
+    end
+
+    return result
+end
+
+---@param file string
+---@param group string?
+---@param committed boolean
+---@return loop.extmarks.MarkInfo[]
+local function _get_file_extmarks(file, group, committed)
+    _ensure_init()
+    assert(type(committed) == "boolean")
+
+    file = _normalize_file(file)
+    local result = {}
+
+    local groups = {}
+
+    if group then
+        local g_info = _defined_groups[group]
+        if not g_info then return result end
+        groups[group] = g_info
+    else
+        groups = _defined_groups
+    end
+
+    for gname, g_info in pairs(groups) do
+        local gdata = g_info.data
+        local file_table = gdata.byfile[file]
+        if file_table then
+            local bufnr = committed and -1 or _get_loaded_bufnr(file)
+            if bufnr >= 0 then
+                local items = vim.api.nvim_buf_get_extmarks(
+                    bufnr,
+                    gdata.ns,
+                    0,
+                    -1,
+                    { details = false }
+                )
+                for _, m in ipairs(items) do
+                    local id, row, col = m[1], m[2], m[3]
+                    local mark = file_table[id]
+                    if mark then
+                        result[#result + 1] = {
+                            id = mark.id,
+                            file = file,
+                            lnum = row + 1,
+                            col = col,
+                            opts = mark.opts,
+                            user_data = mark.user_data,
+                        }
+                    end
+                end
+            else
+                -- Return stored marks directly
+                for _, mark in pairs(file_table) do
+                    result[#result + 1] = {
+                        id = mark.id,
+                        file = file,
+                        lnum = mark.lnum,
+                        col = mark.col,
+                        opts = mark.opts,
+                        user_data = mark.user_data,
+                    }
+                end
+            end
+        end
+    end
+
+    return result
+end
+
 ---@param group string
 local function _refresh_group(group)
     _ensure_init()
@@ -324,24 +517,26 @@ local function _refresh_group(group)
 end
 
 ---@class loop.extmarks.GroupFunctions
----@field place_file_extmark fun(id:number, file:string,lnum:number,col:number,opts:vim.api.keyset.set_extmark )
+---@field set_file_extmark fun(id:number, file:string,lnum:number,col:number,opts:vim.api.keyset.set_extmark, user_data:any)
 ---@field remove_extmarks fun()
 ---@field remove_extmark fun(id:number)
 ---@field remove_file_extmarks fun(file:string)
+---@field get_extmark_by_id fun(id:number):loop.extmarks.MarkInfo?
+---@field get_extmark_by_location fun(file:string,line:number,committed:boolean):loop.extmarks.MarkInfo?
+---@field get_extmarks fun(committed:boolean):loop.extmarks.MarkInfo[]
+---@field get_file_extmarks fun(file:string,committed:boolean):loop.extmarks.MarkInfo[]
 ---@field refresh fun()
 
 ---@param group string
----@param opts { priority: number}
----@param on_update fun(file:string,marks:loop.extmarks.ById)?
+---@param group_opts { priority: number}
 ---@return loop.extmarks.GroupFunctions
-function M.define_group(group, opts, on_update)
+function M.define_group(group, group_opts)
     assert(group, "group required")
-    assert(type(opts.priority) == "number", "missing opts")
+    assert(type(group_opts.priority) == "number", "missing opts")
     assert(not _defined_groups[group], "group already defined")
     ---@type loop.extmarks.GroupInfo
     local group_info = {
-        priority = opts.priority,
-        update_handler = on_update,
+        priority = group_opts.priority,
         data = {
             ns = vim.api.nvim_create_namespace("loopplugin_extmarks_" .. group),
             byfile = {},
@@ -351,8 +546,8 @@ function M.define_group(group, opts, on_update)
     _defined_groups[group] = group_info
     ---@type loop.extmarks.GroupFunctions
     return {
-        place_file_extmark = function(id, file, lnum, col, opts)
-            _place_file_extmark(id, file, lnum, col, group, opts)
+        set_file_extmark = function(id, file, lnum, col, opts, user_data)
+            _set_file_extmark(id, file, lnum, col, group, opts, user_data)
         end
         ,
         remove_extmark = function(id)
@@ -363,6 +558,18 @@ function M.define_group(group, opts, on_update)
         end,
         remove_extmarks = function()
             _remove_extmarks(group)
+        end,
+        get_extmark_by_id = function(id)
+            return _get_extmark_by_id(id, group)
+        end,
+        get_extmark_by_location = function(file, line, committed)
+            return _get_extmark_by_location(file, line, group, committed)
+        end,
+        get_extmarks = function(committed)
+            return _get_extmarks(group, committed)
+        end,
+        get_file_extmarks = function(file, committed)
+            return _get_file_extmarks(file, group, committed)
         end,
         refresh = function()
             _refresh_group(group)

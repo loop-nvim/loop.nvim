@@ -73,11 +73,13 @@ end
 ---Sends output text to the buffer and redraws the prompt
 ---@param text string
 function ReplBuffer:send_line(text)
+	if self:is_destroyed() then return end
 	self:get_or_create_buf() -- ensure initialization to have the channel
 	if self._chan then
 		local formatted = "\r\27[K" .. text .. "\r\n" .. self._prompt .. self._current_line
 		vim.api.nvim_chan_send(self._chan, formatted)
 		self:_redraw_line()
+		self:request_change_notif()
 	end
 end
 

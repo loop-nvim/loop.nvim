@@ -44,7 +44,7 @@ local function _show_help()
         "  o        Add element after",
         "  O        Add element before",
         "  c        Change value",
-        "  C        Change value (multiline)",
+        "  C        Change value (JSON)",
         "  d        Delete element",
         "  u        Undo last change",
         "  C-r      Redo last change",
@@ -159,7 +159,7 @@ local function _show_node_help(item)
             if type(value) == "table" then
                 value = vim.inspect(value):gsub("\n", " ")
             end
-            table.insert(lines, ("  %-14s %s"):format(label .. ":", tostring(value)))
+            table.insert(lines, ("  %s: %s"):format(label, tostring(value)))
         end
 
         if type(schema.description) then
@@ -209,10 +209,16 @@ end
 ---@param value_type string
 ---@param enum string[]?
 ---@param default_text string?
----@param multiline boolean?
+---@param raw_input boolean?
 ---@param on_confirm fun(value:any)
-local function _request_value(name, value_type, enum, default_text, multiline, on_confirm)
+local function _request_value(name, value_type, enum, default_text, raw_input, on_confirm)
+    if raw_input then
+        if enum or value_type == "boolean" or value_type == "number" then
+            return
+        end
+    end
     if enum or value_type == "boolean" then
+        if raw_input then return end
         local values = enum or { true, false }
         ---@type {label: string, data: any}[]
         local choices = {}
@@ -246,7 +252,7 @@ local function _request_value(name, value_type, enum, default_text, multiline, o
         prompt = ("%s (%s)"):format(name, value_type),
         default_text = default_text,
     }
-    if multiline then
+    if raw_input then
         floatwin.input_multiline(input_opts, on_input)
     else
         floatwin.input_at_cursor(input_opts, on_input)
@@ -281,7 +287,7 @@ local function _formatter(_, data)
         table.insert(text_chunks, { ": ", "Comment" })
 
         if vt == "string" then
-            table.insert(text_chunks, { tostring(value), "@string" })
+            table.insert(text_chunks, { tostring(value):gsub("\n", "↵"), "@string" })
         elseif vt == "null" then
             table.insert(text_chunks, { "null", "@constant" })
         elseif vt == "boolean" then
@@ -353,7 +359,7 @@ function JsonEditor:open(winid)
     })
 
     buf:add_keymap("C", {
-        desc = "Change value (multiline)",
+        desc = "Change raw value",
         callback = function() with_current_item(function(i) self:_edit_value(i, true) end) end,
     })
 
@@ -446,7 +452,7 @@ end
 function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, errors)
     assert(type(tbl) == "table")
 
-    ---@type loop.comp.ItemTree.Item[]
+    ---@type loop.comp.ItemTree.ItemDef[]
     local items = {}
 
     if vim.islist(tbl) then
@@ -461,7 +467,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
 
             local e = errors[p]
 
-            ---@type loop.comp.ItemTree.Item
+            ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
                 expanded = self._fold_cache[p] ~= false,
@@ -497,7 +503,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
 
             local e = errors[p]
 
-            ---@type loop.comp.ItemTree.Item
+            ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
                 parent_id = parent_id,
@@ -537,8 +543,8 @@ function JsonEditor:value_at(path)
 end
 
 ---@param item loop.comp.ItemTree.Item
----@param multiline? boolean
-function JsonEditor:_edit_value(item, multiline)
+---@param raw_input? boolean
+function JsonEditor:_edit_value(item, raw_input)
     local path = item.data.path ---@type string
     local schema = item.data.schema or {} ---@type table
     local current_value = item.data.value ---@type any
@@ -546,6 +552,7 @@ function JsonEditor:_edit_value(item, multiline)
         return
     end
     if type(current_value) == "table" then
+        if not raw_input then return end
         ---@type loop.floatwin.MultilineInputOpts
         local input_opts = {
             prompt = path,
@@ -559,7 +566,7 @@ function JsonEditor:_edit_value(item, multiline)
         floatwin.input_multiline(input_opts, function(value)
             if value then
                 local ok, data = jsoncodec.from_string(value)
-                if ok then
+                if ok and type(data) == "table" then
                     self:_set_value(path, data)
                 else
                     vim.notify("Invalid JSON")
@@ -580,7 +587,7 @@ function JsonEditor:_edit_value(item, multiline)
             self:_set_value(path, value)
         end
     end
-    _request_value(item.data.key, item.data.value_type, schema.enum, default_text, multiline, on_confirm)
+    _request_value(item.data.key, item.data.value_type, schema.enum, default_text, raw_input, on_confirm)
 end
 
 ---@param path string

@@ -44,10 +44,11 @@ end
 ---@field on_exit_handler fun(code : number)|nil
 
 ---Starts a new terminal job.
+---@param bufnr number
 ---@param args loop.tools.TermProc.StartArgs
 ---@return boolean success
 ---@return string|nil error msg or nil
-function TermProc:start(args)
+function TermProc:start(bufnr, args)
 	if self.job_id ~= -1 then
 		return false, "already started"
 	end
@@ -55,18 +56,15 @@ function TermProc:start(args)
 	assert(args.on_exit_handler)
 	assert(type(args.command) == 'string' or type(args.command) == 'table')
 	assert(not args.env or type(args.env) == 'table')
-	assert(args.cwd, "cwd is required")
 
-	if vim.fn.isdirectory(args.cwd) == 0 then
-		return false, string.format("CWD: '%s' is not a valid directory", tostring(args.cwd))
-	end
-
-	-- get the real path (no symlinks etc...)
-	local cwd = vim.fn.fnamemodify(vim.fn.resolve(args.cwd), ':p')
+	-- get the real path (no symlinks etc..., important for cmake)
+	local cwd = args.cwd and vim.fn.fnamemodify(vim.fn.resolve(args.cwd), ':p')
 
 	---@type table<string,string>
-	local env = vim.deepcopy(args.env or {})
-	env.PWD = cwd -- required for commands to use cwd in all cases
+	local env = args.env and vim.deepcopy(args.env) or {}
+	if cwd then
+		env.PWD = cwd -- required for commands to use cwd in all cases
+	end
 
 	---@type string[]
 	local cmd_and_args = strtools.cmd_to_string_array(args.command)
@@ -79,9 +77,11 @@ function TermProc:start(args)
 		return false, "command is not an executable: " .. cmd_and_args[1]
 	end
 
-	local ok, err = self:_start_term_job(cmd_and_args, env, cwd, args.output_handler,
-		args.on_exit_handler)
-
+	local ok, err
+	vim.api.nvim_buf_call(bufnr, function()
+		ok, err = self:_start_term_job(cmd_and_args, env, cwd, args.output_handler,
+			args.on_exit_handler)
+	end)
 	return ok, err
 end
 

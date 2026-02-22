@@ -5,12 +5,14 @@ local Trackers = require("loop.tools.Trackers")
 ---@class loop.comp.ItemTree.Item
 ---@field id any
 ---@field data any
----@field children_callback nil|fun(cb:fun(items:loop.comp.ItemTree.Item[]))
+
+---@class loop.comp.ItemTree.ItemDef : loop.comp.ItemTree.Item
+---@field children_callback nil|fun(cb:fun(items:loop.comp.ItemTree.ItemDef[]))
 ---@field expanded boolean|nil
 
 ---@class loop.comp.ItemTree.ItemData
 ---@field userdata any
----@field children_callback nil|fun(cb:fun(items:loop.comp.ItemTree.Item[]))
+---@field children_callback nil|fun(cb:fun(items:loop.comp.ItemTree.ItemDef[]))
 ---@field expanded boolean|nil
 ---@field reload_children boolean|nil
 ---@field children_loading boolean|nil
@@ -52,9 +54,9 @@ local function _normalize_text_chunks(chunks)
         local parts = vim.split(text, "\n", { trimempty = false })
         for i, part in ipairs(parts) do
             table.insert(out, {
-                part, -- text
-                hl,   -- highlight
-                _nl = (i < #parts),
+                part,        -- text
+                hl,          -- highlight
+                (i < #parts) -- is new line
             })
         end
     end
@@ -62,9 +64,9 @@ local function _normalize_text_chunks(chunks)
     return out
 end
 
----@param item loop.comp.ItemTree.Item
+---@param item loop.comp.ItemTree.ItemDef
 ---@return loop.comp.ItemTree.ItemData
-local function _item_to_itemdata(item)
+local function _itemdef_to_itemdata(item)
     return {
         userdata = item.data,
         children_callback = item.children_callback,
@@ -113,7 +115,7 @@ local function _refresh_tree(tree, async_update)
                         if tree:get_item(item_id) then
                             local treeitems = {}
                             for _, child in ipairs(loaded_children or {}) do
-                                local basetreeitem = { id = child.id, data = _item_to_itemdata(child) }
+                                local basetreeitem = { id = child.id, data = _itemdef_to_itemdata(child) }
                                 table.insert(treeitems, basetreeitem)
                             end
                             tree:update_children(item_id, treeitems, _merge_itemdata)
@@ -192,6 +194,7 @@ end
 
 function ItemTree:dispose() end
 
+---@return loop.comp.ItemTree.Item?
 function ItemTree:get_cur_item()
     if self._linked_buf then
         local id, nodedata = self:_get_cur_node(self._linked_buf)
@@ -241,16 +244,16 @@ function ItemTree:clear_items()
 end
 
 ---@param parent_id any
----@param items loop.comp.ItemTree.Item[]
+---@param items loop.comp.ItemTree.ItemDef[]
 function ItemTree:upsert_items(parent_id, items)
     for _, item in ipairs(items) do
-        self._tree:upsert_item(parent_id, item.id, _item_to_itemdata(item))
+        self._tree:upsert_item(parent_id, item.id, _itemdef_to_itemdata(item))
     end
     self:_request_render()
 end
 
 ---@param parent_id any
----@param children loop.comp.ItemTree.Item[]
+---@param children loop.comp.ItemTree.ItemDef[]
 function ItemTree:update_children(parent_id, children)
     ---@type loop.tools.Tree.Item[]
     local baseitems = {}
@@ -258,7 +261,7 @@ function ItemTree:update_children(parent_id, children)
         ---@type loop.tools.Tree.Item
         local item = {
             id = child_item.id,
-            data = _item_to_itemdata(child_item)
+            data = _itemdef_to_itemdata(child_item)
         }
         table.insert(baseitems, item)
     end
@@ -267,21 +270,39 @@ function ItemTree:update_children(parent_id, children)
 end
 
 ---@param parent_id any
----@param item loop.comp.ItemTree.Item
+---@param item loop.comp.ItemTree.ItemDef
 function ItemTree:upsert_item(parent_id, item)
-    local new_data = _item_to_itemdata(item)
-
     local existing = self._tree:get_item(item.id)
     if existing then
-        existing.userdata = new_data.userdata
-        existing.children_callback = new_data.children_callback
+        existing.userdata = item.data
+        existing.children_callback = item.children_callback
         existing.reload_children = true
         existing.load_sequence = existing.load_sequence + 1
+        if item.expanded ~= nil then
+            existing.expanded = item.expanded
+        end
     else
+        local new_data = _itemdef_to_itemdata(item)
         self._tree:upsert_item(parent_id, item.id, new_data)
     end
 
     self:_request_render()
+end
+
+---@param item loop.comp.ItemTree.ItemDef
+---@return boolean
+function ItemTree:update_item(item)
+    local existing = self._tree:get_item(item.id)
+    if not existing then return false end
+    existing.userdata = item.data
+    existing.children_callback = item.children_callback
+    existing.reload_children = true
+    existing.load_sequence = existing.load_sequence + 1
+    if item.expanded ~= nil then
+        existing.expanded = item.expanded
+    end
+    self:_request_render()
+    return true
 end
 
 function ItemTree:get_children(parent_id)
@@ -468,6 +489,7 @@ function ItemTree:toggle_expand(id)
 end
 
 function ItemTree:expand(id)
+    ---@type loop.comp.ItemTree.ItemData
     local item = self._tree:get_item(id)
     if item then
         item.expanded = true
@@ -477,6 +499,7 @@ function ItemTree:expand(id)
 end
 
 function ItemTree:collapse(id)
+    ---@type loop.comp.ItemTree.ItemData
     local item = self._tree:get_item(id)
     if item then
         item.expanded = false
@@ -485,18 +508,21 @@ function ItemTree:collapse(id)
     end
 end
 
+---@return loop.comp.ItemTree.ItemData
 function ItemTree:_get_item(id)
     return self._tree:get_item(id)
 end
 
+---@return loop.comp.ItemTree.Item[]
 function ItemTree:get_items()
     local items = {}
     for _, treeitem in ipairs(self._tree:get_items()) do
+        ---@type loop.comp.ItemTree.ItemData
         local data = treeitem.data
+        ---@type loop.comp.ItemTree.Item
         local item = {
             id = treeitem.id,
             data = data.userdata,
-            expanded = data.expanded,
         }
         table.insert(items, item)
     end

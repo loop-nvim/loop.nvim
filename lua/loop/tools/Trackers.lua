@@ -49,15 +49,7 @@ function Trackers:invoke(callback_name, ...)
     for i = 1, n do
         args[i] = select(i, ...)
     end
-    vim.schedule(function()
-        self:_invoke(callback_name, unpack(args, 1, n))
-    end)
-end
-
----@param callback_name string
----@param ... any
-function Trackers:invoke_sync(callback_name, ...)
-    self:_invoke(callback_name, ...)
+    self:_invoke(callback_name, unpack(args, 1, n))
 end
 
 return Trackers

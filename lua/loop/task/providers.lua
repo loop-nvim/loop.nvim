@@ -12,7 +12,7 @@ local _template_providers = {}
 local M = {}
 
 ---@param ws_dir string
-function M.reset(ws_dir)
+function M.reset_to_default(ws_dir)
     _task_type_providers = {
         process   = coreproviders.get_process_task_provider(ws_dir),
         composite = coreproviders.get_composite_task_provider(),

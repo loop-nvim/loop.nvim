@@ -26,7 +26,7 @@ function M.crop_string_for_ui(str, max_len)
     assert(type(str) == 'string', str)
     max_len = max_len > 2 and max_len or 2
     if #str <= max_len then return str, false end
-    return str:sub(1, max_len) .. "…", true
+    return str:sub(1, max_len - 1) .. "…", true
 end
 
 ---Helper to check if a path matches a list of glob patterns

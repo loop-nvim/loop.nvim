@@ -1,5 +1,6 @@
 local M = {}
 
+local loopconfig = require("loop.config")
 local logs = require('loop.logs')
 local taskmgr = require("loop.task.taskmgr")
 local variablesmgr = require("loop.task.variablesmgr")
@@ -28,10 +29,13 @@ local _init_err_msg = "init() not called"
 ---@type loop.ws.WorkspaceInfo?
 local _workspace_info = nil
 
-local _save_timer = nil
+---@type loop.PageManager?
+local _page_manager   = nil
+
+local _save_timer     = nil
 
 -- New: recent workspaces persistence
-local MAX_RECENTS = 50
+local MAX_RECENTS     = 50
 
 local function _get_recent_file()
     local data_dir = vim.fn.stdpath('data')
@@ -107,11 +111,17 @@ local function _close_workspace(quiet)
     _save_workspace()
 
     extdata.on_workspace_unload(_workspace_info)
+    runner.on_workspace_close()
 
     if not quiet and _workspace_info then
         local label = _workspace_info.name or _workspace_info.ws_dir
         logs.user_log("Workspace closed: " .. label, "workspace")
         vim.notify("Workspace closed")
+    end
+
+    if _page_manager then
+        _page_manager.delete_groups()
+        _page_manager.expire(true)
     end
     _workspace_info = nil
     statusline.set_workspace_name(nil)
@@ -185,7 +195,6 @@ local function _load_workspace(dir)
         return false, "Failed to load workspace configuration (:Loop logs for details)"
     end
 
-    local loopconfig = require('loop.config')
     ---@type loop.ws.WorkspaceInfo
     _workspace_info = {
         name = ws_config.name,
@@ -193,6 +202,7 @@ local function _load_workspace(dir)
         config_dir = config_dir,
         config = ws_config,
     }
+
     if not _workspace_info.name or _workspace_info.name == "" then
         _workspace_info.name = vim.fn.fnamemodify(dir, ":p:h:t")
     end
@@ -202,7 +212,10 @@ local function _load_workspace(dir)
     window.load_settings(config_dir)
 
     taskmgr.reset_provider_list(dir)
-    extdata.on_workspace_load(_workspace_info)
+
+    _page_manager = window.create_page_manager()
+    runner.on_workspace_open(_workspace_info, _page_manager)
+    extdata.on_workspace_load(_workspace_info, _page_manager)
 
     if not _save_timer then
         local config = require('loop.config')
@@ -235,6 +248,22 @@ local function _show_workspace_info_floatwin()
     local str = ("Name: %s\nDirectory: %s\nFiles:\n%s"):format(info.name, info.ws_dir,
         jsoncodec.to_string(save_config, schema))
     floatwin.show_floatwin(str, { title = "Workspace" })
+end
+
+---@param mode "task"|"repeat"
+---@param task_name string|nil
+local function _load_and_run_task(mode, task_name)
+    assert(_workspace_info)
+    local config_dir = _workspace_info.config_dir
+
+    taskmgr.get_or_select_task(config_dir, mode, task_name, function(root_name, all_tasks)
+        if not root_name or not all_tasks then
+            return
+        end
+        taskmgr.save_last_task_name(root_name, config_dir)
+        window.show_window()
+        runner.run_task_with_deps(all_tasks, root_name)
+    end)
 end
 
 ---@param dir string?
@@ -329,6 +358,13 @@ function M.open_workspace(dir, at_startup)
     end
 
     dir = dir or vim.fn.getcwd()
+    if _workspace_info and dir == _workspace_info.ws_dir then
+        vim.notify("Workspace already open")
+        return
+    end
+
+    _close_workspace()
+
     local ok, err_msg = _load_workspace(dir)
     if ok and _workspace_info then
         -- add to recent list (MRU)
@@ -453,7 +489,7 @@ end
 ---@return string[]
 function M.task_subcommands(args)
     if #args == 0 then
-        return { "run", "repeat", "terminate", "configure" }
+        return { "run", "repeat", "terminate_all", "configure" }
     end
     return {}
 end
@@ -470,33 +506,20 @@ function M.task_command(command, arg1, arg2)
 
     command = command and command:match("^%s*(.-)%s*$") or ""
     command = command ~= "" and command or "run"
-
-    local ws_dir = ws_info.ws_dir
     local config_dir = ws_info.config_dir
     if command == "run" then
-        runner.load_and_run_task(ws_dir, config_dir, window.page_manger_factory(), "task", arg1)
+        _load_and_run_task("task", arg1)
     elseif command == "repeat" then
-        runner.load_and_run_task(ws_dir, config_dir, window.page_manger_factory(), "repeat")
+        _load_and_run_task("repeat")
     elseif command == "configure" then
         taskmgr.configure_tasks(config_dir)
     elseif command == "terminate" then
+        runner.terminate_task(arg1)
+    elseif command == "terminate_all" then
         runner.terminate_tasks()
     else
         vim.notify('Invalid task command: ' .. command)
     end
-end
-
----@param task_and_deps loop.Task[]
----@param root_name string
-function M.run_custom_task(task_and_deps, root_name)
-    assert(_init_done, _init_err_msg)
-    local ws_info = _get_ws_info_or_warn()
-    if not ws_info then
-        return
-    end
-    local ws_dir = ws_info.ws_dir
-    local config_dir = ws_info.config_dir
-    runner.run_task(ws_dir, config_dir, window.page_manger_factory(), task_and_deps, root_name)
 end
 
 ---@param args string[]
@@ -533,7 +556,7 @@ end
 
 function M.ui_subcommands(args)
     if #args == 0 then
-        return { "toggle", "show", "hide" }
+        return { "toggle", "show", "hide", "clean" }
     end
     return {}
 end
@@ -571,6 +594,8 @@ function M.ui_command(command)
         M.show_window()
     elseif command == "hide" then
         M.hide_window()
+    elseif command == "clean" then
+        if _page_manager then _page_manager.delete_expired_groups() end
     else
         vim.notify("Invalid command: " .. command)
     end
@@ -624,6 +649,19 @@ function M.init()
     _init_done = true
 
     window.init()
+
+    runner.set_status_handler(function(nb_waiting, nb_running)
+        local symbols = loopconfig.current.window.symbols
+        local parts = {}
+        if nb_waiting > 0 then
+            table.insert(parts, ("%s %d"):format(symbols.waiting, nb_waiting))
+        end
+
+        if nb_running > 0 then
+            table.insert(parts, ("%s %d"):format(symbols.running, nb_running))
+        end
+        window.set_status_text(table.concat(parts, " "))
+    end)
 
     vim.api.nvim_create_autocmd("VimLeavePre", {
         callback = function()

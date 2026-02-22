@@ -7,11 +7,11 @@ local M = {}
 
 ---@param ws_dir string
 ---@param task loop.coretasks.process.Task
----@param page_manager loop.PageManager
+---@param page_group loop.PageGroup
 ---@param on_exit loop.TaskExitHandler
 ---@return loop.TaskControl|nil
 ---@return string|nil
-function M.start_task(ws_dir, task, page_manager, on_exit)
+function M.start_task(ws_dir, task, page_group, on_exit)
     if not task.command then
         return nil, "task.command is required"
     end
@@ -32,16 +32,7 @@ function M.start_task(ws_dir, task, page_manager, on_exit)
         end,
     }
 
-    local pagegroup = page_manager.get_page_group(task.type)
-    if not pagegroup then
-        pagegroup = page_manager.add_page_group(task.type, task.name)
-    end
-    if not pagegroup then
-        return nil, "page manager expired"
-    end
-
-    local page_data, err_msg = pagegroup.add_page({
-        id = "term",
+    local page_data, err_msg = page_group.add_page({
         type = "term",
         buftype = "term",
         label = task.name,
@@ -49,8 +40,12 @@ function M.start_task(ws_dir, task, page_manager, on_exit)
         activate = true,
     })
 
+    if not page_data then
+        return nil, "failed to create task page"
+    end
+
     --add_term_page(task.name, start_args, true)
-    local proc = page_data and page_data.term_proc or nil
+    local proc = page_data.term_proc
     if not proc then
         return nil, err_msg
     end

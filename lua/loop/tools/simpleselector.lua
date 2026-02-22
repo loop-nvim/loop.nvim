@@ -2,10 +2,12 @@
 ---@brief Simple floating selector with fuzzy filtering and optional preview.
 
 ---@class loop.SelectorItem
----@field label string        Display label
----@field file string?
----@field line number?
----@field data  any           Payload returned on select
+---@field label        string             main displayed text (optional if label_chunks used)
+---@field label_chunks {[1]:string, [2]:string?}[]?  optional, allows chunked labels with highlights
+---@field file         string?
+---@field lnum         number?
+---@field virt_text_chunks?   string[][]         chunks: { { "text", "HighlightGroup?" }, ... }
+---@field data         any                payload returned on select
 
 ---@alias loop.SelectorCallback fun(data:any|nil)
 
@@ -14,8 +16,8 @@
 
 local M = {}
 
--- Namespace for prompt highlighting
 local NS_PREVIEW = vim.api.nvim_create_namespace("LoopSelectorPreview")
+local NS_VIRT = vim.api.nvim_create_namespace("LoopSelectorVirtText")
 
 --------------------------------------------------------------------------------
 -- Utility functions
@@ -47,14 +49,67 @@ end
 ---@param win integer
 local function update_list(items, cur, buf, win)
     local lines = {}
-
+    local extmarks = {}
+    local virt_extmarks = {}
     for i, item in ipairs(items) do
         local prefix = (i == cur) and "> " or "  "
+        -- ----------------------------
+        -- Efficiently build display_label from label_chunks
+        -- ----------------------------
         lines[i] = prefix .. item.label
+        -- ----------------------------
+        -- Inline highlights
+        -- ----------------------------
+        local col = #prefix
+        if item.label_chunks then
+            for _, chunk in ipairs(item.label_chunks) do
+                local text, hl = chunk[1], chunk[2]
+                if text and #text > 0 then
+                    local len = #text
+                    if hl then
+                        extmarks[#extmarks + 1] = {
+                            row       = i - 1,
+                            col_start = col,
+                            col_end   = col + len,
+                            hl_group  = hl
+                        }
+                    end
+                    col = col + len
+                end
+            end
+        end
+        -- ----------------------------
+        -- Virtual text
+        -- ----------------------------
+        if item.virt_text_chunks and #item.virt_text_chunks > 0 then
+            local virt_chunks = { { (" "):rep(vim.fn.strdisplaywidth(prefix)) } }
+            for _, chunk in ipairs(item.virt_text_chunks) do
+                table.insert(virt_chunks, { chunk[1], chunk[2] or "Comment" })
+            end
+            if #virt_chunks > 0 then
+                virt_extmarks[#virt_extmarks + 1] = {
+                    row  = i - 1,
+                    col  = 0,
+                    opts = { virt_lines = { virt_chunks }, hl_mode = "blend" }
+                }
+            end
+        end
     end
-
+    vim.api.nvim_buf_clear_namespace(buf, NS_VIRT, 0, -1)
+    -- Apply lines
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
+    -- Apply inline highlights
+    for _, mark in ipairs(extmarks) do
+        vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col_start, {
+            end_col  = mark.col_end,
+            hl_group = mark.hl_group,
+        })
+    end
+    -- Apply virtual text extmarks
+    for _, mark in ipairs(virt_extmarks) do
+        vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col, mark.opts)
+    end
+    -- Move cursor
     if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_set_cursor(win, { math.max(cur, 1), 0 })
     end
@@ -76,9 +131,9 @@ local function update_preview(formatter, items, cur, buf)
     -- ──────────────────────────────────────────────────────────────
     --  File + line → load file contents into the preview buffer
     -- ──────────────────────────────────────────────────────────────
-    if item.file and item.line then
+    if item.file and item.lnum then
         local filepath = vim.fs.normalize(item.file)
-        local target_lnum = tonumber(item.line)
+        local target_lnum = tonumber(item.lnum)
 
         if vim.fn.filereadable(filepath) ~= 1 then
             vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
@@ -92,7 +147,7 @@ local function update_preview(formatter, items, cur, buf)
         if not target_lnum or target_lnum < 1 then
             vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
                 "Invalid line number:",
-                filepath .. ":" .. tostring(item.line),
+                filepath .. ":" .. tostring(item.lnum),
             })
             vim.bo[buf].filetype = "text"
             return
@@ -101,10 +156,10 @@ local function update_preview(formatter, items, cur, buf)
         -- Clear previous content safely
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
 
+        local lines = {}
         -- Load file contents into the buffer using :read (most "native" way)
-        local ok, load_err = pcall(vim.api.nvim_buf_call, buf, function()
-            local lines = vim.fn.readfile(filepath)
-            vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+        local ok, load_err = pcall(function()
+            lines = vim.fn.readfile(filepath)
         end)
         if not ok then
             vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
@@ -115,8 +170,14 @@ local function update_preview(formatter, items, cur, buf)
             return
         end
 
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
         -- Enable syntax highlighting
         vim.bo[buf].filetype = vim.filetype.match({ filename = filepath }) or "text"
+
+        if target_lnum > #lines then
+            return
+        end
 
         -- Try to position cursor / view at target line
         local preview_win = vim.fn.bufwinid(buf)
@@ -236,19 +297,23 @@ end
 ---@param opts loop.selector.opts
 function M.select(opts)
     local prompt, items, formatter, callback = opts.prompt, opts.items, opts.formatter, opts.callback
-
     if #items == 0 then
         return
     end
-
     local title = (prompt and prompt ~= "") and (" %s "):format(prompt) or ""
     local has_preview = opts.file_preview or type(opts.formatter) == "function"
 
+    -- Precompute label from label_chunks
+    for _, item in ipairs(items) do
+        if item.label_chunks and #item.label_chunks > 0 then
+            item.label = table.concat(vim.tbl_map(function(c) return c[1] end, item.label_chunks))
+        end
+    end
     --------------------------------------------------------------------------
     -- Layout
     --------------------------------------------------------------------------
 
-    local list_w = compute_width(opts.items, 4)
+    local list_w = compute_width(items, 4)
     local cols = vim.o.columns
     local lines = vim.o.lines
 

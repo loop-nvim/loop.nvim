@@ -11,6 +11,7 @@ local function _get_log_count()
 end
 
 ---@param text string|string[]
+---@param level vim.log.levels?
 function M.log(text, level)
     if not text then return end
 

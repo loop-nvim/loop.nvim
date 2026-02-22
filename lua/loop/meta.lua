@@ -12,6 +12,7 @@ error('Cannot require a meta file')
 ---@field depends_on string[]? # optional list of dependent task names
 ---@field depends_order "sequence"|"parallel"|nil # default is sequence
 ---@field save_buffers boolean? # if true, ensures workspace buffers are saved before this task starts
+---@field if_running "restart"|"refuse"|"parallel"|nil
 
 ---@class loop.taskTemplate
 ---@field name string
@@ -35,11 +36,11 @@ error('Cannot require a meta file')
 ---@field register_task_type fun(task_type:string, provider:loop.TaskTypeProvider)
 ---@field register_task_templates fun(category:string, provider:loop.TaskTemplateProvider)
 ---@field register_user_command fun(lead_cmd:string, provider:loop.UserCommandProvider)
+---@field request_page_proup fun(name:string):loop.PageGroup?
 
 ---@class loop.TaskTypeProvider
 ---@field get_task_schema fun():table
----@field start_one_task fun(task:loop.Task,page_manager:loop.PageManager, on_exit:loop.TaskExitHandler):(loop.TaskControl|nil,string|nil)
----@field on_tasks_cleanup fun()?
+---@field start_one_task fun(task:loop.Task, page_group:loop.PageGroup,on_exit:loop.TaskExitHandler):(loop.TaskControl|nil,string|nil)
 
 ---@class loop.TaskTemplateProvider
 ---@field get_task_templates fun():loop.taskTemplate[]
@@ -88,7 +89,7 @@ error('Cannot require a meta file')
 
 ---@class loop.PageOpts
 ---@field type "term"|"output"|"comp"|"repl"
----@field id string
+---@field buftype string?
 ---@field label string
 ---@field activate boolean?
 ---@field term_args loop.tools.TermProc.StartArgs?
@@ -102,16 +103,16 @@ error('Cannot require a meta file')
 ---@field term_proc loop.tools.TermProc?
 
 ---@class loop.PageGroup
+---@field have_pages fun():boolean
 ---@field add_page fun(opts:loop.PageOpts):loop.PageData?,string?
----@field get_page fun(id:string):loop.PageData|nil
----@field activate_page fun(id:string)
 ---@field delete_pages fun()
+---@field delete_group fun()
+---@field expire fun(delete_pages:boolean?)
+---@field is_expired fun():boolean
 
 ---@class loop.PageManager
----@field add_page_group fun(id:string,label:string):loop.PageGroup|nil
----@field get_page_group fun(id:string):loop.PageGroup|nil
----@field delete_page_group fun(id:string)
----@field delete_all_groups fun(expire:boolean)
----@field get_page fun(group_id:string,page_id:string):loop.PageData|nil
-
----@alias loop.PageManagerFactory fun():loop.PageManager
+---@field add_page_group fun(label:string):loop.PageGroup|nil
+---@field delete_groups fun()
+---@field delete_expired_groups fun()
+---@field expire fun(delete_groups:boolean)
+---@field is_expired fun():boolean

@@ -14,7 +14,7 @@ local class = require("loop.tools.class")
 ---@field order "sequence"|"parallel"|nil
 
 ---@class loop.tools.Scheduler
----@field new fun(self:loop.tools.Scheduler,nodes:loop.scheduler.Node[],start_node:loop.scheduler.StartNodeFn):loop.tools.Scheduler
+---@field new fun(self:loop.tools.Scheduler):loop.tools.Scheduler
 ---@field _nodes table<loop.scheduler.NodeId, loop.scheduler.Node>
 ---@field _start_node loop.scheduler.StartNodeFn
 ---@field _running table<loop.scheduler.NodeId, { terminate:fun() }>
@@ -24,19 +24,54 @@ local class = require("loop.tools.class")
 ---@field _run_id integer
 local Scheduler = class()
 
+---@param nodes loop.scheduler.Node[]
+---@param root string
+---@return boolean, string? -- returns true + node name if a cycle is found
+local function _detect_loop(nodes, root)
+    local node_map = {}
+    for _, n in ipairs(nodes) do
+        node_map[n.id] = n
+    end
+
+    local visiting = {}
+    local visited = {}
+
+    local function dfs(node_id)
+        if visiting[node_id] then
+            return true, node_id -- cycle detected
+        end
+        if visited[node_id] then
+            return false
+        end
+
+        visiting[node_id] = true
+        local node = node_map[node_id]
+        if not node then
+            visiting[node_id] = nil
+            return false -- missing nodes are ignored here
+        end
+
+        for _, dep_id in ipairs(node.deps or {}) do
+            local has_cycle, cycle_node = dfs(dep_id)
+            if has_cycle then
+                return true, cycle_node
+            end
+        end
+
+        visiting[node_id] = nil
+        visited[node_id] = true
+        return false
+    end
+
+    return dfs(root)
+end
+
+
 --──────────────────────────────────────────────────────────────────────────────
 -- Constructor
 --──────────────────────────────────────────────────────────────────────────────
----@param nodes loop.scheduler.Node[]
----@param start_node loop.scheduler.StartNodeFn
-function Scheduler:init(nodes, start_node)
+function Scheduler:init()
     self._nodes = {}
-    for _, n in ipairs(nodes) do
-        self._nodes[n.id] = n
-    end
-
-    self._start_node = start_node
-
     ---@type {loop.scheduler.NodeId: {on_node_event:loop.scheduler.NodeEventFn,on_exit:loop.scheduler.exit_fn}[]}
     self._inflight = {} -- NodeId → list of waiting callbacks
     self._running = {}
@@ -52,16 +87,35 @@ end
 --──────────────────────────────────────────────────────────────────────────────
 -- Public API
 --──────────────────────────────────────────────────────────────────────────────
+---@param nodes loop.scheduler.Node[]
 ---@param root loop.scheduler.NodeId
+---@param start_node loop.scheduler.StartNodeFn
 ---@param on_exit loop.scheduler.exit_fn
 ---@param on_node_event loop.scheduler.NodeEventFn
-function Scheduler:start(root, on_node_event, on_exit)
+function Scheduler:start(nodes, root, start_node, on_node_event, on_exit)
     if self._current_run_id then
         vim.schedule(function()
             on_exit(false, "interrupt", "another schedule is running")
         end)
         return
     end
+
+    -- Check for cycles before starting
+    local has_cycle, cycle_node = _detect_loop(nodes, root)
+    if has_cycle then
+        vim.schedule(function()
+            on_exit(false, "cycle", cycle_node)
+        end)
+        return
+    end
+
+
+    self._nodes = {}
+    for _, n in ipairs(nodes) do
+        self._nodes[n.id] = n
+    end
+    self._start_node = start_node
+
     self._run_id = self._run_id + 1
     local my_run = self._run_id
 
@@ -265,7 +319,7 @@ function Scheduler:_run_leaf(run_id, id, on_exit)
     self._pending_running = self._pending_running + 1
 
     local ctl, err = self._start_node(id, function(ok, reason)
-        vim.schedule(function()
+        vim.schedule(function() -- important to schedule because on_exit my be called before the ctrl is returned
             self._running[id] = nil
             self._pending_running = math.max(0, self._pending_running - 1)
             self:_check_termination_complete()
@@ -283,9 +337,9 @@ function Scheduler:_run_leaf(run_id, id, on_exit)
     self._running[id] = ctl
 end
 
-function Scheduler:is_running() return self._current_run_id and not self._terminating end
+function Scheduler:is_running() return self._current_run_id ~= nil end
 
-function Scheduler:is_terminated() return not self._current_run_id end
+function Scheduler:is_terminated() return self._current_run_id == nil end
 
 function Scheduler:is_terminating() return self._terminating end
 

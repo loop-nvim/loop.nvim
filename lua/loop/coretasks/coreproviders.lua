@@ -62,7 +62,7 @@ function M.get_composite_task_provider()
         get_task_schema = function()
             return {}
         end,
-        start_one_task = function(task, page_manager, on_exit)
+        start_one_task = function(task, page_group, on_exit)
             -- composite task does nothing by itself
             on_exit(true)
             ---@type loop.TaskControl
@@ -81,9 +81,9 @@ function M.get_process_task_provider(ws_dir)
             local schema = require('loop.coretasks.processschema')
             return schema
         end,
-        start_one_task = function(task, page_manager, on_exit)
+        start_one_task = function(task, page_group, on_exit)
             ---@cast task loop.coretasks.process.Task
-            return process_task.start_task(ws_dir, task, page_manager, on_exit)
+            return process_task.start_task(ws_dir, task, page_group, on_exit)
         end
     }
 end
