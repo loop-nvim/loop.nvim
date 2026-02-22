@@ -172,26 +172,26 @@ function ItemTree:link_to_buffer(buf_ctrl)
     local callbacks = {
         open = function()
             local id, data = get_node()
-            if id then self._trackers:invoke("on_open", id, data.userdata) end
+            if id and data then self._trackers:invoke("on_open", id, data.userdata) end
         end,
 
         toggle = function()
             local id, data = get_node()
-            if id and (self._tree:have_children(id) or data.children_callback) then
+            if id and data and (self._tree:have_children(id) or data.children_callback) then
                 self:toggle_expand(id)
             end
         end,
 
         expand = function()
             local id, data = get_node()
-            if id and (self._tree:have_children(id) or data.children_callback) then
+            if id and data and (self._tree:have_children(id) or data.children_callback) then
                 self:expand(id)
             end
         end,
 
         collapse = function()
             local id, data = get_node()
-            if id and (self._tree:have_children(id) or data.children_callback) then
+            if id and data and (self._tree:have_children(id) or data.children_callback) then
                 self:collapse(id)
             end
         end,
@@ -220,12 +220,12 @@ function ItemTree:link_to_buffer(buf_ctrl)
         ["<2-LeftMouse>"] = { callbacks.toggle, "Expand/collapse" },
         ["go"] = { callbacks.open, "Open details" },
         -- Non-recursive
-        ["zo"] = { callbacks.expand, "Expand node" },
-        ["zc"] = { callbacks.collapse, "Collapse node" },
-        ["za"] = { callbacks.toggle, "Toggle node" },
+        ["zo"] = { callbacks.expand, "Expand node under cursor" },
+        ["zc"] = { callbacks.collapse, "Collapse node under cursor" },
+        ["za"] = { callbacks.toggle, "Toggle node under cursor" },
         -- Recursive
-        ["zO"] = { callbacks.expand_recursive, "Expand recursively" },
-        ["zC"] = { callbacks.collapse_recursive, "Collapse recursively" },
+        ["zO"] = { callbacks.expand_recursive, "Expand all nodes under cursor" },
+        ["zC"] = { callbacks.collapse_recursive, "Collapse all nodes under cursor" },
     }
 
     -- Register keymaps
