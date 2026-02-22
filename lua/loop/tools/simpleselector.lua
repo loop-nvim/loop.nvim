@@ -2,10 +2,11 @@
 ---@brief Simple floating selector with fuzzy filtering and optional preview.
 
 ---@class loop.SelectorItem
----@field label        string             main displayed text
+---@field label        string             main displayed text (optional if label_chunks used)
+---@field label_chunks {[1]:string, [2]:string?}[]?  optional, allows chunked labels with highlights
 ---@field file         string?
 ---@field lnum         number?
----@field virt_text?   string[][]         chunks: { { "text", "HighlightGroup?" }, ... }
+---@field virt_text_chunks?   string[][]         chunks: { { "text", "HighlightGroup?" }, ... }
 ---@field data         any                payload returned on select
 
 ---@alias loop.SelectorCallback fun(data:any|nil)
@@ -42,62 +43,73 @@ local function fuzzy_filter(items, query)
     return res
 end
 
+---@param items loop.SelectorItem[]
 ---@param cur integer
 ---@param buf integer
 ---@param win integer
 local function update_list(items, cur, buf, win)
     local lines = {}
-    local virt_extmarks = {} -- collect extmarks to apply later
-
+    local extmarks = {}
+    local virt_extmarks = {}
     for i, item in ipairs(items) do
         local prefix = (i == cur) and "> " or "  "
-        local display_label = item.label:gsub("\n", "↵")
-
-        lines[i] = prefix .. display_label
-        local prefix_width = vim.fn.strdisplaywidth(prefix)
-        -- ──────────────────────────────────────────────────────────────
-        -- Virtual text support (multiple chunks)
-        -- ──────────────────────────────────────────────────────────────
-        if item.virt_text and #item.virt_text > 0 then
-            local chunks = {{(" "):rep(prefix_width), ""}}
-            for _, chunk in ipairs(item.virt_text) do
-                if type(chunk) == "table" and chunk[1] and type(chunk[1]) == "string" then
-                    local text = chunk[1]
-                    local hl   = chunk[2]                           -- may be nil
-                    table.insert(chunks, { text, hl or "Comment" }) -- fallback hl if missing
+        -- ----------------------------
+        -- Efficiently build display_label from label_chunks
+        -- ----------------------------
+        lines[i] = prefix .. item.label
+        -- ----------------------------
+        -- Inline highlights
+        -- ----------------------------
+        local col = #prefix
+        if item.label_chunks then
+            for _, chunk in ipairs(item.label_chunks) do
+                local text, hl = chunk[1], chunk[2]
+                if text and #text > 0 then
+                    local len = #text
+                    if hl then
+                        extmarks[#extmarks + 1] = {
+                            row       = i - 1,
+                            col_start = col,
+                            col_end   = col + len,
+                            hl_group  = hl
+                        }
+                    end
+                    col = col + len
                 end
             end
-            if #chunks > 0 then
+        end
+        -- ----------------------------
+        -- Virtual text
+        -- ----------------------------
+        if item.virt_text_chunks and #item.virt_text_chunks > 0 then
+            local virt_chunks = { { (" "):rep(vim.fn.strdisplaywidth(prefix)) } }
+            for _, chunk in ipairs(item.virt_text_chunks) do
+                table.insert(virt_chunks, { chunk[1], chunk[2] or "Comment" })
+            end
+            if #virt_chunks > 0 then
                 virt_extmarks[#virt_extmarks + 1] = {
                     row  = i - 1,
                     col  = 0,
-                    opts = {
-                        virt_lines = { chunks },
-                        hl_mode    = "blend", -- or "combine" / "replace"
-                    }
+                    opts = { virt_lines = { virt_chunks }, hl_mode = "blend" }
                 }
             end
         end
     end
-
-    -- Apply all lines
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-    -- Clear old virtual text extmarks
     vim.api.nvim_buf_clear_namespace(buf, NS_VIRT, 0, -1)
-
-    -- Apply new virtual text extmarks
-    for _, mark in ipairs(virt_extmarks) do
-        vim.api.nvim_buf_set_extmark(
-            buf,
-            NS_VIRT,
-            mark.row,
-            mark.col,
-            mark.opts
-        )
+    -- Apply lines
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    -- Apply inline highlights
+    for _, mark in ipairs(extmarks) do
+        vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col_start, {
+            end_col  = mark.col_end,
+            hl_group = mark.hl_group,
+        })
     end
-
-    -- Move cursor to selected line
+    -- Apply virtual text extmarks
+    for _, mark in ipairs(virt_extmarks) do
+        vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col, mark.opts)
+    end
+    -- Move cursor
     if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_set_cursor(win, { math.max(cur, 1), 0 })
     end
@@ -285,19 +297,23 @@ end
 ---@param opts loop.selector.opts
 function M.select(opts)
     local prompt, items, formatter, callback = opts.prompt, opts.items, opts.formatter, opts.callback
-
     if #items == 0 then
         return
     end
-
     local title = (prompt and prompt ~= "") and (" %s "):format(prompt) or ""
     local has_preview = opts.file_preview or type(opts.formatter) == "function"
 
+    -- Precompute label from label_chunks
+    for _, item in ipairs(items) do
+        if item.label_chunks and #item.label_chunks > 0 then
+            item.label = table.concat(vim.tbl_map(function(c) return c[1] end, item.label_chunks))
+        end
+    end
     --------------------------------------------------------------------------
     -- Layout
     --------------------------------------------------------------------------
 
-    local list_w = compute_width(opts.items, 4)
+    local list_w = compute_width(items, 4)
     local cols = vim.o.columns
     local lines = vim.o.lines
 

@@ -79,6 +79,7 @@ function ReplBuffer:send_line(text)
 		local formatted = "\r\27[K" .. text .. "\r\n" .. self._prompt .. self._current_line
 		vim.api.nvim_chan_send(self._chan, formatted)
 		self:_redraw_line()
+		self:request_change_notif()
 	end
 end
 
