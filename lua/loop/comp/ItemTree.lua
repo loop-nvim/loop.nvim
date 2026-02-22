@@ -161,33 +161,77 @@ function ItemTree:_get_cur_node(comp)
 end
 
 function ItemTree:link_to_buffer(buf_ctrl)
-    local function on_open()
-        local id, itemdata = self:_get_cur_node(buf_ctrl)
-        if not id or not itemdata then return end
-        self._trackers:invoke("on_open", id, itemdata.userdata)
+    -- Helper to get current node
+    local function get_node()
+        local id, data = self:_get_cur_node(buf_ctrl)
+        if not id or not data then return nil end
+        return id, data
     end
 
-    local function on_toggle()
-        local id, itemdata = self:_get_cur_node(buf_ctrl)
-        if not id or not itemdata then return end
-        local have_children = self._tree:have_children(id)
-        if have_children or itemdata.children_callback then
-            self:toggle_expand(id)
-        end
-    end
+    -- Callbacks
+    local callbacks = {
+        open = function()
+            local id, data = get_node()
+            if id then self._trackers:invoke("on_open", id, data.userdata) end
+        end,
 
+        toggle = function()
+            local id, data = get_node()
+            if id and (self._tree:have_children(id) or data.children_callback) then
+                self:toggle_expand(id)
+            end
+        end,
+
+        expand = function()
+            local id, data = get_node()
+            if id and (self._tree:have_children(id) or data.children_callback) then
+                self:expand(id)
+            end
+        end,
+
+        collapse = function()
+            local id, data = get_node()
+            if id and (self._tree:have_children(id) or data.children_callback) then
+                self:collapse(id)
+            end
+        end,
+
+        expand_recursive = function()
+            local id = get_node()
+            if id then self:expand_all(id) end
+        end,
+
+        collapse_recursive = function()
+            local id = get_node()
+            if id then self:collapse_all(id) end
+        end,
+    }
+
+    -- Attach buffer and renderer
     self._linked_buf = buf_ctrl
     self._linked_buf.set_renderer({
         render = function(bufnr) return self:_on_render_request(bufnr) end,
         dispose = function() return self:dispose() end
     })
 
-    self._linked_buf.add_keymap('<CR>', { callback = on_toggle, desc = "Expand/collapse" })
-    self._linked_buf.add_keymap('go', { callback = on_open, desc = "Open details" })
-    self._linked_buf.add_keymap('<2-LeftMouse>', { callback = on_toggle, desc = "Expand/collapse" })
-    self._linked_buf.add_keymap('zo', { callback = on_toggle, desc = "Expand" })
-    self._linked_buf.add_keymap('zc', { callback = on_toggle, desc = "Collapse" })
-    self._linked_buf.add_keymap('za', { callback = on_toggle, desc = "Toggle" })
+    -- Keymap table: key → {callback, description}
+    local keymaps = {
+        ["<CR>"] = { callbacks.toggle, "Expand/collapse" },
+        ["<2-LeftMouse>"] = { callbacks.toggle, "Expand/collapse" },
+        ["go"] = { callbacks.open, "Open details" },
+        -- Non-recursive
+        ["zo"] = { callbacks.expand, "Expand node" },
+        ["zc"] = { callbacks.collapse, "Collapse node" },
+        ["za"] = { callbacks.toggle, "Toggle node" },
+        -- Recursive
+        ["zO"] = { callbacks.expand_recursive, "Expand recursively" },
+        ["zC"] = { callbacks.collapse_recursive, "Collapse recursively" },
+    }
+
+    -- Register keymaps
+    for key, map in pairs(keymaps) do
+        self._linked_buf.add_keymap(key, { callback = map[1], desc = map[2] })
+    end
 
     buf_ctrl:request_refresh()
 end
@@ -505,6 +549,44 @@ function ItemTree:collapse(id)
         item.expanded = false
         self:_request_render()
         self._trackers:invoke("on_toggle", id, item.userdata, false)
+    end
+end
+
+function ItemTree:expand_all(id)
+    self:_expand_recursive(id)
+    self:_request_render()
+end
+
+function ItemTree:collapse_all(id)
+    self:_collapse_recursive(id)
+    self:_request_render()
+end
+
+function ItemTree:_expand_recursive(id)
+    local item = self:_get_item(id)
+    if not item then return end
+    if not item.expanded then
+        item.expanded = true
+        self._trackers:invoke("on_toggle", id, item.userdata, true)
+    end
+
+    local children = self._tree:get_children(id)
+    for _, child in ipairs(children) do
+        self:_expand_recursive(child.id)
+    end
+end
+
+function ItemTree:_collapse_recursive(id)
+    local item = self:_get_item(id)
+    if not item then return end
+    if item.expanded then
+        item.expanded = false
+        self._trackers:invoke("on_toggle", id, item.userdata, false)
+    end
+
+    local children = self._tree:get_children(id)
+    for _, child in ipairs(children) do
+        self:_collapse_recursive(child.id)
     end
 end
 
