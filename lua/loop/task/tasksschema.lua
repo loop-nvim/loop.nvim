@@ -27,6 +27,7 @@ local base_items = {
     description = "Definition of a single task",
     additionalProperties = false,
     required = { "name", "type" },
+    ["x-name-prop"] = "name",
     ["x-order"] = { "name", "type", "save_buffers", "if_running", "depends_on", "depends_order" },
 
     properties = {

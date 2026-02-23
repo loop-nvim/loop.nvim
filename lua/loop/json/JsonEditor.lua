@@ -278,10 +278,24 @@ local function _formatter(_, data)
 
     if vt == "object" or vt == "array" then
         -- Show bracket count as virt_text
-        local count = type(value) == "table" and #value or 0
-        local bracket = vt == "object" and "{…}" or ("[…] (" .. count .. ")")
-        table.insert(virt_chunks, { "", nil }) -- spacing
-        table.insert(virt_chunks, { bracket, "Comment" })
+        if type(value) == "table" then
+            local count = #value
+            local bracket = vt == "object" and "{…}" or ("[…] (" .. count .. ")")
+            table.insert(virt_chunks, { "", nil }) -- spacing
+            table.insert(virt_chunks, { bracket, "Comment" })
+            if data.expanded == false and vt == "object" then
+                local name_prop = data.schema and data.schema["x-name-prop"]
+                if name_prop then
+                    local name = value[name_prop]
+                    if name then
+                        table.insert(virt_chunks, { " ", nil }) -- spacing
+                        table.insert(virt_chunks, { name, "Comment" })
+                    end
+                end
+            end
+        else
+            table.insert(virt_chunks, { "Type Error", "Error" })
+        end
     else
         -- Separator between key and value
         table.insert(text_chunks, { ": ", "Comment" })
@@ -341,6 +355,7 @@ function JsonEditor:open(winid)
 
     self._itemtree:add_tracker({
         on_toggle = function(_, data, expanded)
+            data.expanded = expanded
             self._fold_cache[data.path or ""] = expanded
         end,
     })

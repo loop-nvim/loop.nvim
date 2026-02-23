@@ -31,12 +31,8 @@ local function _build_taskfile_schema()
                 for name, _ in pairs(providers_props) do
                     assert(not base_items.properties[name], ("task provider '%' defines a reserved property: '%s'"))
                 end
-                local oneOfItem = {
-                    type = "object",
-                    properties = vim.tbl_extend("error", base_items.properties, providers_props),
-                    required = vim.deepcopy(base_items.required),
-                    ["x-order"] = base_items["x-order"] or {},
-                }
+                local oneOfItem = vim.deepcopy(base_items)
+                oneOfItem.properties = vim.tbl_extend("error", oneOfItem.properties, providers_props)
                 oneOfItem.__name = task_type
                 if provider_schema["x-order"] then vim.list_extend(oneOfItem["x-order"], provider_schema["x-order"]) end
                 oneOfItem.properties.type = { const = task_type, description = base_items.properties.type.description }
