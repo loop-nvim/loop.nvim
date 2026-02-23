@@ -28,7 +28,7 @@ local Trackers = require("loop.tools.Trackers")
 ---@field text string
 ---@field highlight string
 
----@alias loop.comp.ItemTree.FormatterFn fun(id:any, data:any):string[][],string[][]
+---@alias loop.comp.ItemTree.FormatterFn fun(id:any, data:any,expanded:boolean):string[][],string[][]
 
 ---@class loop.comp.ItemTree.InitArgs
 ---@field formatter loop.comp.ItemTree.FormatterFn
@@ -438,7 +438,7 @@ function ItemTree:_on_render_request(buf)
         local empty_prefix = string.rep(" ", prefix_width)
 
         -- formatter → normalized chunks
-        local text_chunks, virt_chunks = self._formatter(item_id, item.userdata)
+        local text_chunks, virt_chunks = self._formatter(item_id, item.userdata, item.expanded)
         local chunks = _normalize_text_chunks(text_chunks)
 
         -- line state

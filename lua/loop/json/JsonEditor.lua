@@ -18,7 +18,6 @@ local uitools = require('loop.tools.uitools')
 ---@field value JsonValue
 ---@field value_type string
 ---@field err_msg string|nil
----@field expanded boolean?
 ---@field unresolved_schema table|nil
 ---@field schema table|nil
 
@@ -273,7 +272,7 @@ end
 ---@param _ any
 ---@param data loop.JsonEditor.NodeData
 ---@return string[][], string[][]
-local function _formatter(_, data)
+local function _formatter(_, data, expanded)
     if not data then return {}, {} end
 
     local text_chunks = {}
@@ -294,7 +293,7 @@ local function _formatter(_, data)
             local bracket = vt == "object" and "{…}" or ("[…] (" .. count .. ")")
             table.insert(virt_chunks, { "", nil }) -- spacing
             table.insert(virt_chunks, { bracket, "Comment" })
-            if data.expanded == false and vt == "object" then
+            if expanded == false and vt == "object" then
                 local name_prop = data.schema and data.schema["x-name-prop"]
                 if name_prop then
                     local name = value[name_prop]
@@ -366,7 +365,6 @@ function JsonEditor:open(winid)
 
     self._itemtree:add_tracker({
         on_toggle = function(_, data, expanded)
-            data.expanded = expanded
             self._fold_cache[data.path or ""] = expanded
         end,
     })

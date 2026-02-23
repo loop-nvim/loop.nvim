@@ -352,7 +352,7 @@ function M.input_multiline(opts, on_confirm)
     local initial_lines = vim.split(initial_text, "\n", { plain = true })
     if #initial_lines == 0 then initial_lines = { "" } end
 
-    local title = opts.prompt and (" %s [Ctrl-S to confirm, Ctrl-C to cancel] "):format(opts.prompt) or nil
+    local title = opts.prompt and (" %s [Ctrl-G to confirm, Ctrl-C to cancel] "):format(opts.prompt) or nil
     local width = math.floor(vim.o.columns * 0.8)
     local height = math.floor(vim.o.lines * 0.8)
 
@@ -385,7 +385,7 @@ function M.input_multiline(opts, on_confirm)
         return answer == 1
     end
 
-    ---@param value string
+    ---@param value string?
     local function close(value)
         if value and opts.validate then
             local validated, err_msg = opts.validate(value)
@@ -404,8 +404,9 @@ function M.input_multiline(opts, on_confirm)
         if vim.api.nvim_win_is_valid(prev_win) then
             vim.api.nvim_set_current_win(prev_win)
         end
-
-        vim.schedule(function() on_confirm(value) end)
+        if value then
+            vim.schedule(function() on_confirm(value) end)
+        end
     end
 
     local function try_close()
@@ -424,16 +425,18 @@ function M.input_multiline(opts, on_confirm)
         end
     end
 
+    local save_and_close = function()
+        close(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+    end
     -- ---------------- Keymaps ----------------
     local kopts = { buffer = buf, nowait = true }
 
     -- Enter = newline
     vim.keymap.set("i", "<CR>", "<CR>", kopts)
 
-    -- Confirm = Ctrl-S
-    vim.keymap.set({ "i", "n" }, "<C-s>", function()
-        close(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
-    end, kopts)
+    -- Confirm = Ctrl-g
+    vim.keymap.set({ "i", "n" }, "<C-g>", save_and_close, kopts)
+    vim.keymap.set({ "n", "n" }, "<C-g>", save_and_close, kopts)
 
     -- Cancel = Ctrl-C
     vim.keymap.set("i", "<C-c>", try_close, kopts)
