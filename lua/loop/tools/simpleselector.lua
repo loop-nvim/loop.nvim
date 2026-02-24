@@ -2,7 +2,7 @@
 ---@brief Simple floating selector with fuzzy filtering and optional preview.
 
 ---@class loop.SelectorItem
----@field label        string             main displayed text (optional if label_chunks used)
+---@field label        string?             main displayed text (optional if label_chunks used)
 ---@field label_chunks {[1]:string, [2]:string?}[]?  optional, allows chunked labels with highlights
 ---@field file         string?
 ---@field lnum         number?
@@ -113,6 +113,9 @@ local function update_list(items, cur, buf, win)
     -- Move cursor
     if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_set_cursor(win, { math.max(cur, 1), 0 })
+        vim.api.nvim_win_call(win, function()
+            vim.cmd("normal! zb")
+        end)
     end
 end
 
@@ -396,7 +399,9 @@ function M.select(opts)
     end
 
     vim.wo[pwin].wrap = false
+    
     vim.wo[lwin].wrap = opts.list_wrap ~= false
+    vim.wo[lwin].scrolloff = 0
 
     local winhl = "NormalFloat:Normal,FloatBorder:LoopTransparentBorder,CursorLine:Visual"
     for _, w in ipairs({ pwin, lwin, vwin }) do
