@@ -163,7 +163,7 @@ function M.run_task_with_deps(all_tasks, root_name)
     ---@param err_msg string
     local function on_run_failed(err_msg)
         logs.user_log(err_msg, "task")
-        if not root_page_group or not root_page_group.have_pages() then
+        if not root_page_group or (not root_page_group.is_expired and not root_page_group.have_pages()) then
             root_page_group = _page_manager and _page_manager.add_page_group(root_name)
             if root_page_group then
                 local page = root_page_group.add_page({

@@ -18,8 +18,8 @@ local uitools = require('loop.tools.uitools')
 ---@field value JsonValue
 ---@field value_type string
 ---@field err_msg string|nil
----@field unresolved_schema table|nil
 ---@field schema table|nil
+---@field unresoved_schema table|nil
 
 ---@class loop.JsonEditorOpts
 ---@field name string?
@@ -185,7 +185,7 @@ local function _show_node_help(item)
     end
     ---@type loop.JsonEditor.NodeData
     local data = item.data
-    local schema = data.unresolved_schema
+    local schema = data.schema
     local lines = {}
     if schema then
         local function add_field(label, value)
@@ -455,7 +455,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
             local item_schema = parent_schema and parent_schema.items or nil
             jsontools.merge_additional_properties(item_schema, parent_schema)
 
-            local unresolved_schema = item_schema
+            local unresoved_schema = item_schema
             local resolved_schema = validator.resolve_oneof_schema(v, item_schema) or item_schema
 
             local e = errors[p]
@@ -465,13 +465,13 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
                 id = p,
                 expanded = self._fold_cache[p] ~= false,
                 data = {
-                    key               = "[" .. str_i .. "]",
-                    path              = p,
-                    value             = v,
-                    err_msg           = e,
-                    value_type        = jsontools.value_type(v),
-                    unresolved_schema = unresolved_schema,
-                    schema            = resolved_schema,
+                    key              = "[" .. str_i .. "]",
+                    path             = p,
+                    value            = v,
+                    err_msg          = e,
+                    value_type       = jsontools.value_type(v),
+                    schema           = resolved_schema,
+                    unresoved_schema = unresoved_schema,
                 },
             }
             table.insert(items, item)
@@ -486,11 +486,11 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
             local v = tbl[k]
             local p = validator.join_path(path, k)
 
-            local prop_schema, unresolved_schema, resolved_schema
+            local prop_schema, unresoved_schema, resolved_schema
             if parent_schema and parent_schema.properties and parent_schema.properties[k] then
                 prop_schema = parent_schema.properties[k]
                 jsontools.merge_additional_properties(prop_schema, parent_schema)
-                unresolved_schema = prop_schema
+                unresoved_schema = prop_schema
                 resolved_schema = validator.resolve_oneof_schema(v, prop_schema) or prop_schema
             end
 
@@ -502,13 +502,13 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
                 parent_id = parent_id,
                 expanded = self._fold_cache[p] ~= false,
                 data = {
-                    key               = k,
-                    path              = p,
-                    value             = v,
-                    err_msg           = e,
-                    value_type        = jsontools.value_type(v),
-                    unresolved_schema = unresolved_schema,
-                    schema            = resolved_schema,
+                    key              = k,
+                    path             = p,
+                    value            = v,
+                    err_msg          = e,
+                    value_type       = jsontools.value_type(v),
+                    schema           = resolved_schema,
+                    unresoved_schema = unresoved_schema,
                 },
             }
             table.insert(items, item)
@@ -604,7 +604,7 @@ end
 ---@param multiline? boolean
 function JsonEditor:_edit_value(item, multiline)
     local path = item.data.path ---@type string
-    local schema = item.data.schema or {} ---@type table
+    local schema = item.data.unresoved_schema ---@type table
     local current_value = item.data.value ---@type any
     if current_value == nil then
         return
@@ -895,11 +895,17 @@ function JsonEditor:_get_object_new_value(item, schema, callback)
         end
 
         if type(schema.patternProperties) == "table" then
+            local match = false
             for pattern, pat_schema in pairs(schema.patternProperties) do
                 if key:match(pattern) then
+                    match = true
                     with_schema(pat_schema)
                     return
                 end
+            end
+            if not match then
+                vim.notify("Invalid property name: " .. tostring(key), vim.log.levels.WARN)
+                return
             end
         end
         -- fallback: additionalProperties

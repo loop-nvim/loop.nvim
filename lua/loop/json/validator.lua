@@ -219,6 +219,12 @@ local function _validate(schema, data, path)
         add_error(errors, path, ("string does not match pattern %q"):format(schema.pattern))
     end
 
+    -- string pattern
+    if type(schema.minLength) == "number" and type(data) == "string" and vim.fn.strdisplaywidth(data) < schema.minLength then
+        local err = schema.minLength > 1 and ("string must be at least %d character"):format(schema.minLength) or "string cannot be empty"
+        add_error(errors, path, err)
+    end
+
     -- oneOf (best-match selection)
     if schema.oneOf then
         local best_errors = nil
