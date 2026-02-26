@@ -368,19 +368,19 @@ function ItemTree:update_item(item)
     return true
 end
 
+---@return loop.comp.ItemTree.Item[]
 function ItemTree:get_children(parent_id)
     local items = {}
     local tree_items = self._tree:get_children(parent_id)
 
     for _, treeitem in ipairs(tree_items) do
         local data = treeitem.data
-        table.insert(items, {
+        ---@type loop.comp.ItemTree.Item
+        local item = {
             id = treeitem.id,
-            parent_id = parent_id,
             data = data.userdata,
-            expanded = data.expanded,
-            children_callback = data.children_callback
-        })
+        }
+        table.insert(items, item)
     end
     return items
 end
@@ -463,7 +463,7 @@ function ItemTree:_on_render_request(buf)
                 row = row,
                 start_col = 0, -- start_col ignored for virt_text
                 mark = {
-                    virt_text = { {right_text, right_chunk[2]} },
+                    virt_text = { { right_text, right_chunk[2] } },
                     virt_text_pos = "right_align",
                     hl_mode = "combine",
                 }
