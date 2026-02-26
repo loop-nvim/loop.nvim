@@ -71,6 +71,7 @@ error('Cannot require a meta file')
 ---@class loop.OutputBufferController : loop.BaseBufferController
 ---@field add_lines fun(lines: string|string[])
 ---@field set_auto_scroll fun(enabled: boolean)
+---@field set_max_lines fun(n:number)
 
 ---@class loop.CompBufferController : loop.BaseBufferController
 ---@field set_renderer fun(renderer:loop.CompRenderer)

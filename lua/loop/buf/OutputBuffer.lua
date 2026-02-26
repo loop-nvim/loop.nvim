@@ -11,6 +11,7 @@ local OutputBuffer = class(BaseBuffer)
 function OutputBuffer:init(type, name)
     BaseBuffer.init(self, type, name)
     self._auto_scroll = true
+    self._max_lines = 10000
 end
 
 function OutputBuffer:destroy()
@@ -19,13 +20,16 @@ end
 
 ---@return loop.OutputBufferController
 function OutputBuffer:make_controller()
+    ---@type loop.OutputBufferController
     return {
         add_keymap = function(...) return self:add_keymap(...) end,
         disable_change_events = function() return self:disable_change_events() end,
         get_cursor = function() return self:get_cursor() end,
         set_user_data = function(...) return self:set_user_data(...) end,
         get_user_data = function() return self:get_user_data() end,
-
+        set_max_lines = function(n)
+            self._max_lines = (type(n) == "number" and n > 0) and n or self._max_lines
+        end,
         add_lines = function(lines)
             assert(getmetatable(self) == OutputBuffer)
             self:add_lines(lines)
@@ -86,6 +90,16 @@ function OutputBuffer:add_lines(lines)
     if self._auto_scroll and on_last_line and winid > 0 then
         line_count = vim.api.nvim_buf_line_count(bufnr)
         vim.api.nvim_win_set_cursor(winid, { line_count, 0 })
+    end
+
+    -- After insertion
+    local new_line_count = vim.api.nvim_buf_line_count(bufnr)
+    -- Trim excess lines from the top (like terminal scrollback)
+    if new_line_count > self._max_lines then
+        local excess = new_line_count - self._max_lines
+        vim.bo[bufnr].modifiable = true
+        vim.api.nvim_buf_set_lines(bufnr, 0, excess, false, {})
+        vim.bo[bufnr].modifiable = false
     end
 
     self:request_change_notif()
