@@ -113,8 +113,24 @@ local function update_list(items, cur, buf, win)
     -- Move cursor
     if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_set_cursor(win, { math.max(cur, 1), 0 })
+
         vim.api.nvim_win_call(win, function()
-            vim.cmd("normal! zb")
+            local cursor_line = vim.fn.winline()
+            local win_height = vim.api.nvim_win_get_height(0)
+
+            if cursor_line < 1 then
+                vim.cmd("normal! zt") -- scroll cursor to top
+            elseif cursor_line >= win_height then
+                local item = items[cursor_line]
+                local extra_lines = item and item.virt_lines and #item.virt_lines or 0
+                if extra_lines > 0 then
+                    -- Scroll enough to show extra virtual lines
+                    local scroll_count = math.min(extra_lines, win_height - 1)
+                    vim.cmd(string.format("normal! %dzb", scroll_count))
+                else
+                    vim.cmd("normal! zb") -- scroll cursor to bottom
+                end
+            end
         end)
     end
 end
@@ -399,7 +415,7 @@ function M.select(opts)
     end
 
     vim.wo[pwin].wrap = false
-    
+
     vim.wo[lwin].wrap = opts.list_wrap ~= false
     vim.wo[lwin].scrolloff = 0
 

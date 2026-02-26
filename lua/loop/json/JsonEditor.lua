@@ -456,7 +456,6 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
             local p = jsontools.join_path(path, str_i)
             local schema = self._schema_map[p]
             local e = errors[p]
-            if not e and not schema then e = "No schema" end
             ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
@@ -483,7 +482,6 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
             local p = jsontools.join_path(path, k)
             local schema = self._schema_map[p]
             local e = errors[p]
-            if not e and not schema then e = "No schema" end
             ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
@@ -909,7 +907,7 @@ function JsonEditor:_get_object_new_value(item, schema, callback)
                 end
             end)
     end
-    local with_additiona_props = (schema.additionalProperties == true or schema.patternProperties)
+    local with_additiona_props = (schema.additionalProperties ~= false or schema.patternProperties)
     if #suggested_keys == 0 then
         if with_additiona_props then
             select_additional_key()
