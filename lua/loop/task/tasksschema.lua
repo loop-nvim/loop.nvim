@@ -42,7 +42,9 @@ local base_items = {
         -- Type of task (used for dispatching to task providers)
         type = {
             type = "string",
-            description = "Task type (used to determine behavior)"
+            description = "Task type (used to determine behavior)",
+            ["x-valueSelector"] = "loop.task.jsonselectors.select_tasktype",
+
         },
 
         -- Behavior when multiple instances of the task are started

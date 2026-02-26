@@ -2,7 +2,36 @@ local M = {}
 
 local selector = require("loop.tools.selector")
 local taskmgr = require("loop.task.taskmgr")
+local providers = require("loop.task.providers")
 local jsontools = require("loop.json.jsontools")
+
+function M.select_tasktype(callback, data, path)
+    local cur_type
+    if type(path) == "string" then
+        local current = jsontools.get_at_path(data, path)
+        if type(current) == "string" then
+            cur_type = current
+        end
+    end
+    local initial
+    local choices = {}
+    for _, type in ipairs(providers.task_types()) do
+        ---@type loop.SelectorItem
+        local item = { label = type, data = type }
+        if item.label then
+            table.insert(choices, item)
+        end
+        if type == cur_type then initial = #choices end
+    end
+    selector.select({
+        prompt = "Select task type",
+        items = choices,
+        initial = initial,
+        callback = function(name)
+            if name then callback(name) end
+        end
+    })
+end
 
 ---@params task loop.Task
 function M.select_taskobj(callback)

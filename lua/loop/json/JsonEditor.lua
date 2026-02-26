@@ -324,11 +324,14 @@ function JsonEditor:open(winid)
 
     local name = self._opts.name or "JSON Editor"
 
-    ---@diagnostic disable-next-line: undefined-field
-    self._itemtree = ItemTreeComp:new({
+    ---@type loop.comp.ItemTree.InitArgs
+    local opts = {
         formatter = _formatter,
         render_delay_ms = 40,
-    })
+         header = {{name, "Title"}, {" (press g? for help)", "COmment"}}
+    }
+    ---@diagnostic disable-next-line: undefined-field
+    self._itemtree = ItemTreeComp:new(opts)
 
     self:_reload_data()
 
@@ -537,6 +540,9 @@ function JsonEditor:_request_value(path, name, value_type, schema, default_text,
         end, vim.deepcopy(self._data), path)
         return
     end
+    if schema and schema.const then
+        return
+    end
     if value_type == "array" or value_type == "object" then
         on_confirm(_create_default_value(value_type))
         return
@@ -592,9 +598,6 @@ function JsonEditor:_edit_value(item, multiline)
     local schema = item.data.schema ---@type table
     local current_value = item.data.value ---@type any
     if current_value == nil then
-        return
-    end
-    if schema and schema.const then
         return
     end
     local on_confirm = function(value)

@@ -1,6 +1,7 @@
 local class = require('loop.tools.class')
 local Tree = require("loop.tools.Tree")
 local Trackers = require("loop.tools.Trackers")
+local uitools = require("loop.tools.uitools")
 
 ---@class loop.comp.ItemTree.Item
 ---@field id any
@@ -38,11 +39,21 @@ local Trackers = require("loop.tools.Trackers")
 ---@field loading_char string?
 ---@field indent_string string?
 ---@field render_delay_ms number?
+---@field header string[][]?
 
 ---@class loop.comp.ItemTree
 local ItemTree = class()
 
 local _ns_id = vim.api.nvim_create_namespace('LoopPluginItemTreeComp')
+
+local _header_hl_group = "LoopItemTreeHeader"
+vim.api.nvim_set_hl(0, _header_hl_group, {
+    bg = (function()
+        local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = "WinBar", link = false })
+        if not ok then return nil end
+        return hl.bg
+    end)()
+})
 
 local function _normalize_text_chunks(chunks)
     local out = {}
@@ -137,6 +148,8 @@ function ItemTree:init(args)
 
     ---@type loop.comp.ItemTree.FormatterFn
     self._formatter = args.formatter
+    self._header = args.header ---@type string[][]?
+
     self._trackers = Trackers:new()
 
     self._expand_char = args.expand_char or "▶"
@@ -155,6 +168,12 @@ function ItemTree:_get_cur_node(comp)
     local cursor = comp:get_cursor()
     if not cursor then return nil end
     local row = cursor[1]
+    if self._header then
+        if row == 1 then
+            return nil
+        end
+        row = row - 1
+    end
     local node = self._flat[row]
     if not node then return nil end
     return node.id, node.data
@@ -409,6 +428,48 @@ function ItemTree:_on_render_request(buf)
     local buffer_lines = {}
     local extmarks_data = {}
     local new_flat_nodes = {}
+
+    -- HEADER (left chunk normal, right chunk as virtual text)
+    if self._header then
+        local row = 0
+        local left_chunk = self._header[1] or { "" }
+        local right_chunk = self._header[2] or { "" }
+        -- Full-line background
+        table.insert(extmarks_data, {
+            row = row,
+            start_col = 0,
+            mark = {
+                line_hl_group = _header_hl_group,
+            }
+        })
+        -- Left-aligned text
+        local line = left_chunk[1] or ""
+        table.insert(buffer_lines, line)
+        -- Left chunk highlight
+        if left_chunk[2] then
+            table.insert(extmarks_data, {
+                row = row,
+                start_col = 0,
+                mark = {
+                    end_col = #line,
+                    hl_group = left_chunk[2],
+                }
+            })
+        end
+        -- Right-aligned virtual text
+        local right_text = right_chunk[1] or ""
+        if #right_text > 0 then
+            table.insert(extmarks_data, {
+                row = row,
+                start_col = 0, -- start_col ignored for virt_text
+                mark = {
+                    virt_text = { {right_text, right_chunk[2]} },
+                    virt_text_pos = "right_align",
+                    hl_mode = "combine",
+                }
+            })
+        end
+    end
 
     for _, flatnode in ipairs(flat) do
         local item_id = flatnode.id

@@ -76,7 +76,7 @@ end
 function Tree:_link_sibling(id, reference_id, before)
 	local ref_node = self._nodes[reference_id]
 	assert(ref_node, "reference_id does not exist")
-	
+
 	local parent_id = ref_node.parent_id
 
 	local node = self._nodes[id]
@@ -312,7 +312,7 @@ end
 ---@param items loop.tools.Tree.Item[]
 ---@param merge_data_fn fun(old:any,new:any):any
 function Tree:update_children(parent_id, items, merge_data_fn)
-	-- Index existing children by id
+	---@type loop.tools.Tree.Node[]
 	local existing = {}
 	for _, child in ipairs(self:get_children(parent_id)) do
 		existing[child.id] = self._nodes[child.id]
@@ -322,12 +322,21 @@ function Tree:update_children(parent_id, items, merge_data_fn)
 	for _, incoming in ipairs(items) do
 		local node = existing[incoming.id]
 		if node then
-			-- Merge in place
-            if merge_data_fn then 
-                node.data = merge_data_fn(node.data, incoming.data)
-            else
-                node.data = incoming.data
-            end
+			-- Merge data
+			if merge_data_fn then
+				node.data = merge_data_fn(node.data, incoming.data)
+			else
+				node.data = incoming.data
+			end
+			-- Remove all existing children of this reused node
+			local child = node.first_child
+			while child do
+				local next_child = self._nodes[child].next_sibling
+				self:_remove_subtree(child)
+				child = next_child
+			end
+			node.first_child = nil
+			node.last_child  = nil
 			table.insert(final_children, node)
 			existing[incoming.id] = nil
 		else
@@ -347,9 +356,9 @@ function Tree:update_children(parent_id, items, merge_data_fn)
 	end
 
 	-- Remove orphans
-    for _, orphan in pairs(existing) do
-        self:_remove_subtree(orphan.id)
-    end
+	for _, orphan in pairs(existing) do
+		self:_remove_subtree(orphan.id)
+	end
 
 	-- Rebuild the linked list for parent
 	local prev_id = nil
@@ -368,7 +377,7 @@ function Tree:update_children(parent_id, items, merge_data_fn)
 	end
 
 	if parent_id then
-		local parent_node = self._nodes[parent_id]
+		local parent_node       = self._nodes[parent_id]
 		parent_node.first_child = first_new
 		parent_node.last_child  = last_new
 	else
@@ -376,7 +385,6 @@ function Tree:update_children(parent_id, items, merge_data_fn)
 		self._root_last  = last_new
 	end
 end
-
 
 ---@generic T
 ---@param parent_id any|nil
@@ -444,10 +452,10 @@ end
 function Tree:insert_sibling(id, data, sibling_id, before)
 	assert(id ~= nil, "id is required")
 	assert(sibling_id ~= nil, "sibling_id is required")
-	
+
 	local ref_node = self._nodes[sibling_id]
 	assert(ref_node, "sibling_id does not exist")
-	
+
 	local parent_id = ref_node.parent_id
 
 	local node = self._nodes[id]
@@ -480,7 +488,7 @@ function Tree:insert_sibling(id, data, sibling_id, before)
 			else
 				needs_reposition = node.prev_sibling ~= sibling_id
 			end
-			
+
 			if needs_reposition then
 				-- Unlink from current position
 				self:_unlink(id)
@@ -526,8 +534,8 @@ function Tree:upsert_items(parent_id, items)
 				-- If we are moving A under C, ensure C is not already a child of A.
 				if parent_id ~= nil and self:_is_ancestor(id, parent_id) then
 					error("cycle detected: cannot move a node under its own descendant")
-				end				
-				
+				end
+
 				-- Remove from old parent (keeps subtree intact)
 				self:_unlink(id)
 
@@ -558,25 +566,25 @@ end
 --- Is this node a root node? (has no parent)
 ---@return boolean
 function Tree:is_root(id)
-    local node = self._nodes[id]
-    return node and node.parent_id == nil
+	local node = self._nodes[id]
+	return node and node.parent_id == nil
 end
 
 --- Get root nodes (same as get_children(nil) but maybe clearer name in some contexts)
 function Tree:get_roots()
-    return self:get_children(nil)
+	return self:get_children(nil)
 end
 
 --- Get the parent ID of a node (or nil if it's a root node)
 ---@param id any
 ---@return any|nil parent_id
 function Tree:get_parent_id(id)
-    assert(id ~= nil, "id is required")
-    local node = self._nodes[id]
-    if not node then
-        return nil   -- or error("node does not exist") — your choice
-    end
-    return node.parent_id
+	assert(id ~= nil, "id is required")
+	local node = self._nodes[id]
+	if not node then
+		return nil -- or error("node does not exist") — your choice
+	end
+	return node.parent_id
 end
 
 ---@param id any

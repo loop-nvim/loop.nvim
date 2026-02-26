@@ -35,7 +35,11 @@ local function _build_taskfile_schema()
                 oneOfItem.properties = vim.tbl_extend("error", oneOfItem.properties, providers_props)
                 oneOfItem.__name = task_type
                 if provider_schema["x-order"] then vim.list_extend(oneOfItem["x-order"], provider_schema["x-order"]) end
-                oneOfItem.properties.type = { const = task_type, description = base_items.properties.type.description }
+                oneOfItem.properties.type = { 
+                    const = task_type, 
+                    description = base_items.properties.type.description,
+                    ["x-valueSelector"] =  base_items.properties.type["x-valueSelector"]
+                }
                 oneOfItem.additionalProperties = false -- providers are not allowed to change this
                 oneOfItem["x-valueSelector"] = schema.properties.tasks.items["x-valueSelector"]
                 for _, req in ipairs(provider_schema.required or {}) do
