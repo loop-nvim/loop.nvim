@@ -149,7 +149,7 @@ local function _refresh_tree(tree, async_update)
 
                 local sequence = item.load_sequence
                 vim.schedule(function()
-                    if sequence ~= item.load_sequence then return end
+                    if sequence ~= item.load_sequence or not item.children_callback then return end
                     item.children_callback(function(loaded_children)
                         if sequence ~= item.load_sequence then return end
                         if tree:get_data(item_id) then
