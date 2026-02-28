@@ -100,15 +100,15 @@ local function _refresh_tree(tree, async_update)
             old_ids[child.id] = true
         end
         for _, child in ipairs(loaded_children or {}) do
-            local existing_parent = tree:get_parent_id(child.id)
-            assert(
-                not existing_parent or existing_parent == parent_id,
-                "id exists under a different node: " .. tostring(child.id)
-            )
             old_ids[child.id] = nil
             ---@type loop.comp.ItemTree.ItemData
             local child_basedata = tree:get_data(child.id)
             if child_basedata then
+                local existing_parent = tree:get_parent_id(child.id)
+                assert(
+                    not existing_parent or existing_parent == parent_id,
+                    "id exists under a different node: " .. tostring(child.id)
+                )
                 if child.data then child_basedata.userdata = child.data end
                 if child.expanded ~= nil then child_basedata.expanded = child.expanded end
                 child_basedata.children_callback = child.children_callback

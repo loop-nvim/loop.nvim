@@ -424,17 +424,15 @@ end
 ---@param parent_id any|nil If nil, returns root nodes.
 ---@return loop.tools.Tree.Item[]
 function Tree:get_children(parent_id)
+	assert(parent_id, "id required")
+
+	local parent_node = self._nodes[parent_id]
+	assert(parent_node, "parent does not exist")
+
 	local items = {}
 	local child_id
 
-	if parent_id == nil then
-		child_id = self._root_first
-	else
-		local node = self._nodes[parent_id]
-		if not node then return items end
-		child_id = node.first_child
-	end
-
+	child_id = parent_node.first_child
 	while child_id do
 		local node = self._nodes[child_id]
 		table.insert(items, { id = child_id, data = node.data })
