@@ -114,6 +114,7 @@ local function _refresh_tree(tree, async_update)
                 child_basedata.children_callback = child.children_callback
                 if child_basedata.children_callback then
                     child_basedata.reload_children = true
+                    child_basedata.load_sequence = child_basedata.load_sequence + 1
                 else
                     tree:remove_children(child.id)
                 end
@@ -385,7 +386,10 @@ function ItemTree:set_children_callback(id, callback)
     local base_data = self._tree:get_data(id)
     assert(base_data, "it not found: " .. tostring(id))
     base_data.children_callback = callback
-    base_data.reload_children = true
+    if base_data.children_callback then
+        base_data.reload_children = true
+        base_data.load_sequence = base_data.load_sequence + 1
+    end
     self._tree:set_item_data(id, base_data)
     self:_request_render()
 end
