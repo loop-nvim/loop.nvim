@@ -204,7 +204,7 @@ function M.configure_tasks(config_dir)
     end
 
     local editor = JsonEditor:new({
-        name = "Tasks editor",
+        name = "Task List Editor",
         filepath = filepath,
         schema = tasks_file_schema,
     })

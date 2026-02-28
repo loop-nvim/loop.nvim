@@ -225,17 +225,6 @@ end
 -- Public API
 --==============================================================
 
----Insert or update a node.
----
----If the node exists:
----  - update its data
----  - reparent if parent_id changed
----
----If new:
----  - create the node
----  - link it to parent
----
-
 --- Replace the children of parent_id with exactly these items, in order.
 ---@generic T
 ---@param parent_id any|nil
@@ -304,152 +293,51 @@ function Tree:set_children(parent_id, items)
 	end
 end
 
----Update the children of a parent node, merging with existing nodes.
----
----Existing children are updated in place if present.
----New children are added, and missing children are removed.
----@param parent_id any|nil
----@param items loop.tools.Tree.Item[]
----@param merge_data_fn fun(old:any,new:any):any
-function Tree:update_children(parent_id, items, merge_data_fn)
-	---@type loop.tools.Tree.Node[]
-	local existing = {}
-	for _, child in ipairs(self:get_children(parent_id)) do
-		existing[child.id] = self._nodes[child.id]
-	end
-
-	local final_children = {}
-	for _, incoming in ipairs(items) do
-		local node = existing[incoming.id]
-		if node then
-			-- Merge data
-			if merge_data_fn then
-				node.data = merge_data_fn(node.data, incoming.data)
-			else
-				node.data = incoming.data
-			end
-			-- Remove all existing children of this reused node
-			local child = node.first_child
-			while child do
-				local next_child = self._nodes[child].next_sibling
-				self:_remove_subtree(child)
-				child = next_child
-			end
-			node.first_child = nil
-			node.last_child  = nil
-			table.insert(final_children, node)
-			existing[incoming.id] = nil
-		else
-			-- New node
-			node = {
-				id           = incoming.id,
-				parent_id    = parent_id,
-				data         = incoming.data,
-				first_child  = nil,
-				last_child   = nil,
-				prev_sibling = nil,
-				next_sibling = nil,
-			}
-			self._nodes[incoming.id] = node
-			table.insert(final_children, node)
-		end
-	end
-
-	-- Remove orphans
-	for _, orphan in pairs(existing) do
-		self:_remove_subtree(orphan.id)
-	end
-
-	-- Rebuild the linked list for parent
-	local prev_id = nil
-	local first_new = nil
-	local last_new = nil
-	for _, node in ipairs(final_children) do
-		local id = node.id
-		node.prev_sibling = prev_id
-		node.next_sibling = nil
-		if prev_id then
-			self._nodes[prev_id].next_sibling = id
-		end
-		if not first_new then first_new = id end
-		prev_id = id
-		last_new = id
-	end
-
-	if parent_id then
-		local parent_node       = self._nodes[parent_id]
-		parent_node.first_child = first_new
-		parent_node.last_child  = last_new
-	else
-		self._root_first = first_new
-		self._root_last  = last_new
-	end
-end
-
 ---@generic T
 ---@param parent_id any|nil
 ---@param id any
 ---@param data T
-function Tree:upsert_item(parent_id, id, data)
+function Tree:add_item(parent_id, id, data)
 	assert(id ~= nil, "id is required")
 	assert(parent_id == nil or self._nodes[parent_id], "parent does not exist")
 
 	local node = self._nodes[id]
-	if node then
-		-- Update data
-		node.data = data
+	assert(not node, "id already exists " .. tostring(id))
 
-		-- Reparent if needed
-		if node.parent_id ~= parent_id then
-			-- CYCLE DETECTION:
-			-- If we are moving A under C, ensure C is not already a child of A.
-			if parent_id ~= nil and self:_is_ancestor(id, parent_id) then
-				error("cycle detected: cannot move a node under its own descendant")
-			end
+	-- Create new node
+	node = {
+		parent_id    = parent_id,
+		data         = data,
+		first_child  = nil,
+		last_child   = nil,
+		next_sibling = nil,
+		prev_sibling = nil,
+	}
+	self._nodes[id] = node
 
-			-- 1. Unlink from old parent (does not delete children)
-			self:_unlink(id)
+	-- Link under parent or root
+	self:_link_child(parent_id, id)
+end
 
-			-- 2. Update parent reference
-			node.parent_id = parent_id
-
-			-- 3. Relink under new parent
-			self:_link_child(parent_id, id)
-		end
-	else
-		-- Create new node
-		node = {
-			parent_id    = parent_id,
-			data         = data,
-			first_child  = nil,
-			last_child   = nil,
-			next_sibling = nil,
-			prev_sibling = nil,
-		}
-		self._nodes[id] = node
-
-		-- Link under parent or root
-		self:_link_child(parent_id, id)
-	end
+---@generic T
+---@param id any
+---@param data any
+---@return boolean
+function Tree:set_item_data(id, data)
+	assert(id ~= nil, "id is required")
+	local node = self._nodes[id]
+	if not node then return false end
+	node.data = data
+	return true
 end
 
 ---Insert or update a node before or after a reference sibling.
----
----If the node exists:
----  - update its data
----  - reparent if parent_id changed
----  - move to position before or after sibling_id
----
----If new:
----  - create the node
----  - link it to parent before or after sibling_id
----
 ---@generic T
 ---@param id any
 ---@param data T
 ---@param sibling_id any
 ---@param before boolean true to insert before sibling, false to insert after
-function Tree:insert_sibling(id, data, sibling_id, before)
+function Tree:add_sibling(id, data, sibling_id, before)
 	assert(id ~= nil, "id is required")
 	assert(sibling_id ~= nil, "sibling_id is required")
 
@@ -459,115 +347,35 @@ function Tree:insert_sibling(id, data, sibling_id, before)
 	local parent_id = ref_node.parent_id
 
 	local node = self._nodes[id]
-	if node then
-		-- Update data
-		node.data = data
+	assert(not node, "id already exists " .. tostring(id))
 
-		-- Reparent if needed
-		if node.parent_id ~= parent_id then
-			-- CYCLE DETECTION:
-			-- If we are moving A under C, ensure C is not already a child of A.
-			if parent_id ~= nil and self:_is_ancestor(id, parent_id) then
-				error("cycle detected: cannot move a node under its own descendant")
-			end
+	-- Create new node
+	node = {
+		parent_id    = parent_id,
+		data         = data,
+		first_child  = nil,
+		last_child   = nil,
+		next_sibling = nil,
+		prev_sibling = nil,
+	}
+	self._nodes[id] = node
 
-			-- 1. Unlink from old parent (does not delete children)
-			self:_unlink(id)
-
-			-- 2. Update parent reference
-			node.parent_id = parent_id
-
-			-- 3. Relink under new parent at correct position
-			self:_link_sibling(id, sibling_id, before)
-		else
-			-- Same parent, but may need to reposition
-			-- Only reposition if not already in the correct position
-			local needs_reposition = false
-			if before then
-				needs_reposition = node.next_sibling ~= sibling_id
-			else
-				needs_reposition = node.prev_sibling ~= sibling_id
-			end
-
-			if needs_reposition then
-				-- Unlink from current position
-				self:_unlink(id)
-				-- Relink at correct position
-				self:_link_sibling(id, sibling_id, before)
-			end
-		end
-	else
-		-- Create new node
-		node = {
-			parent_id    = parent_id,
-			data         = data,
-			first_child  = nil,
-			last_child   = nil,
-			next_sibling = nil,
-			prev_sibling = nil,
-		}
-		self._nodes[id] = node
-
-		-- Link under parent or root at correct position
-		self:_link_sibling(id, sibling_id, before)
-	end
+	-- Link under parent or root at correct position
+	self:_link_sibling(id, sibling_id, before)
 end
 
----@param parent_id any
----@param items loop.tools.Tree.Item[]
-function Tree:upsert_items(parent_id, items)
-	assert(type(items) == "table", "items must be a table")
-	assert(parent_id == nil or self._nodes[parent_id], "parent does not exist")
-
-	for _, item in ipairs(items) do
-		local id   = assert(item.id, "each item must have an 'id'")
-		local data = item.data
-
-		local node = self._nodes[id]
-		if node then
-			-- Update data
-			node.data = data
-
-			-- Reparent if needed
-			if node.parent_id ~= parent_id then
-				-- CYCLE DETECTION:
-				-- If we are moving A under C, ensure C is not already a child of A.
-				if parent_id ~= nil and self:_is_ancestor(id, parent_id) then
-					error("cycle detected: cannot move a node under its own descendant")
-				end
-
-				-- Remove from old parent (keeps subtree intact)
-				self:_unlink(id)
-
-				-- Update parent reference
-				node.parent_id = parent_id
-
-				-- Link under new parent
-				self:_link_child(parent_id, id)
-			end
-		else
-			-- Create new node
-			node = {
-				parent_id    = parent_id,
-				data         = data,
-				first_child  = nil,
-				last_child   = nil,
-				next_sibling = nil,
-				prev_sibling = nil,
-			}
-			self._nodes[id] = node
-
-			-- Link into child chain
-			self:_link_child(parent_id, id)
-		end
-	end
+---@param id any
+---@return boolean
+function Tree:have_item(id)
+	assert(id, "id required")
+	return self._nodes[id] ~= nil
 end
 
 --- Is this node a root node? (has no parent)
 ---@return boolean
 function Tree:is_root(id)
 	local node = self._nodes[id]
-	return node and node.parent_id == nil
+	return node ~= nil and node.parent_id == nil
 end
 
 --- Get root nodes (same as get_children(nil) but maybe clearer name in some contexts)
@@ -582,14 +390,14 @@ function Tree:get_parent_id(id)
 	assert(id ~= nil, "id is required")
 	local node = self._nodes[id]
 	if not node then
-		return nil -- or error("node does not exist") — your choice
+		error("node does not exist")
 	end
 	return node.parent_id
 end
 
 ---@param id any
 ---@return any -- node data or nil
-function Tree:get_item(id)
+function Tree:get_data(id)
 	assert(id, "id required")
 	local node = self._nodes[id]
 	return node and node.data or nil
@@ -609,7 +417,7 @@ end
 function Tree:have_children(id)
 	assert(id, "id required")
 	local node = self._nodes[id]
-	return node and node.first_child ~= nil
+	return node ~= nil and node.first_child ~= nil
 end
 
 ---Get all immediate children of a node in order.
@@ -748,8 +556,6 @@ function Tree:flatten(filter)
 
 	local id = self._root_first
 	while id do
-		-- Reset visited set for each root (in case of forest with shared _nodes - which shouldn't happen in a tree)
-		-- But to be safe and allow detection across roots if somehow shared
 		if visited[id] then
 			assert(false, string.format("Node %s appears under multiple roots - not a valid forest", tostring(id)))
 		end
@@ -760,16 +566,133 @@ function Tree:flatten(filter)
 	return out
 end
 
----Check if potential_ancestor_id is a descendant of id (to prevent cycles)
----@private
-function Tree:_is_ancestor(id, potential_ancestor_id)
-	local current_id = potential_ancestor_id
-	while current_id do
-		if current_id == id then return true end
-		local node = self._nodes[current_id]
-		current_id = node and node.parent_id
+---Validate internal tree invariants.
+---Throws error if any inconsistency is found.
+function Tree:validate()
+	local visited = {}
+	local function assertf(cond, fmt, ...)
+		if not cond then
+			error("Tree:validate() - " .. string.format(fmt, ...))
+		end
 	end
-	return false
+
+	----------------------------------------------------------------
+	-- Validate root chain
+	----------------------------------------------------------------
+	local function validate_root_chain()
+		local id = self._root_first
+		local prev = nil
+		local count = 0
+
+		while id do
+			count = count + 1
+			local node = self._nodes[id]
+			assertf(node, "Root node %s missing from _nodes", tostring(id))
+			assertf(node.parent_id == nil,
+				"Root node %s has non-nil parent_id %s",
+				tostring(id), tostring(node.parent_id))
+
+			assertf(node.prev_sibling == prev,
+				"Root node %s has incorrect prev_sibling",
+				tostring(id))
+
+			if prev then
+				assertf(self._nodes[prev].next_sibling == id,
+					"Broken root sibling link: %s -> %s",
+					tostring(prev), tostring(id))
+			end
+
+			prev = id
+			id = node.next_sibling
+		end
+
+		assertf(prev == self._root_last,
+			"_root_last mismatch: expected %s, got %s",
+			tostring(prev), tostring(self._root_last))
+	end
+
+	----------------------------------------------------------------
+	-- Validate subtree recursively
+	----------------------------------------------------------------
+	local function walk(id)
+		assertf(not visited[id],
+			"Cycle or multiple-parent detected at node %s",
+			tostring(id))
+
+		visited[id] = true
+
+		local node = self._nodes[id]
+		assertf(node, "Node %s missing from _nodes", tostring(id))
+
+		-- Validate children chain
+		local child = node.first_child
+		local prev = nil
+
+		if not child then
+			assertf(node.last_child == nil,
+				"Node %s has nil first_child but non-nil last_child",
+				tostring(id))
+		end
+
+		while child do
+			local child_node = self._nodes[child]
+			assertf(child_node,
+				"Child %s of parent %s missing from _nodes",
+				tostring(child), tostring(id))
+
+			assertf(child_node.parent_id == id,
+				"Child %s has wrong parent_id %s (expected %s)",
+				tostring(child),
+				tostring(child_node.parent_id),
+				tostring(id))
+
+			assertf(child_node.prev_sibling == prev,
+				"Child %s has incorrect prev_sibling",
+				tostring(child))
+
+			if prev then
+				assertf(self._nodes[prev].next_sibling == child,
+					"Broken sibling link: %s -> %s",
+					tostring(prev), tostring(child))
+			end
+
+			prev = child
+
+			-- Recurse
+			walk(child)
+
+			child = child_node.next_sibling
+		end
+
+		assertf(prev == node.last_child,
+			"Node %s last_child mismatch (expected %s, got %s)",
+			tostring(id),
+			tostring(prev),
+			tostring(node.last_child))
+	end
+
+	----------------------------------------------------------------
+	-- Run validations
+	----------------------------------------------------------------
+	validate_root_chain()
+
+	-- Walk all roots
+	local id = self._root_first
+	while id do
+		walk(id)
+		id = self._nodes[id].next_sibling
+	end
+
+	----------------------------------------------------------------
+	-- Ensure no unreachable nodes exist
+	----------------------------------------------------------------
+	for id, _ in pairs(self._nodes) do
+		assertf(visited[id],
+			"Node %s exists in _nodes but is not reachable from any root",
+			tostring(id))
+	end
+
+	return true
 end
 
 return Tree

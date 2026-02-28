@@ -40,9 +40,11 @@ function M.get_regular_window()
         if vim.api.nvim_win_is_valid(winid) then
             local cfg = vim.api.nvim_win_get_config(winid)
             if cfg.relative == "" then -- skip poup windows
-                local bufnr = vim.api.nvim_win_get_buf(winid)
-                if M.is_regular_buffer(bufnr) then
-                    return winid
+                if not vim.wo[winid].winfixbuf then
+                    local bufnr = vim.api.nvim_win_get_buf(winid)
+                    if M.is_regular_buffer(bufnr) then
+                        return winid
+                    end
                 end
             end
         end

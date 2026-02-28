@@ -505,7 +505,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
         end
     end
 
-    self._itemtree:update_children(parent_id, items)
+    self._itemtree:set_children(parent_id, items)
 
     for _, item in ipairs(items) do
         if type(item.data.value) == "table" then
