@@ -16,6 +16,7 @@ function M.start_task(ws_dir, task, page_group, on_exit)
         return nil, "task.command is required"
     end
 
+    local interrupted = false
     -- Your original args — unchanged, just using the resolved values
     ---@type loop.tools.TermProc.StartArgs
     local start_args = {
@@ -26,6 +27,8 @@ function M.start_task(ws_dir, task, page_group, on_exit)
         on_exit_handler = function(code)
             if code == 0 then
                 on_exit(true, nil)
+            elseif interrupted then
+                on_exit(false, "Interrupted")
             else
                 on_exit(false, "Exit code " .. tostring(code))
             end
@@ -53,6 +56,7 @@ function M.start_task(ws_dir, task, page_group, on_exit)
     ---@type loop.TaskControl
     local controller = {
         terminate = function()
+            interrupted = true
             proc:terminate()
         end
     }

@@ -31,16 +31,17 @@ local function _build_taskfile_schema()
                 for name, _ in pairs(providers_props) do
                     assert(not base_items.properties[name], ("task provider '%' defines a reserved property: '%s'"))
                 end
-                local oneOfItem = {
-                    type = "object",
-                    properties = vim.tbl_extend("error", base_items.properties, providers_props),
-                    required = vim.deepcopy(base_items.required),
-                    ["x-order"] = base_items["x-order"] or {},
-                }
+                local oneOfItem = vim.deepcopy(base_items)
+                oneOfItem.properties = vim.tbl_extend("error", oneOfItem.properties, providers_props)
                 oneOfItem.__name = task_type
                 if provider_schema["x-order"] then vim.list_extend(oneOfItem["x-order"], provider_schema["x-order"]) end
-                oneOfItem.properties.type = { const = task_type, description = base_items.properties.type.description }
+                oneOfItem.properties.type = {
+                    const = task_type,
+                    description = base_items.properties.type.description,
+                    ["x-valueSelector"] = base_items.properties.type["x-valueSelector"]
+                }
                 oneOfItem.additionalProperties = false -- providers are not allowed to change this
+                oneOfItem["x-valueSelector"] = schema.properties.tasks.items["x-valueSelector"]
                 for _, req in ipairs(provider_schema.required or {}) do
                     table.insert(oneOfItem.required, req)
                 end
@@ -104,8 +105,8 @@ local function _load_tasks_from_str(content, tasktype_to_schema)
     local data = data_or_err
     do
         local schema = require("loop.task.tasksschema").base_schema
-        local errors = jsonvalidator.validate(schema, data)
-        if errors and #errors > 0 then
+        local valid, errors = jsonvalidator.validate(schema, data)
+        if not valid then
             local strs = jsonvalidator.errors_to_string_arr(errors)
             table.insert(strs, 1, "Failed to load tasks schema")
             return nil, strs
@@ -122,8 +123,8 @@ local function _load_tasks_from_str(content, tasktype_to_schema)
         if not schema then
             return nil, { "No schema for task type: " .. task.type }
         end
-        local errors = jsonvalidator.validate(schema, task)
-        if errors and #errors > 0 then
+        local valid, errors = jsonvalidator.validate(schema, task)
+        if not valid then
             local strs = jsonvalidator.errors_to_string_arr(errors)
             table.insert(strs, 1, "Failed to load task: " .. task.name)
             return nil, strs
@@ -173,8 +174,11 @@ local function _load_tasks(config_dir)
     return tasks, nil
 end
 
+function M.clear_providers()
+    providers.clear_all()
+end
 ---@param ws_dir string
-function M.reset_provider_list(ws_dir)
+function M.reset_providers(ws_dir)
     providers.reset_to_default(ws_dir)
 end
 
@@ -203,81 +207,10 @@ function M.configure_tasks(config_dir)
     end
 
     local editor = JsonEditor:new({
-        name = "Tasks editor",
+        name = "Task List Editor",
         filepath = filepath,
         schema = tasks_file_schema,
     })
-
-    editor:set_new_array_item_handler(function(path, callback)
-        if path:match("^/tasks$") then
-            local category_choices = {}
-            for _, elem in ipairs(providers.get_task_template_providers()) do
-                ---@type loop.SelectorItem
-                local item = {
-                    label = elem.category,
-                    data = elem.provider,
-                }
-                table.insert(category_choices, item)
-            end
-            selector.select({
-                prompt = "Task category",
-                items = category_choices,
-                callback = function(provider)
-                    if provider then
-                        local templates = provider.get_task_templates()
-                        local choices = {}
-                        for _, template in pairs(templates) do
-                            ---@type loop.SelectorItem
-                            local item = {
-                                label = template.name,
-                                data = template.task,
-                            }
-                            table.insert(choices, item)
-                        end
-                        selector.select({
-                            prompt = "Select template",
-                            items = choices,
-                            formatter = _task_preview,
-                            callback = function(task)
-                                if task then callback(task) end
-                            end
-                        })
-                    end
-                end
-            })
-        elseif path:match("^/tasks/[0-9]*/depends_on$") then
-            local task_path = path:match("^(/tasks/[0-9]*/)")
-            local cur_name_path = task_path .. "name"
-            local cur_name = editor:value_at(cur_name_path)
-            local tasks = _load_tasks(config_dir)
-            if not tasks then
-                vim.notify("Failed to load tasks")
-                callback(nil)
-            else
-                local choices = {}
-                for _, task in pairs(tasks) do
-                    if cur_name ~= task.name then
-                        ---@type loop.SelectorItem
-                        local item = { label = task.name, data = task.name }
-                        table.insert(choices, item)
-                    end
-                end
-                if #choices == 0 then
-                    callback(nil)
-                else
-                    selector.select({
-                        prompt = "Select dependency",
-                        items = choices,
-                        callback = function(name)
-                            if name then callback(name) end
-                        end
-                    })
-                end
-            end
-        else
-            callback(nil)
-        end
-    end)
 
     editor:open()
 end
@@ -302,15 +235,16 @@ local function _select_task(args, task_handler)
         table.insert(choices, item)
     end
     selector.select({
-        prompt = args.prompt,
-        items = choices,
-        formatter = _task_preview,
-        callback = function(task)
+            prompt = args.prompt,
+            items = choices,
+            formatter = _task_preview,
+        },
+        function(task)
             if task then
                 task_handler(task)
             end
         end
-    })
+    )
 end
 
 ---@param config_dir string
@@ -322,6 +256,47 @@ local function _load_last_task_name(config_dir)
         return nil
     end
     return payload and payload.task or nil
+end
+
+---@params handler fun(task:loop.Task?)
+function M.select_task_template(handler)
+    local category_choices = {}
+    for _, elem in ipairs(providers.get_task_template_providers()) do
+        ---@type loop.SelectorItem
+        local item = {
+            label = elem.category,
+            data = elem.provider,
+        }
+        table.insert(category_choices, item)
+    end
+    selector.select({
+            prompt = "Task category",
+            items = category_choices,
+        },
+        function(provider)
+            if provider then
+                local templates = provider.get_task_templates()
+                local choices = {}
+                for _, template in pairs(templates) do
+                    ---@type loop.SelectorItem
+                    local item = {
+                        label = template.name,
+                        data = template.task,
+                    }
+                    table.insert(choices, item)
+                end
+                selector.select({
+                        prompt = "Select template",
+                        items = choices,
+                        formatter = _task_preview,
+                    },
+                    function(task)
+                        if task then handler(task) end
+                    end
+                )
+            end
+        end
+    )
 end
 
 ---@param config_dir string

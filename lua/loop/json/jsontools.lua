@@ -1,5 +1,87 @@
 local M = {}
 
+
+local function _escape_ptr(token)
+    return (tostring(token)
+        :gsub("~", "~0")
+        :gsub("/", "~1"))
+end
+
+local function _unescape_ptr(token)
+    return (token
+        :gsub("~1", "/")
+        :gsub("~0", "~"))
+end
+
+-- Build a JSON Pointer (defined in RFC 6901)
+---@param base string
+---@param key string
+---@return string -- JSON Pointer (defined in RFC 6901)
+function M.join_path(base, key)
+    local escaped = _escape_ptr(key)
+    if base == "" or base == "/" then
+        return "/" .. escaped
+    end
+    return base .. "/" .. escaped
+end
+
+-- Build a JSON Pointer (defined in RFC 6901)
+---@param parts string[]
+---@return string -- JSON Pointer (RFC 6901)
+function M.join_path_parts(parts)
+    local arr = {}
+    for _, seg in ipairs(parts) do
+        if seg ~= nil and seg ~= "" then
+            table.insert(arr, _escape_ptr(seg))
+        end
+    end
+    return "/" .. table.concat(arr, "/")
+end
+
+---@param path string -- -- JSON Pointer (defined in RFC 6901)
+---@return string[]
+function M.split_path(path)
+    if path == "" or path == "/" then
+        return {}
+    end
+
+    local parts = {}
+    for part in path:gmatch("[^/]+") do
+        table.insert(parts, _unescape_ptr(part))
+    end
+    return parts
+end
+
+---@param root any
+---@param path string -- JSON Pointer (RFC 6901)
+---@return any value, string? error
+function M.get_at_path(root, path)
+    if path == "" or path == "/" then
+        return root
+    end
+    local parts = M.split_path(path)
+    local current = root
+    for i, key in ipairs(parts) do
+        if type(current) ~= "table" then
+            return nil, ("Cannot index non-table at segment %d ('%s')"):format(i, key)
+        end
+        if vim.islist(current) then
+            -- JSON Pointer array indices are strings
+            local idx = tonumber(key)
+            if not idx then
+                return nil, ("Invalid array index '%s' at segment %d"):format(key, i)
+            end
+            current = current[idx]
+        else
+            current = current[key]
+        end
+        if current == nil then
+            return nil, ("Path not found at segment %d ('%s')"):format(i, key)
+        end
+    end
+    return current
+end
+
 ---Determine displayed type name for tree rendering
 ---@param v any
 ---@return string
@@ -25,7 +107,6 @@ function M.merge_additional_properties(dest, src)
         dest.additionalProperties = src.additionalProperties
     end
 end
-
 
 ---@param schema table|nil
 ---@return string[]
@@ -81,6 +162,5 @@ function M.get_schema_allowed_types(schema)
 
     return {}
 end
-
 
 return M

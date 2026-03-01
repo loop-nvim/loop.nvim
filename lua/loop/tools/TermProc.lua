@@ -119,6 +119,9 @@ function TermProc:_start_term_job(cmd_and_args, env, cwd, output_handler, on_exi
 		return false, "Failed to start terminal job"
 	end
 
+	local full_cmd = table.concat(cmd_and_args, " ")
+	vim.api.nvim_chan_send(self.job_id, string.format("%s\r\n", full_cmd))
+
 	return true, nil
 end
 

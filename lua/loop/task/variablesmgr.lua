@@ -31,8 +31,8 @@ function M.load_variables(config_dir)
     local data = data_or_err
     do
         local schema = require("loop.task.variablesschema")
-        local errors = jsonvalidator.validate(schema, data)
-        if errors and #errors > 0 then
+        local valid, errors = jsonvalidator.validate(schema, data)
+        if not valid then
             return nil, jsonvalidator.errors_to_string_arr(errors)
         end
         if not data or not data.variables then

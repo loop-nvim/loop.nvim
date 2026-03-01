@@ -40,9 +40,11 @@ function M.get_regular_window()
         if vim.api.nvim_win_is_valid(winid) then
             local cfg = vim.api.nvim_win_get_config(winid)
             if cfg.relative == "" then -- skip poup windows
-                local bufnr = vim.api.nvim_win_get_buf(winid)
-                if M.is_regular_buffer(bufnr) then
-                    return winid
+                if not vim.wo[winid].winfixbuf then
+                    local bufnr = vim.api.nvim_win_get_buf(winid)
+                    if M.is_regular_buffer(bufnr) then
+                        return winid
+                    end
                 end
             end
         end
@@ -227,6 +229,26 @@ function M.confirm_action(msg, default_yes, callback)
             callback(nil)
         end
     end)
+end
+
+---@param c1 number
+---@param c2 number
+---@param alpha number
+---@return string
+function M.blend_colors(c1, c2, alpha)
+    local r1 = bit.rshift(c1, 16)
+    local g1 = bit.band(bit.rshift(c1, 8), 0xFF)
+    local b1 = bit.band(c1, 0xFF)
+
+    local r2 = bit.rshift(c2, 16)
+    local g2 = bit.band(bit.rshift(c2, 8), 0xFF)
+    local b2 = bit.band(c2, 0xFF)
+
+    local r = math.floor(r1 * (1 - alpha) + r2 * alpha)
+    local g = math.floor(g1 * (1 - alpha) + g2 * alpha)
+    local b = math.floor(b1 * (1 - alpha) + b2 * alpha)
+
+    return string.format("#%02x%02x%02x", r, g, b)
 end
 
 return M

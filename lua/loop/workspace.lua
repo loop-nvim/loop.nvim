@@ -10,6 +10,7 @@ local runner = require("loop.task.runner")
 local jsoncodec = require('loop.json.codec')
 local jsonvalidator = require('loop.json.validator')
 local filetools = require('loop.tools.file')
+local flock = require('loop.tools.flock')
 local wssaveutil = require('loop.ws.saveutil')
 local floatwin = require('loop.tools.floatwin')
 local selector = require('loop.tools.selector')
@@ -108,6 +109,8 @@ local function _close_workspace(quiet)
 
     runner.terminate_tasks()
 
+    taskmgr.clear_providers()
+
     _save_workspace()
 
     extdata.on_workspace_unload(_workspace_info)
@@ -123,8 +126,14 @@ local function _close_workspace(quiet)
         _page_manager.delete_groups()
         _page_manager.expire(true)
     end
+
+    local config_dir = _workspace_info.config_dir
+
     _workspace_info = nil
     statusline.set_workspace_name(nil)
+
+    local lockfile_path = vim.fs.joinpath(config_dir, "wslock")
+    flock.unlock(lockfile_path)
 end
 
 ---@param ws_dir string
@@ -168,8 +177,8 @@ local function _load_workspace_config(config_dir)
     end
     local config = data_or_err
     local schema = require('loop.ws.schema')
-    local errors = jsonvalidator.validate(schema, config)
-    if errors then
+    local valid, errors = jsonvalidator.validate(schema, config)
+    if not valid then
         return nil, jsonvalidator.errors_to_string(errors)
     end
     return config.workspace
@@ -178,6 +187,7 @@ end
 ---@param dir string
 ---@return boolean
 ---@return string|nil
+---@return boolean? is_config_err
 local function _load_workspace(dir)
     assert(_init_done, _init_err_msg)
     assert(type(dir) == 'string')
@@ -189,10 +199,15 @@ local function _load_workspace(dir)
         return false, "No workspace in " .. dir
     end
 
+    local lockfile_path = vim.fs.joinpath(config_dir, "wslock")
+    if not flock.lock(lockfile_path) then
+        return false, "Workspace already open in another process"
+    end
+
     local ws_config, config_errors = _load_workspace_config(config_dir)
     if not ws_config then
         logs.log(config_errors or "unknown error", vim.log.levels.ERROR)
-        return false, "Failed to load workspace configuration (:Loop logs for details)"
+        return false, "Configuration error", true
     end
 
     ---@type loop.ws.WorkspaceInfo
@@ -211,7 +226,7 @@ local function _load_workspace(dir)
 
     window.load_settings(config_dir)
 
-    taskmgr.reset_provider_list(dir)
+    taskmgr.reset_providers(dir)
 
     _page_manager = window.create_page_manager()
     runner.on_workspace_open(_workspace_info, _page_manager)
@@ -242,11 +257,10 @@ local function _show_workspace_info_floatwin()
         return
     end
     local info = _workspace_info
-    local save_config = vim.fn.copy(info.config.save)
     local schema = require('loop.ws.schema')
     ---@diagnostic disable-next-line: inject-field
-    local str = ("Name: %s\nDirectory: %s\nFiles:\n%s"):format(info.name, info.ws_dir,
-        jsoncodec.to_string(save_config, schema))
+    local str = ("Directory:\n%s\n\nSettings:\n%s"):format(info.ws_dir,
+        jsoncodec.to_string(info.config, schema.properties.workspace))
     floatwin.show_floatwin(str, { title = "Workspace" })
 end
 
@@ -345,15 +359,16 @@ function M.open_workspace(dir, at_startup)
         end
 
         selector.select({
-            prompt = "Open workspace",
-            items = items,
-            callback = function(choice)
+                prompt = "Open workspace",
+                items = items
+            },
+            function(choice)
                 if choice then
                     -- async open of selected workspace
                     M.open_workspace(choice, false)
                 end
             end
-        })
+        )
         return
     end
 
@@ -365,7 +380,7 @@ function M.open_workspace(dir, at_startup)
 
     _close_workspace()
 
-    local ok, err_msg = _load_workspace(dir)
+    local ok, err_msg, have_config_error = _load_workspace(dir)
     if ok and _workspace_info then
         -- add to recent list (MRU)
         _add_recent_workspace(dir)
@@ -378,10 +393,19 @@ function M.open_workspace(dir, at_startup)
         end
     else
         if not at_startup and err_msg then
-            vim.notify(err_msg, vim.log.levels.ERROR)
+            if have_config_error then
+                vim.notify("Workspace configuration error, opening configuration editor", vim.log.levels.ERROR)
+                _configure_workspace(dir)
+            else
+                vim.notify("Workspace not loaded (:Loop log for details)", vim.log.levels.ERROR)
+            end
         end
         logs.user_log("Workspace not loaded, " .. err_msg, "workspace")
     end
+end
+
+function M.close_workspace()
+    _close_workspace()
 end
 
 function M.configure_workspace()
@@ -422,6 +446,8 @@ function M.run_command(cmd, rest, opts)
         local provider = extdata.get_cmd_provider(cmd)
         if provider then
             provider.dispatch(rest, opts)
+        elseif not _workspace_info then
+            vim.notify("No active workspace", vim.log.levels.WARN)
         else
             vim.notify("Invalid command: " .. tostring(cmd))
         end
@@ -455,7 +481,7 @@ end
 ---@return string[]
 function M.workspace_subcommands(args)
     if #args == 0 then
-        return { "info", "create", "open", "configure", "save" }
+        return { "info", "create", "open", "close", "configure", "save" }
     end
     return {}
 end
@@ -474,6 +500,10 @@ function M.workspace_command(command)
         M.open_workspace(nil, false)
         return
     end
+    if command == "close" then
+        M.close_workspace()
+        return
+    end
     if command == "configure" then
         M.configure_workspace()
         return
@@ -489,9 +519,38 @@ end
 ---@return string[]
 function M.task_subcommands(args)
     if #args == 0 then
-        return { "run", "repeat", "terminate_all", "configure" }
+        return { "run", "repeat", "terminate", "terminate_all", "configure" }
     end
     return {}
+end
+
+local function _select_and_terminate_task()
+    local active_tasks = runner.get_active_tasks()
+    if #active_tasks == 0 then return end
+    local choices = {}
+    for _, data in ipairs(active_tasks) do
+        local virt_lines
+        if data.root ~= data.name then
+            virt_lines = { { { ("Triggered by `%s`"):format(data.root), "Comment" }, } }
+        end
+        ---@type loop.SelectorItem
+        local choice = {
+            label = data.name,
+            virt_lines = virt_lines,
+            data = data.ctrl
+        }
+        table.insert(choices, choice)
+    end
+    selector.select({
+            prompt = "Terminate task",
+            items = choices
+        },
+        function(ctrl)
+            if ctrl then
+                ---@cast ctrl loop.TaskControl
+                ctrl.terminate()
+            end
+        end)
 end
 
 ---@param command string|nil
@@ -514,7 +573,7 @@ function M.task_command(command, arg1, arg2)
     elseif command == "configure" then
         taskmgr.configure_tasks(config_dir)
     elseif command == "terminate" then
-        runner.terminate_task(arg1)
+        _select_and_terminate_task()
     elseif command == "terminate_all" then
         runner.terminate_tasks()
     else
@@ -671,10 +730,10 @@ function M.init()
                 _save_timer:close()
             end
 
-            if runner.have_running_task() then
+            if runner.have_running_tasks() then
                 runner.terminate_tasks()
                 local max_waits = 100 -- 10 seconds max
-                while max_waits > 0 and runner.have_running_task() do
+                while max_waits > 0 and runner.have_running_tasks() do
                     max_waits = max_waits - 1
                     vim.wait(100)
                 end

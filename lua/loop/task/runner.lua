@@ -4,8 +4,6 @@ local taskmgr             = require("loop.task.taskmgr")
 local resolver            = require("loop.tools.resolver")
 local logs                = require("loop.logs")
 local task_scheduler      = require("loop.task.taskscheduler")
-local StatusComp          = require("loop.task.StatusComp")
-local config              = require("loop.config")
 local variablesmgr        = require("loop.task.variablesmgr")
 local strtools            = require("loop.tools.strtools")
 local planner             = require("loop.task.planner")
@@ -15,6 +13,13 @@ local _workspace_info
 
 ---@type loop.PageManager?
 local _page_manager
+
+---@alias loop.ws.ActiveTaskData {name:string,root:string,ctrl:loop.TaskControl}
+
+---@type number
+local _last_task_key      = 0
+---@type {number:loop.ws.ActiveTaskData}
+local _active_tasks       = {}
 
 ---@type table<string, loop.PageGroup[]>
 -- task_name -> list of run entries
@@ -70,12 +75,32 @@ end
 
 ---@param task loop.Task
 ---@param page_group loop.PageGroup
+---@param depedant_root string
 ---@param on_exit loop.TaskExitHandler
 ---@return loop.TaskControl|nil, string|nil
-local function _start_task(task, page_group, on_exit)
+local function _start_task(task, page_group, depedant_root, on_exit)
     logs.user_log("Starting task:\n" .. vim.inspect(task), "task")
+
+    local exited = false
+    local task_key = _last_task_key + 1
+    _last_task_key = task_key
+
     ---@type loop.TaskExitHandler
     local exit_handler = function(success, reason)
+        exited = true
+        _active_tasks[task_key] = nil
+        if not success and reason then
+            if not page_group.is_expired() and not page_group.have_pages() then
+                local page = page_group.add_page({
+                    label = "Error",
+                    type = "output",
+                    activate = true,
+                })
+                if page then
+                    page.output_buf.add_lines(reason)
+                end
+            end
+        end
         _expire_page_group(task.name, page_group)
         on_exit(success, reason)
     end
@@ -94,9 +119,18 @@ local function _start_task(task, page_group, on_exit)
             page.output_buf.add_lines(err_msg or "Task failed")
         end
     end
-    if not taskctrl then
+    if not taskctrl or exited then
         _expire_page_group(task.name, page_group)
     end
+
+    if not exited then
+        _active_tasks[task_key] = {
+            name = task.name,
+            root = depedant_root,
+            ctrl = taskctrl
+        }
+    end
+
     return taskctrl, err_msg
 end
 
@@ -162,8 +196,7 @@ function M.run_task_with_deps(all_tasks, root_name)
     local root_page_group
     ---@param err_msg string
     local function on_run_failed(err_msg)
-        logs.user_log(err_msg, "task")
-        if not root_page_group or not root_page_group.have_pages() then
+        if not root_page_group or (not root_page_group.is_expired() and not root_page_group.have_pages()) then
             root_page_group = _page_manager and _page_manager.add_page_group(root_name)
             if root_page_group then
                 local page = root_page_group.add_page({
@@ -237,10 +270,11 @@ function M.run_task_with_deps(all_tasks, root_name)
                 if not page_group then
                     return nil, "failed to create page group"
                 end
-                return _start_task(task, page_group, on_exit)
+                return _start_task(task, page_group, root_name, on_exit)
             end,
             function(name, status, reason) -- on task event
-                logs.user_log(("%s: %s - %s"):format(name, status, reason), "task")
+                local status_str = (reason and reason ~= "") and ("%s - %s"):format(status, reason) or status
+                logs.user_log(("Task update: `%s`: %s"):format(name, status_str), "task")
                 local state = _run_state[run_id]
                 if not state then return end
                 if status == "running" then
@@ -248,9 +282,6 @@ function M.run_task_with_deps(all_tasks, root_name)
                     state.running = state.running + 1
                 elseif status == "success" or status == "failure" then
                     state.running = math.max(0, state.running - 1)
-                end
-                if reason then
-                    logs.user_log(("%s: %s"):format(name, reason), "task")
                 end
                 _report_state()
             end,
@@ -264,13 +295,24 @@ function M.run_task_with_deps(all_tasks, root_name)
     end)
 end
 
+---@return loop.ws.ActiveTaskData[]
+function M.get_active_tasks()
+    local ret = {}
+    local keys = vim.tbl_keys(_active_tasks)
+    vim.fn.sort(keys)
+    for _, key in ipairs(keys) do
+        table.insert(ret, _active_tasks[key])
+    end
+    return ret
+end
+
 --- Check if a task plan is currently running or terminating
 ---@return boolean
-function M.have_running_task()
+function M.have_running_tasks()
     return task_scheduler.is_running()
 end
 
---- Terminate the currently running task plan (if any)
+--- Terminate all running tasks
 function M.terminate_tasks()
     task_scheduler.terminate()
 end

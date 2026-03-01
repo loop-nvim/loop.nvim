@@ -35,7 +35,7 @@ describe("loop.task.taskscheduler", function()
             "root",
             sync_start_task(true),
             function(name, event, success)
-                if event == "stop" then event_called = true end
+                if event == "success" then event_called = true end
             end,
             function(success)
                 exit_called = true

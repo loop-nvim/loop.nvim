@@ -26,8 +26,7 @@ local function _resolve_subschema(schema, key, value)
     -- 2. oneOf resolution (full validation)
     if schema.oneOf then
         for _, candidate in ipairs(schema.oneOf) do
-            -- validate returns nil on success
-            if jsonschema.validate(candidate, value) == nil then
+            if jsonschema.validate(candidate, value) then
                 return candidate
             end
         end

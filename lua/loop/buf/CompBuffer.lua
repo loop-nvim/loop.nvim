@@ -43,6 +43,7 @@ end
 ---@return boolean refresh_needed
 function CompBuffer:get_or_create_buf()
     local bufnr, refresh_needed = BaseBuffer.get_or_create_buf(self)
+    vim.bo[bufnr].spelloptions = "noplainbuffer"
     if refresh_needed and self._renderer then
         self._renderer.render(bufnr)
     end

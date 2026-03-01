@@ -381,15 +381,16 @@ local function _select_and_show_page(target_winid)
         return
     end
     selector.select({
-        prompt = "Select page",
-        items = choices,
-        initial = initial,
-        callback = function(data)
+            prompt = "Select page",
+            items = choices,
+            initial = initial,
+        },
+        function(data)
             if data and data.tabidx then
                 _show_page(target_winid, data.tabidx, data.pageidx)
             end
         end
-    })
+    )
 end
 
 function M.show_window()

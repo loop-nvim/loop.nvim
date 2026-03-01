@@ -12,6 +12,14 @@ local uitools = require('loop.tools.uitools')
 ---@alias JsonPrimitive string|number|boolean|nil
 ---@alias JsonValue JsonPrimitive|table<string,JsonValue>|JsonValue[]
 
+---@class loop.JsonEditor.NodeData
+---@field key string
+---@field path string
+---@field value JsonValue
+---@field value_type string
+---@field err_msg string|nil
+---@field schema table|nil
+
 ---@class loop.JsonEditorOpts
 ---@field name string?
 ---@field filepath string?
@@ -24,12 +32,13 @@ local uitools = require('loop.tools.uitools')
 ---@field _filepath string
 ---@field _data table
 ---@field _schema table|nil
+---@field _schema_map table<string,any>
 ---@field _fold_cache table<string, boolean>
 ---@field _undo_stack table[]
 ---@field _redo_stack table[]
 ---@field _validation_errors loop.json.ValidationError[]
 ---@field _is_dirty boolean
----@field _get_new_array_item fun(path:string, callback:fun(to_add:any|nil))?
+---@field _value_selection_handler fun(path:string, callback:fun(value:any?))?
 ---@field _itemtree loop.comp.ItemTree
 ---@field _is_open boolean
 local JsonEditor = class()
@@ -56,6 +65,30 @@ local function _show_help()
     }
 
     floatwin.show_floatwin(table.concat(help_text, "\n"), { title = "Show help" })
+end
+
+--- Dynamically call a Lua function given a module path string
+---@param path string e.g. "module.submodule.func"
+---@param ... any arguments to pass
+---@return any return values
+local function _call_lua_function(path, ...)
+    local parts = vim.split(path, "%.")
+    if #parts < 2 then
+        error("Path must be at least module.function")
+    end
+
+    local fn_name = table.remove(parts)          -- last element is function
+    local module_path = table.concat(parts, ".") -- the rest is module
+
+    -- require the module
+    local mod = require(module_path)
+    local fn = mod[fn_name]
+
+    if type(fn) ~= "function" then
+        error(("'%s' is not a function in module '%s'"):format(fn_name, module_path))
+    end
+
+    return fn(...)
 end
 
 ---@param filetype string
@@ -150,8 +183,9 @@ local function _show_node_help(item)
         vim.notify("No node selected", vim.log.levels.WARN)
         return
     end
+    ---@type loop.JsonEditor.NodeData
     local data = item.data
-    local schema = data.unresolved_schema
+    local schema = data.schema
     local lines = {}
     if schema then
         local function add_field(label, value)
@@ -204,65 +238,10 @@ local function _show_node_help(item)
     floatwin.show_tooltip(table.concat(lines, "\n"))
 end
 
-
----@param name string
----@param value_type string
----@param enum string[]?
----@param default_text string?
----@param raw_input boolean?
----@param on_confirm fun(value:any)
-local function _request_value(name, value_type, enum, default_text, raw_input, on_confirm)
-    if raw_input then
-        if enum or value_type == "boolean" or value_type == "number" then
-            return
-        end
-    end
-    if enum or value_type == "boolean" then
-        if raw_input then return end
-        local values = enum or { true, false }
-        ---@type {label: string, data: any}[]
-        local choices = {}
-        local initial
-        for i, v in ipairs(values) do
-            local text = tostring(v)
-            if text == default_text then initial = i end
-            table.insert(choices, { label = text, data = v })
-        end
-        selector.select({
-            prompt = "Select value",
-            items = choices,
-            initial = initial,
-            callback = function(data)
-                if data ~= nil then
-                    on_confirm(data)
-                end
-            end
-        })
-        return
-    end
-    local on_input = function(txt)
-        if txt == nil then return end
-        local coerced = _coerce_value(txt, value_type)
-        if coerced ~= nil then
-            on_confirm(coerced)
-        end
-    end
-    ---@type table
-    local input_opts = {
-        prompt = ("%s (%s)"):format(name, value_type),
-        default_text = default_text,
-    }
-    if raw_input then
-        floatwin.input_multiline(input_opts, on_input)
-    else
-        floatwin.input_at_cursor(input_opts, on_input)
-    end
-end
-
 ---@param _ any
----@param data table
+---@param data loop.JsonEditor.NodeData
 ---@return string[][], string[][]
-local function _formatter(_, data)
+local function _formatter(_, data, expanded)
     if not data then return {}, {} end
 
     local text_chunks = {}
@@ -278,10 +257,24 @@ local function _formatter(_, data)
 
     if vt == "object" or vt == "array" then
         -- Show bracket count as virt_text
-        local count = type(value) == "table" and #value or 0
-        local bracket = vt == "object" and "{…}" or ("[…] (" .. count .. ")")
-        table.insert(virt_chunks, { "", nil }) -- spacing
-        table.insert(virt_chunks, { bracket, "Comment" })
+        if type(value) == "table" then
+            local count = #value
+            local bracket = vt == "object" and "{…}" or ("[…] (" .. count .. ")")
+            table.insert(virt_chunks, { "", nil }) -- spacing
+            table.insert(virt_chunks, { bracket, "Comment" })
+            if expanded == false and vt == "object" then
+                local name_prop = data.schema and data.schema["x-name-prop"]
+                if name_prop then
+                    local name = value[name_prop]
+                    if name then
+                        table.insert(virt_chunks, { " ", nil }) -- spacing
+                        table.insert(virt_chunks, { name, "Comment" })
+                    end
+                end
+            end
+        else
+            table.insert(virt_chunks, { "Type Error", "Error" })
+        end
     else
         -- Separator between key and value
         table.insert(text_chunks, { ": ", "Comment" })
@@ -319,9 +312,9 @@ function JsonEditor:init(opts)
     self._is_open = false
 end
 
----@param handler fun(path:string, callback:fun(to_add:any|nil))?
-function JsonEditor:set_new_array_item_handler(handler)
-    self._get_new_array_item = handler
+---@param handler fun(path:string, callback:fun(value:any?))?
+function JsonEditor:set_value_selection_handler(handler)
+    self._value_selection_handler = handler
 end
 
 ---@param winid integer?
@@ -331,11 +324,14 @@ function JsonEditor:open(winid)
 
     local name = self._opts.name or "JSON Editor"
 
-    ---@diagnostic disable-next-line: undefined-field
-    self._itemtree = ItemTreeComp:new({
+    ---@type loop.comp.ItemTree.InitArgs
+    local opts = {
         formatter = _formatter,
         render_delay_ms = 40,
-    })
+        header = { { name, "Title" }, { " (press g? for help)", "COmment" } }
+    }
+    ---@diagnostic disable-next-line: undefined-field
+    self._itemtree = ItemTreeComp:new(opts)
 
     self:_reload_data()
 
@@ -359,7 +355,7 @@ function JsonEditor:open(winid)
     })
 
     buf:add_keymap("C", {
-        desc = "Change raw value",
+        desc = "Change string (multiline)",
         callback = function() with_current_item(function(i) self:_edit_value(i, true) end) end,
     })
 
@@ -425,21 +421,23 @@ function JsonEditor:_reload_data()
         end
     end
     self._data = data
+    self._validation_errors = {}
+    if self._schema then
+        local valid, validation_errors, schema_map = validator.validate(self._schema, self._data,
+            { build_schema_map = true })
+        self._schema_map = schema_map or {}
+        if not valid then
+            self._validation_errors = validation_errors
+        end
+    end
     self:_reload_tree()
 end
 
 function JsonEditor:_reload_tree()
-    self._validation_errors = {}
     ---@type table<string, string>
     local errors = {}
-    if self._schema then
-        local validation_errors = validator.validate(self._schema, self._data)
-        if validation_errors and #validation_errors > 0 then
-            self._validation_errors = validation_errors
-            for _, e in ipairs(validation_errors) do
-                errors[e.path] = e.err_msg:gsub("\n", " ")
-            end
-        end
+    for _, e in ipairs(self._validation_errors) do
+        errors[e.path] = e.err_msg:gsub("\n", " ")
     end
     self:_upsert_tree_items(self._data, "", nil, self._schema, errors)
 end
@@ -458,27 +456,20 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
     if vim.islist(tbl) then
         for i, v in ipairs(tbl) do
             local str_i = tostring(i)
-            local p = validator.join_path(path, str_i)
-            local item_schema = parent_schema and parent_schema.items or nil
-            jsontools.merge_additional_properties(item_schema, parent_schema)
-
-            local unresolved_schema = item_schema
-            local resolved_schema = validator.resolve_oneof_schema(v, item_schema) or item_schema
-
+            local p = jsontools.join_path(path, str_i)
+            local schema = self._schema_map[p]
             local e = errors[p]
-
             ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
                 expanded = self._fold_cache[p] ~= false,
                 data = {
-                    key               = "[" .. str_i .. "]",
-                    path              = p,
-                    value             = v,
-                    err_msg           = e,
-                    value_type        = jsontools.value_type(v),
-                    unresolved_schema = unresolved_schema,
-                    schema            = resolved_schema,
+                    key        = "[" .. str_i .. "]",
+                    path       = p,
+                    value      = v,
+                    err_msg    = e,
+                    value_type = jsontools.value_type(v),
+                    schema     = schema,
                 },
             }
             table.insert(items, item)
@@ -491,31 +482,21 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
             if k == "$schema" then goto continue end
 
             local v = tbl[k]
-            local p = validator.join_path(path, k)
-
-            local prop_schema, unresolved_schema, resolved_schema
-            if parent_schema and parent_schema.properties and parent_schema.properties[k] then
-                prop_schema = parent_schema.properties[k]
-                jsontools.merge_additional_properties(prop_schema, parent_schema)
-                unresolved_schema = prop_schema
-                resolved_schema = validator.resolve_oneof_schema(v, prop_schema) or prop_schema
-            end
-
+            local p = jsontools.join_path(path, k)
+            local schema = self._schema_map[p]
             local e = errors[p]
-
             ---@type loop.comp.ItemTree.ItemDef
             local item = {
                 id = p,
                 parent_id = parent_id,
                 expanded = self._fold_cache[p] ~= false,
                 data = {
-                    key               = k,
-                    path              = p,
-                    value             = v,
-                    err_msg           = e,
-                    value_type        = jsontools.value_type(v),
-                    unresolved_schema = unresolved_schema,
-                    schema            = resolved_schema,
+                    key        = k,
+                    path       = p,
+                    value      = v,
+                    err_msg    = e,
+                    value_type = jsontools.value_type(v),
+                    schema     = schema
                 },
             }
             table.insert(items, item)
@@ -524,7 +505,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
         end
     end
 
-    self._itemtree:update_children(parent_id, items)
+    self._itemtree:set_children(parent_id, items)
 
     for _, item in ipairs(items) do
         if type(item.data.value) == "table" then
@@ -542,58 +523,108 @@ function JsonEditor:value_at(path)
     return item.data.value
 end
 
+---@param path string
+---@param name string
+---@param value_type string
+---@param schema table?
+---@param default_text string?
+---@param value_selection_handler fun(path:string, callback:fun(value:any?))?
+---@param on_confirm fun(value:any)
+function JsonEditor:_request_value(path, name, value_type, schema, default_text, value_selection_handler, on_confirm)
+    if schema and schema["x-valueSelector"] then
+        local value_selector_fn_path = schema["x-valueSelector"]
+        _call_lua_function(value_selector_fn_path, function(value)
+            if value then
+                on_confirm(value)
+            end
+        end, vim.deepcopy(self._data), path)
+        return
+    end
+    if schema and schema.const then
+        return
+    end
+    if value_type == "array" or value_type == "object" then
+        on_confirm(_create_default_value(value_type))
+        return
+    end
+
+    if (schema and schema.enum) or value_type == "boolean" then
+        local values = schema and schema.enum or { true, false }
+        local desc_list = schema and schema["x-enumDescriptions"]
+        ---@type {label: string, data: any}[]
+        local choices = {}
+        local initial
+        for i, v in ipairs(values) do
+            local text = tostring(v)
+            if text == default_text then initial = i end
+            local desc = desc_list and desc_list[i]
+            table.insert(choices, {
+                label = text,
+                data = v,
+                virt_lines = desc and { { { desc, "Comment" } } } or nil
+            })
+        end
+        selector.select({
+                prompt = "Select value",
+                items = choices,
+                initial = initial,
+            },
+            function(data)
+                if data ~= nil then
+                    on_confirm(data)
+                end
+            end
+        )
+        return
+    end
+    local on_input = function(txt)
+        if txt == nil then return end
+        local coerced = _coerce_value(txt, value_type)
+        if coerced ~= nil then
+            on_confirm(coerced)
+        end
+    end
+    ---@type table
+    local input_opts = {
+        prompt = ("%s (%s)"):format(name, value_type),
+        default_text = default_text and tostring(default_text),
+    }
+    floatwin.input_at_cursor(input_opts, on_input)
+end
+
 ---@param item loop.comp.ItemTree.Item
----@param raw_input? boolean
-function JsonEditor:_edit_value(item, raw_input)
+---@param multiline? boolean
+function JsonEditor:_edit_value(item, multiline)
     local path = item.data.path ---@type string
-    local schema = item.data.schema or {} ---@type table
+    local schema = item.data.schema ---@type table
     local current_value = item.data.value ---@type any
     if current_value == nil then
         return
-    end
-    if type(current_value) == "table" then
-        if not raw_input then return end
-        ---@type loop.floatwin.MultilineInputOpts
-        local input_opts = {
-            prompt = path,
-            default_text = jsoncodec.to_string(current_value, schema),
-            filetype = "json",
-            validate = function(content)
-                local ok, err = jsoncodec.from_string(content)
-                return ok, ok and nil or "Input is not valid JSON"
-            end,
-        }
-        floatwin.input_multiline(input_opts, function(value)
-            if value then
-                local ok, data = jsoncodec.from_string(value)
-                if ok and type(data) == "table" then
-                    self:_set_value(path, data)
-                else
-                    vim.notify("Invalid JSON")
-                end
-            end
-        end)
-        return
-    end
-    -- Normal scalar editing
-    local default_text ---@type string
-    if item.data.value_type == "string" then
-        default_text = current_value
-    else
-        default_text = vim.json.encode(current_value)
     end
     local on_confirm = function(value)
         if value ~= nil then
             self:_set_value(path, value)
         end
     end
-    _request_value(item.data.key, item.data.value_type, schema.enum, default_text, raw_input, on_confirm)
+    -- Normal scalar editing
+    if multiline and item.data.value_type == "string" then
+        local default_text = tostring(current_value)
+        ---@type table
+        local input_opts = {
+            prompt = ("%s (%s)"):format(item.data.key, item.data.value_type),
+            default_text = default_text,
+        }
+        floatwin.input_multiline(input_opts, on_confirm)
+        return
+    end
+    self:_request_value(path, item.data.key, item.data.value_type, schema, current_value, self._value_selection_handler,
+        on_confirm)
 end
 
 ---@param path string
 ---@param new_value any
 function JsonEditor:_set_value(path, new_value)
-    local parts = validator.split_path(path) ---@type string[]
+    local parts = jsontools.split_path(path) ---@type string[]
     local obj = nil
     local key = nil
 
@@ -630,10 +661,10 @@ function JsonEditor:_add_new(item, where)
     if where == "under" then
         parent = item
     else
-        local parts = validator.split_path(item.data.path)
+        local parts = jsontools.split_path(item.data.path)
         if #parts < 2 then return end
         local item_key = table.remove(parts, #parts)
-        local parent_path = validator.join_path_parts(parts)
+        local parent_path = jsontools.join_path_parts(parts)
         local par_item = self._itemtree:get_item(parent_path)
         if not par_item then return end
         parent = par_item
@@ -675,20 +706,11 @@ end
 ---@param callback fun(alue:any)
 function JsonEditor:get_new_array_member(item, callback)
     local vt = item.data.value_type ---@type string
+    local path = item.data.path
     local schema = item.data.schema ---@type table|nil
     if vt == "array" then
         local items_schema = schema and schema.items
-        if self._get_new_array_item then
-            self._get_new_array_item(item.data.path, function(value)
-                if value ~= nil then
-                    callback(value)
-                else
-                    self:_get_new_value(items_schema, function(v) callback(v) end)
-                end
-            end)
-        else
-            self:_get_new_value(items_schema, function(value) callback(value) end)
-        end
+        self:_get_new_value(path, items_schema, function(value) callback(value) end)
     else
         callback(nil)
     end
@@ -713,7 +735,7 @@ function JsonEditor:_delete(item)
         return
     end
 
-    local parts = validator.split_path(item.data.path) ---@type string[]
+    local parts = jsontools.split_path(item.data.path) ---@type string[]
     if #parts == 0 then return end
 
     local key = parts[#parts] ---@type string
@@ -743,19 +765,16 @@ function JsonEditor:_delete(item)
     self:_apply_changes()
 end
 
+---@param path string
 ---@param schema table|nil
 ---@param callback fun(value:any)
-function JsonEditor:_get_new_value(schema, callback)
+function JsonEditor:_get_new_value(path, schema, callback)
     ---@param type_choice string
     local function get_value(type_choice)
-        local enum = schema and schema.enum or nil
-        if type_choice == "string" or type_choice == "number" or type_choice == "boolean" then
-            _request_value("New array item", type_choice, enum, "", false, function(value)
+        self:_request_value(path, "New array item", type_choice, schema, "", self._value_selection_handler,
+            function(value)
                 callback(value)
             end)
-        else
-            callback(_create_default_value(type_choice))
-        end
     end
 
     local allowed = _get_allowed_types(schema, self._opts.null_support) ---@type string[]
@@ -769,14 +788,15 @@ function JsonEditor:_get_new_value(schema, callback)
             table.insert(choices, { label = t, data = t })
         end
         selector.select({
-            prompt = "Select item type",
-            items = choices,
-            callback = function(data)
+                prompt = "Select item type",
+                items = choices,
+            },
+            function(data)
                 if data then
                     get_value(data)
                 end
             end
-        })
+        )
     end
 end
 
@@ -786,18 +806,21 @@ end
 function JsonEditor:_get_object_new_value(item, schema, callback)
     schema = schema or {} ---@type table
     local obj = item.data.value ---@type table
+    local path = item.data.path ---@type string
 
     -- Collect candidate keys from schema.properties / oneOf
     ---@type table<string, {schema: table, parent: table}[]>
     local key_candidates = {}
     ---@type string[]
     local suggested_keys = {}
+    local key_descriptions = {}
 
     local function add_candidate(key, prop_schema, parent_schema)
         if obj[key] ~= nil then return end
         if not key_candidates[key] then
             key_candidates[key] = {}
             table.insert(suggested_keys, key)
+            key_descriptions[key] = prop_schema.description
         end
         table.insert(key_candidates[key], {
             schema = prop_schema or {},
@@ -807,8 +830,8 @@ function JsonEditor:_get_object_new_value(item, schema, callback)
 
     if schema.oneOf then
         for _, subschema in ipairs(schema.oneOf) do
-            local errs = validator.validate(subschema, obj)
-            if not errs or #errs == 0 then
+            local valid = validator.validate(subschema, obj)
+            if valid then
                 if subschema.properties then
                     for k, ps in pairs(subschema.properties) do
                         add_candidate(k, ps, subschema)
@@ -820,66 +843,125 @@ function JsonEditor:_get_object_new_value(item, schema, callback)
         for k, ps in pairs(schema.properties) do
             add_candidate(k, ps, schema)
         end
+        jsoncodec.order_keys(suggested_keys, schema)
     end
 
-    table.sort(suggested_keys)
+    local on_key_selected = function(key)
+        if not key or key == "" then return end
+        if obj[key] ~= nil then
+            vim.notify("Key already exists", vim.log.levels.WARN)
+            return
+        end
 
-    floatwin.input_at_cursor({
-            prompt = "New property name",
-            completions = suggested_keys,
-        },
-        function(key)
-            if not key or key == "" then return end
-            if obj[key] ~= nil then
-                vim.notify("Key already exists", vim.log.levels.WARN)
-                return
+        local schemas = key_candidates[key]
+        local function with_schema(prop_schema)
+            self:_get_new_value(path, prop_schema, function(value)
+                callback(key, value)
+            end)
+        end
+
+        if schemas and #schemas > 1 then
+            ---@type {label: string, data: table}[]
+            local choices = {}
+            for _, info in ipairs(schemas) do
+                table.insert(choices, {
+                    label = info.parent.__name or "<schema>",
+                    data = info.schema,
+                })
             end
-
-            local schemas = key_candidates[key]
-            local function with_schema(prop_schema)
-                self:_get_new_value(prop_schema, function(value)
-                    callback(key, value)
-                end)
-            end
-
-            if schemas and #schemas > 1 then
-                ---@type {label: string, data: table}[]
-                local choices = {}
-                for _, info in ipairs(schemas) do
-                    table.insert(choices, {
-                        label = info.parent.__name or "<schema>",
-                        data = info.schema,
-                    })
-                end
-                selector.select({
+            selector.select({
                     prompt = "Select schema for '" .. key .. "'",
                     items = choices,
-                    callback = function(data)
-                        if data then with_schema(data) end
-                    end
-                })
+                },
+                function(data)
+                    if data then with_schema(data) end
+                end
+            )
+            return
+        end
+
+        if schemas and schemas[1] then
+            with_schema(schemas[1].schema)
+            return
+        end
+
+        if type(schema.patternProperties) == "table" then
+            local match = false
+            for pattern, pat_schema in pairs(schema.patternProperties) do
+                if key:match(pattern) then
+                    match = true
+                    with_schema(pat_schema)
+                    return
+                end
+            end
+            if not match then
+                vim.notify("Invalid property name: " .. tostring(key), vim.log.levels.WARN)
                 return
             end
-
-            if schemas and schemas[1] then
-                with_schema(schemas[1].schema)
-                return
-            end
-
-            if type(schema.patternProperties) == "table" then
-                for pattern, pat_schema in pairs(schema.patternProperties) do
-                    if key:match(pattern) then
-                        with_schema(pat_schema)
-                        return
+        end
+        -- fallback: additionalProperties
+        local ap = schema.additionalProperties
+        with_schema(type(ap) == "table" and ap or {})
+    end
+    local function select_additional_key()
+        floatwin.input_at_cursor({
+                prompt = "Property name"
+            },
+            function(value)
+                if value then
+                    on_key_selected(value)
+                end
+            end)
+    end
+    local with_additiona_props = (schema.additionalProperties ~= false or schema.patternProperties)
+    if #suggested_keys == 0 then
+        if with_additiona_props then
+            select_additional_key()
+        else
+            vim.notify("No additional properties")
+        end
+    else
+        local choices = {}
+        for _, key in ipairs(suggested_keys) do
+            local name, desc = key, key_descriptions[key]
+            local desc_lines = desc and vim.split(desc, "\n", { trimempty = true })
+            local desc_chunks = desc_lines and vim.tbl_map(function(a)
+                return { { a, "Comment" } }
+            end, desc_lines)
+            ---@type loop.SelectorItem
+            local choice = {
+                label = name,
+                virt_lines = desc_chunks,
+                data = {
+                    name = name,
+                }
+            }
+            table.insert(choices, choice)
+        end
+        if with_additiona_props then
+            table.insert(choices, {
+                label = "<Additional property>",
+                virt_lines = { { { "Enter a custom property name", "Comment" } } },
+                data = {
+                    custom = true
+                }
+            })
+        end
+        selector.select({
+                items = choices,
+                prompt = "Select property",
+            },
+            function(data)
+                if data then
+                    if data.name then
+                        on_key_selected(data.name)
+                    elseif data.custom then
+                        select_additional_key()
                     end
                 end
             end
-
-            -- fallback: additionalProperties
-            local ap = schema.additionalProperties
-            with_schema(type(ap) == "table" and ap or {})
-        end
-    )
+        )
+    end
 end
 
 function JsonEditor:_push_undo()

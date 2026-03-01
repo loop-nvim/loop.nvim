@@ -1,12 +1,14 @@
+local filetools = require("loop.tools.file")
+
 ---@mod loop.selector
 ---@brief Simple floating selector with fuzzy filtering and optional preview.
 
 ---@class loop.SelectorItem
----@field label        string             main displayed text (optional if label_chunks used)
+---@field label        string?             main displayed text (optional if label_chunks used)
 ---@field label_chunks {[1]:string, [2]:string?}[]?  optional, allows chunked labels with highlights
 ---@field file         string?
 ---@field lnum         number?
----@field virt_text_chunks?   string[][]         chunks: { { "text", "HighlightGroup?" }, ... }
+---@field virt_lines? {[1]:string, [2]:string?}[][] chunks: { { "text", "HighlightGroup?" }, ... }
 ---@field data         any                payload returned on select
 
 ---@alias loop.SelectorCallback fun(data:any|nil)
@@ -81,18 +83,19 @@ local function update_list(items, cur, buf, win)
         -- ----------------------------
         -- Virtual text
         -- ----------------------------
-        if item.virt_text_chunks and #item.virt_text_chunks > 0 then
-            local virt_chunks = { { (" "):rep(vim.fn.strdisplaywidth(prefix)) } }
-            for _, chunk in ipairs(item.virt_text_chunks) do
-                table.insert(virt_chunks, { chunk[1], chunk[2] or "Comment" })
+        if item.virt_lines and #item.virt_lines > 0 then
+            local space = (" "):rep(vim.fn.strdisplaywidth(prefix))
+            local vlines = {}
+            for _, line in ipairs(item.virt_lines) do
+                local vl = { { space } }
+                vim.list_extend(vl, line)
+                table.insert(vlines, vl)
             end
-            if #virt_chunks > 0 then
-                virt_extmarks[#virt_extmarks + 1] = {
-                    row  = i - 1,
-                    col  = 0,
-                    opts = { virt_lines = { virt_chunks }, hl_mode = "blend" }
-                }
-            end
+            virt_extmarks[#virt_extmarks + 1] = {
+                row  = i - 1,
+                col  = 0,
+                opts = { virt_lines = vlines, hl_mode = "blend" }
+            }
         end
     end
     vim.api.nvim_buf_clear_namespace(buf, NS_VIRT, 0, -1)
@@ -112,6 +115,25 @@ local function update_list(items, cur, buf, win)
     -- Move cursor
     if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_set_cursor(win, { math.max(cur, 1), 0 })
+
+        vim.api.nvim_win_call(win, function()
+            local cursor_line = vim.fn.winline()
+            local win_height = vim.api.nvim_win_get_height(0)
+
+            if cursor_line < 1 then
+                vim.cmd("normal! zt") -- scroll cursor to top
+            elseif cursor_line >= win_height then
+                local item = items[cursor_line]
+                local extra_lines = item and item.virt_lines and #item.virt_lines or 0
+                if extra_lines > 0 then
+                    -- Scroll enough to show extra virtual lines
+                    local scroll_count = math.min(extra_lines, win_height - 1)
+                    vim.cmd(string.format("normal! %dzb", scroll_count))
+                else
+                    vim.cmd("normal! zb") -- scroll cursor to bottom
+                end
+            end
+        end)
     end
 end
 
@@ -119,6 +141,7 @@ end
 ---@param items loop.SelectorItem[]
 ---@param cur integer                        current selected index (1-based)
 ---@param buf integer                        preview buffer handle
+---@return fun()? cancel
 local function update_preview(formatter, items, cur, buf)
     -- Guard: no valid item
     local item = items[cur]
@@ -134,7 +157,6 @@ local function update_preview(formatter, items, cur, buf)
     if item.file and item.lnum then
         local filepath = vim.fs.normalize(item.file)
         local target_lnum = tonumber(item.lnum)
-
         if vim.fn.filereadable(filepath) ~= 1 then
             vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
                 "File not readable:",
@@ -143,7 +165,6 @@ local function update_preview(formatter, items, cur, buf)
             vim.bo[buf].filetype = "text"
             return
         end
-
         if not target_lnum or target_lnum < 1 then
             vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
                 "Invalid line number:",
@@ -152,57 +173,43 @@ local function update_preview(formatter, items, cur, buf)
             vim.bo[buf].filetype = "text"
             return
         end
-
         -- Clear previous content safely
-        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
-
-        local lines = {}
-        -- Load file contents into the buffer using :read (most "native" way)
-        local ok, load_err = pcall(function()
-            lines = vim.fn.readfile(filepath)
-        end)
-        if not ok then
-            vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-                "Failed to load file into preview buffer:",
-                vim.inspect(load_err),
-            })
-            vim.bo[buf].filetype = "text"
-            return
-        end
-
-        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-        -- Enable syntax highlighting
-        vim.bo[buf].filetype = vim.filetype.match({ filename = filepath }) or "text"
-
-        if target_lnum > #lines then
-            return
-        end
-
-        -- Try to position cursor / view at target line
-        local preview_win = vim.fn.bufwinid(buf)
-        if preview_win ~= -1 then
-            local set_ok = pcall(vim.api.nvim_win_set_cursor, preview_win, { target_lnum, 0 })
-            if set_ok then
-                vim.api.nvim_win_call(preview_win, function()
-                    vim.cmd("normal! zz") -- center the target line
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Loading..." })
+        return filetools.async_load_text_file(filepath, { max_size = 50 * 1024 * 1024, timeout = 3000 },
+            function(load_err, content)
+                if not content then
+                    vim.api.nvim_buf_set_lines(buf, 0, -1, false,
+                        { ("Failed to load preview (%s)"):format(load_err) })
+                    vim.bo[buf].filetype = "text"
+                    return
+                end
+                -- Instead of split + set_lines:
+                vim.api.nvim_buf_call(buf, function()
+                    vim.api.nvim_paste(content, true, -1)
                 end)
-            else
-                -- Line might be out of range → fall back to first line
-                pcall(vim.api.nvim_win_set_cursor, preview_win, { 1, 0 })
-            end
-        end
-
-        -- Brief visual feedback: highlight target line
-        pcall(vim.api.nvim_buf_clear_namespace, buf, NS_PREVIEW, 0, -1)
-        -- Highlight the target line fully (works for single-line too)
-        vim.api.nvim_buf_set_extmark(buf, NS_PREVIEW, target_lnum - 1, 0, {
-            end_row = target_lnum, -- makes it "multiline" → enables hl_eol
-            hl_group = "CursorLine",
-            hl_eol = true,
-            hl_mode = "blend",
-        })
-        return
+                -- Try to position cursor / view at target line
+                local preview_win = vim.fn.bufwinid(buf)
+                if preview_win ~= -1 then
+                    local set_ok = pcall(vim.api.nvim_win_set_cursor, preview_win, { target_lnum, 0 })
+                    if set_ok then
+                        vim.api.nvim_win_call(preview_win, function()
+                            vim.cmd("normal! zz") -- center the target line
+                        end)
+                    else
+                        -- Line might be out of range → fall back to first line
+                        pcall(vim.api.nvim_win_set_cursor, preview_win, { 1, 0 })
+                    end
+                end
+                -- Brief visual feedback: highlight target line
+                pcall(vim.api.nvim_buf_clear_namespace, buf, NS_PREVIEW, 0, -1)
+                -- Highlight the target line fully (works for single-line too)
+                vim.api.nvim_buf_set_extmark(buf, NS_PREVIEW, target_lnum - 1, 0, {
+                    end_row = target_lnum, -- makes it "multiline" → enables hl_eol
+                    hl_group = "CursorLine",
+                    hl_eol = true,
+                    hl_mode = "blend",
+                })
+            end)
     end
 
     -- ──────────────────────────────────────────────────────────────
@@ -272,10 +279,19 @@ local function compute_width(items, padding)
     local maxw = 0
 
     for _, item in ipairs(items) do
-        maxw = math.max(maxw, vim.fn.strdisplaywidth(item.label))
+        maxw = math.max(maxw, vim.fn.strdisplaywidth(item.label) + 1)
+        if item.virt_lines then
+            for _, vl in ipairs(item.virt_lines) do
+                local w = 0
+                for _, chunk in ipairs(vl) do
+                    w = w + vim.fn.strdisplaywidth(chunk[1])
+                end
+                maxw = math.max(maxw, w + 1)
+            end
+        end
     end
 
-    local desired = maxw + (padding or 4)
+    local desired = maxw + (padding or 2)
     return math.max(
         math.floor(cols * 0.2),
         math.min(math.floor(cols * 0.8), desired)
@@ -291,15 +307,17 @@ end
 ---@field items loop.SelectorItem[]
 ---@field file_preview boolean?
 ---@field formatter loop.PreviewFormatter|nil
----@field callback loop.SelectorCallback
 ---@field initial integer? -- 1-based index into items
+---@field list_wrap boolean?
 
 ---@param opts loop.selector.opts
-function M.select(opts)
-    local prompt, items, formatter, callback = opts.prompt, opts.items, opts.formatter, opts.callback
+---@param callback loop.SelectorCallback
+function M.select(opts, callback)
+    local prompt, items, formatter = opts.prompt, opts.items, opts.formatter
     if #items == 0 then
         return
     end
+
     local title = (prompt and prompt ~= "") and (" %s "):format(prompt) or ""
     local has_preview = opts.file_preview or type(opts.formatter) == "function"
 
@@ -313,12 +331,16 @@ function M.select(opts)
     -- Layout
     --------------------------------------------------------------------------
 
-    local list_w = compute_width(items, 4)
-    local cols = vim.o.columns
+    local cols = vim.o.columns - 2
     local lines = vim.o.lines
-
     local spacing = has_preview and 2 or 0
-    local preview_w = has_preview and math.min(math.floor(cols * 0.3), cols - list_w - spacing) or 0
+
+    local max_list_w = math.max(1, (has_preview and math.floor(cols * 0.5) or cols) - spacing)
+    local max_prev_w = has_preview and math.floor(cols * 0.4) - spacing or 0
+
+    local list_w = math.min(max_list_w, compute_width(items, 2))
+
+    local preview_w = has_preview and math.max(1, math.min(cols - max_list_w, cols - list_w, max_prev_w)) or 0
     local width = list_w + spacing + preview_w
 
     local height = math.max(
@@ -380,6 +402,11 @@ function M.select(opts)
         vim.wo[vwin].wrap = true
     end
 
+    vim.wo[pwin].wrap = false
+
+    vim.wo[lwin].wrap = opts.list_wrap ~= false
+    vim.wo[lwin].scrolloff = 0
+
     local winhl = "NormalFloat:Normal,FloatBorder:LoopTransparentBorder,CursorLine:Visual"
     for _, w in ipairs({ pwin, lwin, vwin }) do
         if w then
@@ -394,8 +421,13 @@ function M.select(opts)
     local filtered = vim.deepcopy(items)
     local cur = math.max(1, math.min(opts.initial or 1, #items))
     local closed = false
+    local async_preview_cancel
 
     local function close(result)
+        if async_preview_cancel then
+            async_preview_cancel()
+            async_preview_cancel = nil
+        end
         if closed then return end
         closed = true
         if vim.api.nvim_get_current_win() == pwin then
@@ -415,9 +447,20 @@ function M.select(opts)
         end)
     end
 
+    local last_preview_item = nil
     local function update_content()
         update_list(filtered, cur, lbuf, lwin)
-        if vbuf then update_preview(formatter, filtered, cur, vbuf) end
+        if not vbuf then return end
+        local item = filtered[cur]
+        if item == last_preview_item then
+            return
+        end
+        last_preview_item = item
+        if async_preview_cancel then
+            async_preview_cancel()
+            async_preview_cancel = nil
+        end
+        async_preview_cancel = update_preview(formatter, filtered, cur, vbuf)
     end
 
     local key_opts = { buffer = pbuf, nowait = true, silent = true }
@@ -480,6 +523,19 @@ function M.select(opts)
         once = true,
         callback = function() close(nil) end,
     })
+
+    if type(vbuf) == "number" and vbuf > 0 then
+        vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+            buffer = vbuf,
+            once = true,
+            callback = function(ev)
+                if async_preview_cancel then
+                    async_preview_cancel()
+                    async_preview_cancel = nil
+                end
+            end,
+        })
+    end
 
     vim.api.nvim_set_current_win(pwin)
     vim.schedule(function()

@@ -169,12 +169,13 @@ M["select-pid"] = function(ctx)
 
     vim.schedule(function()
         selector.select({
-            prompt = "Select process to attach",
-            items = choices,
-            callback = function(selected_pid)
+                prompt = "Select process to attach",
+                items = choices,
+            },
+            function(selected_pid)
                 coroutine.resume(co, selected_pid)
             end
-        })
+        )
     end)
 
     -- Pause until selection is made

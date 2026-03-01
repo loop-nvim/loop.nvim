@@ -12,20 +12,15 @@ local schema = {
         workspace = {
             type = "object",
             required = { "name", "save" },
-            ["x-order"] = { "version", "name", "save" },
+            ["x-order"] = { "name", "save" },
             properties = {
-                version = {
-                    type = { "string", "number" },
-                    default = "1.0",
-                    description = "Workspace configuration version for migration purposes",
-                },
                 name = {
                     type = { "string" },
                     default = "",
                     description = "Optional name/identifier for this configuration entry",
                 },
                 save = {
-                    type = { "object", "nil" },
+                    type = { "object", "null" },
                     description = "File saving/filtering options",
                     default = {},
                     ["x-order"] = { "include", "exclude", "follow_symlinks" },

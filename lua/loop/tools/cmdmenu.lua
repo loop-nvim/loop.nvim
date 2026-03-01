@@ -18,14 +18,15 @@ function M.select_and_run_command(cmd_list)
         table.insert(choices, item)
     end
     selector.select({
-        prompt = "Select command",
-        items = choices,
-        callback = function(cmd)
+            prompt = "Select command",
+            items = choices,
+        },
+        function(cmd)
             if cmd then
                 vim.cmd(cmd.vimcmd)
             end
         end
-    })
+    )
 end
 
 return M

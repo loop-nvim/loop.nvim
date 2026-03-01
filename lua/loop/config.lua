@@ -10,7 +10,6 @@
 
 ---@class window loop.Config.Window
 ---@class loop.Config
----@field selector ("builtin"|"ui_select")?
 ---@field window loop.Config.Window?
 ---@field macros table<string,(fun(ctx:loop.TaskContext,...):any,string|nil)>?
 ---@field debug boolean? Enable debug/verbose mode for development
