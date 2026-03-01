@@ -49,7 +49,7 @@ Run `:helptags ALL` after installing.
 5. `:Loop var configure` — Edit workspace variables.
 6. `:Loop ui toggle` — Show or hide the Loop UI.
 
-Workspaces in the current directory are opened automatically on startup.
+Workspaces in the current directory are opened automatically on startup when neovim is started without arguments.
 
 ## JSON Editor
 
