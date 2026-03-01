@@ -174,8 +174,11 @@ local function _load_tasks(config_dir)
     return tasks, nil
 end
 
+function M.clear_providers()
+    providers.clear_all()
+end
 ---@param ws_dir string
-function M.reset_provider_list(ws_dir)
+function M.reset_providers(ws_dir)
     providers.reset_to_default(ws_dir)
 end
 

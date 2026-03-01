@@ -11,6 +11,12 @@ local _template_providers = {}
 
 local M = {}
 
+function M.clear_all()
+    _task_types = {}
+    _task_type_providers = {}
+    _template_providers = {}
+end
+
 ---@param ws_dir string
 function M.reset_to_default(ws_dir)
     _task_type_providers = {
@@ -19,8 +25,8 @@ function M.reset_to_default(ws_dir)
     }
     _task_types = { "process", "composite" }
     _template_providers = {
-        { category = "Process", provider = coreproviders.get_process_templates_provider() },
-        { category = "Composite",     provider = coreproviders.get_composite_templates_provider() },
+        { category = "Process",   provider = coreproviders.get_process_templates_provider() },
+        { category = "Composite", provider = coreproviders.get_composite_templates_provider() },
     }
 end
 

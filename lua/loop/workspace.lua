@@ -109,6 +109,8 @@ local function _close_workspace(quiet)
 
     runner.terminate_tasks()
 
+    taskmgr.clear_providers()
+
     _save_workspace()
 
     extdata.on_workspace_unload(_workspace_info)
@@ -224,7 +226,7 @@ local function _load_workspace(dir)
 
     window.load_settings(config_dir)
 
-    taskmgr.reset_provider_list(dir)
+    taskmgr.reset_providers(dir)
 
     _page_manager = window.create_page_manager()
     runner.on_workspace_open(_workspace_info, _page_manager)
@@ -444,6 +446,8 @@ function M.run_command(cmd, rest, opts)
         local provider = extdata.get_cmd_provider(cmd)
         if provider then
             provider.dispatch(rest, opts)
+        elseif not _workspace_info then
+            vim.notify("No active workspace", vim.log.levels.WARN)
         else
             vim.notify("Invalid command: " .. tostring(cmd))
         end

@@ -9,15 +9,14 @@ local jsoncodec = require('loop.json.codec')
 ---@field ext_name string
 ---@field page_groups string<string,loop.PageGroup>
 ---@field state table
-
+---@field cmd_providers table<string,loop.UserCommandProvider>
+---@
 ---@type table<string,loop.ExtentionContext>
 local _extension_contexts = {}
 
 ---@type table<string,loop.ExtensionData>
 local _extension_data = {}
 
----@type table<string,loop.UserCommandProvider>
-local _cmd_providers = {}
 local _reserved_cmd_providers = {
 	workspace = true,
 	ui = true,
@@ -102,25 +101,37 @@ local function _make_request_page_group_fn(ext_context, page_manager)
 	end
 end
 
+---@param ext_context loop.ExtentionContext
 ---@param lead_cmd string
 ---@param provider loop.UserCommandProvider
-local function _register_cmd_provider(lead_cmd, provider)
+local function _register_cmd_provider(ext_context, lead_cmd, provider)
 	assert(type(lead_cmd) == 'string' and lead_cmd:match("[_%a][_%w]*") ~= nil,
 		"Invalid cmd lead: " .. tostring(lead_cmd))
 	assert(not _reserved_cmd_providers[lead_cmd], "cmd lead is reserved: " .. lead_cmd)
 	assert(#lead_cmd >= 2, "cmd lead too short: " .. lead_cmd)
-	_cmd_providers[lead_cmd] = provider
+	ext_context.cmd_providers[lead_cmd] = provider
 end
 
 ---@return string[]
 function M.lead_commands()
-	return vim.fn.sort(vim.tbl_keys(_cmd_providers))
+	local leads = {}
+	for _, ext in pairs(_extension_contexts) do
+		for lead, _ in pairs(ext.cmd_providers) do
+			leads[lead] = true
+		end
+	end
+	return vim.fn.sort(vim.tbl_keys(leads))
 end
 
 ---@param lead_cmd string
----@return loop.UserCommandProvider
+---@return loop.UserCommandProvider?
 function M.get_cmd_provider(lead_cmd)
-	return _cmd_providers[lead_cmd]
+	for _, ext in pairs(_extension_contexts) do
+		local provider = ext.cmd_providers[lead_cmd]
+		if provider then
+			return provider
+		end
+	end
 end
 
 ---@param wsinfo loop.ws.WorkspaceInfo
@@ -133,7 +144,8 @@ function M.on_workspace_load(wsinfo, page_manager)
 		local ext_context = {
 			ext_name = name,
 			state = _load_state(wsinfo.config_dir, name),
-			page_groups = {}
+			page_groups = {},
+			cmd_providers = {}
 		}
 		_extension_contexts[name] = ext_context
 		---@type loop.ExtensionData
@@ -144,7 +156,9 @@ function M.on_workspace_load(wsinfo, page_manager)
 				return _get_config_file_path(wsinfo.config_dir, name, key, fileext)
 			end,
 			state = _make_state_handler(ext_context.state),
-			register_user_command = _register_cmd_provider,
+			register_user_command = function(lead_cmd, provider)
+				return _register_cmd_provider(ext_context, lead_cmd, provider)
+			end,
 			register_task_type = _register_task_type_provider,
 			register_task_templates = _register_task_template_provider,
 			request_page_proup = _make_request_page_group_fn(ext_context, page_manager),
