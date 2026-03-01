@@ -45,6 +45,7 @@ function ReplBuffer:init(type, name)
 	self._cursor_pos = 1
 	self._history = {}
 	self._history_idx = 0
+	self._max_history = 100
 	self._prompt = COLORS.BOLD .. COLORS.GREEN .. "> " .. COLORS.RESET
 
 	self._completion = {
@@ -165,11 +166,11 @@ function ReplBuffer:_cycle_next()
 	if original_left == "" then
 		new_before = suggestion
 
-	-- CASE 1: suggestion completes entire left side
+		-- CASE 1: suggestion completes entire left side
 	elseif suggestion:sub(1, #original_left) == original_left then
 		new_before = suggestion
 
-	-- CASE 2: replace only last word
+		-- CASE 2: replace only last word
 	else
 		local prefix = original_left:match("^(.-)%S*$") or ""
 		new_before = prefix .. suggestion
@@ -179,6 +180,7 @@ function ReplBuffer:_cycle_next()
 	self._cursor_pos = #new_before + 1
 	self:_redraw_line()
 end
+
 ---Primary input state machine
 ---@private
 ---@param data string
@@ -233,6 +235,9 @@ function ReplBuffer:_handle_raw_input(data)
 		self._history_idx = 0
 		if line ~= "" and self._history[#self._history] ~= line then
 			table.insert(self._history, line)
+			if #self._history > self._max_history then
+				table.remove(self._history, 1)
+			end
 		end
 		if line ~= "" and self._input_handler then self._input_handler(line) end
 		vim.api.nvim_chan_send(self._chan, "\r\27[K" .. self._prompt)
@@ -288,26 +293,30 @@ function ReplBuffer:_handle_raw_input(data)
 	self:_reset_cycle()
 
 	-- 7. History (Up/Ctrl+P, Down/Ctrl+N)
-	if data == "\27[A" or data == "\16" then
-		if #self._history > 0 and (self._history_idx == 0 or self._history_idx > 1) then
-			self._history_idx = self._history_idx == 0 and #self._history or self._history_idx - 1
-			self._current_line = self._history[self._history_idx]
-			self._cursor_pos = #self._current_line + 1
-			self:_redraw_line()
+	if data == "\27[A" or data == "\16" then -- Up / Ctrl-P
+		if #self._history == 0 then return end
+		-- First press from fresh line → go to last entry
+		if self._history_idx == 0 then
+			self._history_idx = #self._history
+		else
+			self._history_idx = math.max(1, self._history_idx - 1)
 		end
+		self._current_line = self._history[self._history_idx]
+		self._cursor_pos = #self._current_line + 1
+		self:_redraw_line()
 		return
-	elseif data == "\27[B" or data == "\14" then
-		if self._history_idx > 0 then
-			if self._history_idx < #self._history then
-				self._history_idx = self._history_idx + 1
-				self._current_line = self._history[self._history_idx]
-			else
-				self._history_idx = 0
-				self._current_line = ""
-			end
-			self._cursor_pos = #self._current_line + 1
-			self:_redraw_line()
+	elseif data == "\27[B" or data == "\14" then -- Down / Ctrl-N
+		if self._history_idx == 0 then return end
+		if self._history_idx < #self._history then
+			self._history_idx = self._history_idx + 1
+			self._current_line = self._history[self._history_idx]
+		else
+			-- Past newest → blank line
+			self._history_idx = 0
+			self._current_line = ""
 		end
+		self._cursor_pos = #self._current_line + 1
+		self:_redraw_line()
 		return
 	end
 
@@ -346,4 +355,3 @@ function ReplBuffer:_handle_raw_input(data)
 end
 
 return ReplBuffer
-
