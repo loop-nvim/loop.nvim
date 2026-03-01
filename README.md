@@ -51,6 +51,25 @@ Run `:helptags ALL` after installing.
 
 Workspaces in the current directory are opened automatically on startup.
 
+## JSON Editor
+
+Workspace config (`workspace.json`), tasks (`tasks.json`), and variables (`variables.json`) are edited in a built-in JSON tree editor with schema validation. Press `g?` inside the editor for help.
+
+| Key | Action |
+|-----|--------|
+| `<CR>` | Toggle expand/collapse |
+| `i` | Add property/item |
+| `o` | Add element after |
+| `O` | Add element before |
+| `c` | Change value |
+| `C` | Change value (multiline for strings) |
+| `d` | Delete element |
+| `u` | Undo |
+| `C-r` | Redo |
+| `K` | Show schema help for current node |
+| `ge` | Show validation errors |
+| `g?` | Show keybindings help |
+
 ## Configuration
 
 ```lua
@@ -70,6 +89,9 @@ require("loop").setup({
 ```
 
 ## Commands
+
+Commands be selected using the command selector by typing `:Loop`
+
 
 | Command | Description |
 |--------|-------------|
@@ -148,6 +170,7 @@ lualine_c = { function() return require("loop.statusline").status() end, "filena
 - [loop-build.nvim](https://github.com/mbfoss/loop-build.nvim) — Defines a "build" task type and provides templates for various build tasks
 - [loop-debug.nvim](https://github.com/mbfoss/loop-debug.nvim) — Defines a "debug" task type and provides templates for various debug tasks
 - [loop-cmake.nvim](https://github.com/mbfoss/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
+- [loop-marks.nvim](https://github.com/mbfoss/loop-marks.nvim) - Workspace based named bookmarks and notes
 
 
 ## License
