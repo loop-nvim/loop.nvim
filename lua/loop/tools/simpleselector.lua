@@ -447,15 +447,20 @@ function M.select(opts, callback)
         end)
     end
 
+    local last_preview_item = nil
     local function update_content()
         update_list(filtered, cur, lbuf, lwin)
-        if vbuf then
-            if async_preview_cancel then
-                async_preview_cancel()
-                async_preview_cancel = nil
-            end
-            async_preview_cancel = update_preview(formatter, filtered, cur, vbuf)
+        if not vbuf then return end
+        local item = filtered[cur]
+        if item == last_preview_item then
+            return
         end
+        last_preview_item = item
+        if async_preview_cancel then
+            async_preview_cancel()
+            async_preview_cancel = nil
+        end
+        async_preview_cancel = update_preview(formatter, filtered, cur, vbuf)
     end
 
     local key_opts = { buffer = pbuf, nowait = true, silent = true }
