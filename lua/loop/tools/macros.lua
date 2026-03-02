@@ -4,8 +4,8 @@ local uitools = require('loop.tools.uitools')
 local systools = require("loop.tools.systools")
 local selector = require("loop.tools.selector")
 
-local _nofile_error = "Current buffer is not a regular saved file"
-local _badtype_error = "Current file type is not %s"
+local _nofile_error = "Current buffer is not a regular file"
+local _badtype_error = "Current file type is not `%s`"
 
 --- Helper to check if current buffer is a valid file
 local function _is_file()
