@@ -10,6 +10,7 @@ local BaseBuffer = require('loop.buf.BaseBuffer')
 local OutputBuffer = require('loop.buf.OutputBuffer')
 local CompBuffer = require('loop.buf.CompBuffer')
 local ReplBuffer = require('loop.buf.ReplBuffer')
+local logger = require('loop.logs')
 
 ---@class loop.TabInfo
 ---@field label string
@@ -547,6 +548,8 @@ local function _create_term(page, args)
     end
 
     local TermProc = require('loop.tools.TermProc')
+
+    logger.log({"Starting term proc", vim.inspect(args_cpy)}, vim.log.levels.DEBUG)
 
     local proc = TermProc:new()
     local proc_ok, proc_err = proc:start(bufnr, args_cpy)
