@@ -184,9 +184,8 @@ local function update_preview(formatter, items, cur, buf)
                     return
                 end
                 -- Instead of split + set_lines:
-                vim.api.nvim_buf_call(buf, function()
-                    vim.api.nvim_paste(content, true, -1)
-                end)
+                local lines = vim.split(content, "\n")
+                vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
                 -- Try to position cursor / view at target line
                 local preview_win = vim.fn.bufwinid(buf)
                 if preview_win ~= -1 then
