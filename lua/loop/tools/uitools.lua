@@ -260,10 +260,6 @@ function M.is_win_full_height(winid)
     if vim.o.laststatus > 0 then
         total_height = total_height - 1 -- account for statusline
     end
-    local winbar = vim.wo[winid].winbar
-    if winbar ~= "" then
-        total_height = total_height - 1 -- account for winbar
-    end
     return win_height == total_height
 end
 
