@@ -43,7 +43,7 @@ function M.select_taskobj(callback)
     taskmgr.select_task_template(callback)
 end
 
-function M.select_taskname(callback, data, path)
+function M.select_dependency(callback, data, path)
     local cur_task_name
     if type(path) == "string" then
         local cur_task_path = path:match("^(/tasks/%d+)/.*$")

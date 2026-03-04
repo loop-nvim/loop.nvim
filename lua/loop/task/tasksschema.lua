@@ -15,7 +15,7 @@ local base_schema = {
             additionalProperties = false,
             items = {
                 description = "Single task definition entry",
-                ["x-valueSelector"] = "loop.task.jsonselectors.select_taskobj",
+                ["x-valueSelector"] = "loop.task.jsonhooks.select_taskobj",
                 -- Providers will populate this with concrete task schemas
                 oneOf = vim.empty_dict(),
             },
@@ -28,7 +28,7 @@ local base_items = {
     description = "Definition of a single task",
     additionalProperties = false,
     required = { "name", "type" },
-    ["x-summaryBuilder"] = "loop.task.jsonselectors.get_task_name",
+    ["x-summaryBuilder"] = "loop.task.jsonhooks.get_task_name",
     ["x-order"] = { "name", "type", "save_buffers", "if_running", "depends_on", "depends_order" },
 
     properties = {
@@ -43,7 +43,7 @@ local base_items = {
         type = {
             type = "string",
             description = "Task type (used to determine behavior)",
-            ["x-valueSelector"] = "loop.task.jsonselectors.select_tasktype",
+            ["x-valueSelector"] = "loop.task.jsonhooks.select_tasktype",
 
         },
 
@@ -66,7 +66,7 @@ This enforces a completion-based dependency order.
                 type = "string",
                 minLength = 1,
                 description = "Name of a task this task depends on",
-                ["x-valueSelector"] = "loop.task.jsonselectors.select_taskname",
+                ["x-valueSelector"] = "loop.task.jsonhooks.select_dependency",
             }
         },
 
