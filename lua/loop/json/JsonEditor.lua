@@ -19,6 +19,7 @@ local uitools = require('loop.tools.uitools')
 ---@field value_type string
 ---@field err_msg string|nil
 ---@field schema table|nil
+---@field summary string?
 
 ---@class loop.JsonEditorOpts
 ---@field name string?
@@ -64,7 +65,7 @@ local function _show_help()
         "  g?       Show this help",
     }
 
-    floatwin.show_floatwin(table.concat(help_text, "\n"), { title = "Show help" })
+    floatwin.show_floatwin(table.concat(help_text, "\n"), { title = "JSON Editor help" })
 end
 
 --- Dynamically call a Lua function given a module path string
@@ -263,13 +264,9 @@ local function _formatter(_, data, expanded)
             table.insert(virt_chunks, { "", nil }) -- spacing
             table.insert(virt_chunks, { bracket, "Comment" })
             if expanded == false and vt == "object" then
-                local name_prop = data.schema and data.schema["x-name-prop"]
-                if name_prop then
-                    local name = value[name_prop]
-                    if name then
-                        table.insert(virt_chunks, { " ", nil }) -- spacing
-                        table.insert(virt_chunks, { name, "Comment" })
-                    end
+                if type(data.summary) == "string" then
+                    table.insert(virt_chunks, { " ", nil }) -- spacing
+                    table.insert(virt_chunks, { data.summary, "Comment" })
                 end
             end
         else
@@ -496,7 +493,7 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
                     value      = v,
                     err_msg    = e,
                     value_type = jsontools.value_type(v),
-                    schema     = schema
+                    schema     = schema,
                 },
             }
             table.insert(items, item)
@@ -511,6 +508,11 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
         if type(item.data.value) == "table" then
             local data = item.data
             self:_upsert_tree_items(data.value, data.path, item.id, data.schema, errors)
+            local summary_builder = data.schema and data.schema["x-summaryBuilder"]
+            if summary_builder then
+                data.summary = _call_lua_function(summary_builder, data.value)
+                assert(not data.summary or type(data.summary) == "string")
+            end
         end
     end
 end

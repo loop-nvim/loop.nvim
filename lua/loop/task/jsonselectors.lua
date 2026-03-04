@@ -5,6 +5,10 @@ local taskmgr = require("loop.task.taskmgr")
 local providers = require("loop.task.providers")
 local jsontools = require("loop.json.jsontools")
 
+function M.get_task_name(data)
+    return data and data.name
+end
+
 function M.select_tasktype(callback, data, path)
     local cur_type
     if type(path) == "string" then

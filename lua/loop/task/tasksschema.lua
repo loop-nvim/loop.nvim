@@ -28,7 +28,7 @@ local base_items = {
     description = "Definition of a single task",
     additionalProperties = false,
     required = { "name", "type" },
-    ["x-name-prop"] = "name",
+    ["x-summaryBuilder"] = "loop.task.jsonselectors.get_task_name",
     ["x-order"] = { "name", "type", "save_buffers", "if_running", "depends_on", "depends_order" },
 
     properties = {
