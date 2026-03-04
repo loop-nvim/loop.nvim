@@ -17,7 +17,7 @@ local schema = {
                 name = {
                     type = { "string" },
                     default = "",
-                    description = "Optional name/identifier for this configuration entry",
+                    description = "Workspace name",
                 },
                 save = {
                     type = { "object", "null" },
@@ -32,12 +32,12 @@ local schema = {
                         },
                         exclude = {
                             type = { "array" },
-                            description = "Glob patterns for files/directories to exclude",
+                            description = "Glob patterns for files/directories to exclude when saving",
                             items = { type = "string" },
                         },
                         follow_symlinks = {
                             type = { "boolean" },
-                            description = "Whether to follow symbolic links when scanning",
+                            description = "Whether to follow symbolic links when scanning files for saving",
                         },
                     },
                     additionalProperties = false,

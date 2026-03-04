@@ -185,9 +185,8 @@ local function _load_workspace_config(config_dir)
 end
 
 ---@param dir string
----@return boolean
----@return string|nil
----@return boolean? is_config_err
+---@return "ok"|"no_ws"|"locked"|"badconfig"|"unexpected"
+---@return string? error_msg
 local function _load_workspace(dir)
     assert(_init_done, _init_err_msg)
     assert(type(dir) == 'string')
@@ -196,18 +195,25 @@ local function _load_workspace(dir)
 
     local config_dir = _get_config_dir(dir)
     if not filetools.dir_exists(config_dir) then
-        return false, "No workspace in " .. dir
+        return "no_ws"
     end
 
     local lockfile_path = vim.fs.joinpath(config_dir, "wslock")
-    if not flock.lock(lockfile_path) then
-        return false, "Workspace already open in another process"
+    do
+        local locked, err = flock.lock(lockfile_path)
+        if not locked then
+            if err then
+                return "unexpected", "lock error (" .. tostring(err) .. ")"
+            else
+                return "locked"
+            end
+        end
     end
 
     local ws_config, config_errors = _load_workspace_config(config_dir)
     if not ws_config then
-        logs.log(config_errors or "unknown error", vim.log.levels.ERROR)
-        return false, "Configuration error", true
+        flock.unlock(lockfile_path)
+        return "badconfig", config_errors
     end
 
     ---@type loop.ws.WorkspaceInfo
@@ -248,7 +254,7 @@ local function _load_workspace(dir)
         end
     end
 
-    return true, nil
+    return "ok", nil
 end
 
 local function _show_workspace_info_floatwin()
@@ -380,8 +386,8 @@ function M.open_workspace(dir, at_startup)
 
     _close_workspace()
 
-    local ok, err_msg, have_config_error = _load_workspace(dir)
-    if ok and _workspace_info then
+    local status, err_msg = _load_workspace(dir)
+    if status == "ok" and _workspace_info then
         -- add to recent list (MRU)
         _add_recent_workspace(dir)
 
@@ -392,15 +398,25 @@ function M.open_workspace(dir, at_startup)
             vim.notify("Workspace opened: " .. label)
         end
     else
-        if not at_startup and err_msg then
-            if have_config_error then
-                vim.notify("Workspace configuration error, opening configuration editor", vim.log.levels.ERROR)
-                _configure_workspace(dir)
+        if err_msg then
+            logs.user_log("Failed to load workspace - " .. tostring(err_msg), "workspace")
+        end
+        if not at_startup then
+            local ui_msg
+            if status == "no_ws" then
+                ui_msg = "No workspace in " .. dir
+            elseif status == "locked" then
+                ui_msg = "Workspace open in another instance"
+            elseif status == "badconfig" then
+                ui_msg = "Workspace configuration error"
             else
-                vim.notify("Workspace not loaded (:Loop log for details)", vim.log.levels.ERROR)
+                ui_msg = "Workspace not loaded (:Loop log for details)"
+            end
+            vim.notify(ui_msg, vim.log.levels.ERROR)
+            if status == "badconfig" then
+                _configure_workspace(dir)
             end
         end
-        logs.user_log("Workspace not loaded, " .. err_msg, "workspace")
     end
 end
 

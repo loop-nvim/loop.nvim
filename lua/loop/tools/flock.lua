@@ -45,12 +45,11 @@ end
 ---@param path string
 ---@return boolean,string?
 function M.lock(path)
-
     local abs_path = _normalize(path)
-    if _LOCKS[abs_path] then return true end
+    if _LOCKS[abs_path] then return false, "already locked" end
 
     local file, err = io.open(abs_path, "w")
-    if not file then return false, err end
+    if not file then return false, err or "failed to open lock file" end
 
     local fd = get_fd(file)
     local success = false
@@ -72,7 +71,7 @@ function M.lock(path)
     else
         -- If lock fails, close the handle immediately and do NOT add to _LOCKS
         file:close()
-        return false, "Resource busy"
+        return false, nil
     end
 end
 
