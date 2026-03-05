@@ -25,18 +25,20 @@ local _init_err_msg = "init() not called"
 ---@field name string
 ---@field ws_dir string
 ---@field config_dir string
----@field config loop.WorkspaceConfig
 
----@type loop.ws.WorkspaceInfo?
-local _workspace_info = nil
+---@class loop.ws.WorkspaceData
+---@field name string
+---@field ws_dir string
+---@field config_dir string
+---@field ws_config loop.WorkspaceConfig?
+---@field page_manager loop.PageManager
+---@field save_timer any
 
----@type loop.PageManager?
-local _page_manager   = nil
-
-local _save_timer     = nil
+---@type loop.ws.WorkspaceData?
+local _ws_data    = nil
 
 -- New: recent workspaces persistence
-local MAX_RECENTS     = 50
+local MAX_RECENTS = 50
 
 local function _get_recent_file()
     local data_dir = vim.fn.stdpath('data')
@@ -77,13 +79,8 @@ local function _add_recent_workspace(dir)
     _save_recent_workspaces(newlist)
 end
 
----@return loop.ws.WorkspaceInfo?
-local function _get_ws_info_or_warn()
-    if not _workspace_info then
-        vim.notify("No active workspace", vim.log.levels.WARN)
-        return
-    end
-    return _workspace_info
+local function _notify_no_ws()
+    vim.notify("No active workspace", vim.log.levels.WARN)
 end
 
 local function _get_config_dir(workspace_dir)
@@ -92,48 +89,92 @@ local function _get_config_dir(workspace_dir)
 end
 
 local function _save_workspace()
-    if not _workspace_info then
+    if not _ws_data then
         return false
     end
     assert(_init_done, _init_err_msg)
-    window.save_layout(_workspace_info.config_dir)
-    extdata.save(_workspace_info)
+    window.save_layout(_ws_data.config_dir)
+    extdata.save(_ws_data.config_dir)
     return true
 end
 
 ---@param quiet? boolean
 local function _close_workspace(quiet)
-    if not _workspace_info then
-        return false
+    if runner.have_running_tasks() then
+        runner.terminate_tasks()
+        local max_waits = 100 -- 10 seconds max
+        while max_waits > 0 and runner.have_running_tasks() do
+            max_waits = max_waits - 1
+            vim.wait(100)
+        end
     end
-
-    runner.terminate_tasks()
 
     taskmgr.clear_providers()
 
-    _save_workspace()
+    if _ws_data then
+        if _ws_data.save_timer then
+            if _ws_data.save_timer:is_active() then
+                _ws_data.save_timer:stop()
+            end
+            _ws_data.save_timer:close()
+            _ws_data.save_timer = nil
+        end
 
-    extdata.on_workspace_unload(_workspace_info)
-    runner.on_workspace_close()
+        _save_workspace()
 
-    if not quiet and _workspace_info then
-        local label = _workspace_info.name or _workspace_info.ws_dir
-        logs.user_log("Workspace closed: " .. label, "workspace")
-        vim.notify("Workspace closed")
+        extdata.on_workspace_unload()
+        runner.on_workspace_close()
+
+        if _ws_data.page_manager then
+            _ws_data.page_manager.delete_groups()
+            _ws_data.page_manager.expire(true)
+        end
+
+        local lockfile_path = vim.fs.joinpath(_ws_data.config_dir, "wslock")
+        flock.unlock(lockfile_path)
+
+        if not quiet then
+            local label = _ws_data.name or _ws_data.ws_dir
+            logs.user_log("Workspace closed: " .. label, "workspace")
+            vim.notify("Workspace closed")
+        end
     end
 
-    if _page_manager then
-        _page_manager.delete_groups()
-        _page_manager.expire(true)
-    end
-
-    local config_dir = _workspace_info.config_dir
-
-    _workspace_info = nil
+    _ws_data = nil
     statusline.set_workspace_name(nil)
+end
 
-    local lockfile_path = vim.fs.joinpath(config_dir, "wslock")
-    flock.unlock(lockfile_path)
+---@param config_dir string
+---@return loop.WorkspaceConfig?,string?
+local function _load_workspace_config(config_dir)
+    local config_file = vim.fs.joinpath(config_dir, "workspace.json")
+    if not filetools.file_exists(config_file) then
+        return nil, "workspace.json not found"
+    end
+    local loaded, data_or_err = jsoncodec.load_from_file(config_file)
+    if not loaded then
+        ---@cast data_or_err string
+        return nil, data_or_err
+    end
+    local config = data_or_err
+    local schema = require('loop.ws.schema')
+    local valid, errors = jsonvalidator.validate(schema, config)
+    if not valid then
+        return nil, jsonvalidator.errors_to_string(errors)
+    end
+    return config.workspace
+end
+
+----@return boolean,string?
+local function _reload_workspace_config()
+    if not _ws_data then return false, "No active workspace" end
+    local ws_config, config_errors = _load_workspace_config(_ws_data.config_dir)
+    if ws_config then
+        _ws_data.name = ws_config.name or vim.fn.fnamemodify(_ws_data.ws_dir, ":p:h:t")
+        statusline.set_workspace_name(_ws_data.name)
+    end
+    _ws_data.ws_config = ws_config
+    return ws_config ~= nil, config_errors
 end
 
 ---@param ws_dir string
@@ -160,28 +201,10 @@ local function _configure_workspace(ws_dir)
         schema = schema,
     })
 
+    editor:set_on_save_handler(function()
+        _reload_workspace_config()
+    end)
     editor:open()
-end
-
----@param config_dir string
----@return loop.WorkspaceConfig?,string?
-local function _load_workspace_config(config_dir)
-    local config_file = vim.fs.joinpath(config_dir, "workspace.json")
-    if not filetools.file_exists(config_file) then
-        return nil, "workspace.json not found"
-    end
-    local loaded, data_or_err = jsoncodec.load_from_file(config_file)
-    if not loaded then
-        ---@cast data_or_err string
-        return nil, data_or_err
-    end
-    local config = data_or_err
-    local schema = require('loop.ws.schema')
-    local valid, errors = jsonvalidator.validate(schema, config)
-    if not valid then
-        return nil, jsonvalidator.errors_to_string(errors)
-    end
-    return config.workspace
 end
 
 ---@param dir string
@@ -216,65 +239,73 @@ local function _load_workspace(dir)
         return "badconfig", config_errors
     end
 
-    ---@type loop.ws.WorkspaceInfo
-    _workspace_info = {
+    ---@type loop.ws.WorkspaceData
+    _ws_data = {
         name = ws_config.name,
         ws_dir = dir,
         config_dir = config_dir,
-        config = ws_config,
+        ws_config = ws_config,
+        page_manager = window.create_page_manager(),
     }
 
-    if not _workspace_info.name or _workspace_info.name == "" then
-        _workspace_info.name = vim.fn.fnamemodify(dir, ":p:h:t")
+    if not _ws_data.name or _ws_data.name == "" then
+        _ws_data.name = vim.fn.fnamemodify(dir, ":p:h:t")
     end
 
-    statusline.set_workspace_name(_workspace_info.name)
+    ---@type loop.ws.WorkspaceInfo
+    local ws_info = {
+        name = _ws_data.name,
+        ws_dir = _ws_data.ws_dir,
+        config_dir = _ws_data.config_dir,
+    }
+
+    statusline.set_workspace_name(_ws_data.name)
 
     window.load_layout(config_dir)
 
     taskmgr.reset_providers(dir)
 
-    _page_manager = window.create_page_manager()
-    runner.on_workspace_open(_workspace_info, _page_manager)
-    extdata.on_workspace_load(_workspace_info, _page_manager)
+    runner.on_workspace_open(ws_info, _ws_data.page_manager)
+    extdata.on_workspace_load(ws_info, _ws_data.page_manager)
 
-    if not _save_timer then
-        local config = require('loop.config')
-        local save_interval = (config.current.autosave_interval or 5) * 60 * 1000
-
-        if save_interval > 0 then
-            -- Create and start the repeating timer
-            ---@diagnostic disable-next-line: undefined-field
-            _save_timer = vim.loop.new_timer()
-            _save_timer:start(
-                save_interval, -- initial delay
-                save_interval, -- frequency
-                vim.schedule_wrap(_save_workspace)
-            )
-        end
+    assert(not _ws_data.save_timer)
+    local config = require('loop.config')
+    local save_interval = (config.current.autosave_interval or 5) * 60 * 1000
+    if save_interval > 0 then
+        -- Create and start the repeating timer
+        ---@diagnostic disable-next-line: undefined-field
+        _ws_data.save_timer = vim.loop.new_timer()
+        _ws_data.save_timer:start(
+            save_interval, -- initial delay
+            save_interval, -- frequency
+            vim.schedule_wrap(_save_workspace)
+        )
     end
 
     return "ok", nil
 end
 
 local function _show_workspace_info_floatwin()
-    if not _workspace_info then
+    if not _ws_data then
         vim.notify("No active workspace")
         return
     end
-    local info = _workspace_info
+    if not _ws_data.ws_config then
+        vim.notify("Invalid workspace configuration")
+        return
+    end
     local schema = require('loop.ws.schema')
     ---@diagnostic disable-next-line: inject-field
-    local str = ("Directory:\n%s\n\nSettings:\n%s"):format(info.ws_dir,
-        jsoncodec.to_string(info.config, schema.properties.workspace))
+    local str = ("Directory:\n%s\n\nSettings:\n%s"):format(_ws_data.ws_dir,
+        jsoncodec.to_string(_ws_data.ws_config, schema.properties.workspace))
     floatwin.show_floatwin(str, { title = "Workspace" })
 end
 
 ---@param mode "task"|"repeat"
 ---@param task_name string|nil
 local function _load_and_run_task(mode, task_name)
-    assert(_workspace_info)
-    local config_dir = _workspace_info.config_dir
+    assert(_ws_data)
+    local config_dir = _ws_data.config_dir
 
     taskmgr.get_or_select_task(config_dir, mode, task_name, function(root_name, all_tasks)
         if not root_name or not all_tasks then
@@ -379,7 +410,7 @@ function M.open_workspace(dir, at_startup)
     end
 
     dir = dir or vim.fn.getcwd()
-    if _workspace_info and dir == _workspace_info.ws_dir then
+    if _ws_data and dir == _ws_data.ws_dir then
         vim.notify("Workspace already open")
         return
     end
@@ -387,12 +418,11 @@ function M.open_workspace(dir, at_startup)
     _close_workspace()
 
     local status, err_msg = _load_workspace(dir)
-    if status == "ok" and _workspace_info then
+    if status == "ok" and _ws_data then
         -- add to recent list (MRU)
         _add_recent_workspace(dir)
 
-        local label = _workspace_info.name
-        if not label or label == "" then label = _workspace_info.ws_dir end
+        local label = _ws_data.name
         logs.user_log("Workspace opened: " .. label, "workspace")
         if not at_startup then
             vim.notify("Workspace opened: " .. label)
@@ -425,17 +455,17 @@ function M.close_workspace()
 end
 
 function M.configure_workspace()
-    if not _workspace_info then
-        vim.notify("No active workspace", vim.log.levels.WARN)
+    if not _ws_data then
+        _notify_no_ws()
         return
     end
-    _configure_workspace(_workspace_info.ws_dir)
+    _configure_workspace(_ws_data.ws_dir)
 end
 
 ---@return string[]
 function M.get_commands()
     local cmds = { "workspace", "log", "ui", "page" }
-    if _workspace_info then
+    if _ws_data then
         vim.list_extend(cmds, { "task", "var" })
         vim.list_extend(cmds, extdata.lead_commands())
     end
@@ -462,8 +492,8 @@ function M.run_command(cmd, rest, opts)
         local provider = extdata.get_cmd_provider(cmd)
         if provider then
             provider.dispatch(rest, opts)
-        elseif not _workspace_info then
-            vim.notify("No active workspace", vim.log.levels.WARN)
+        elseif not _ws_data then
+            _notify_no_ws()
         else
             vim.notify("Invalid command: " .. tostring(cmd))
         end
@@ -574,14 +604,14 @@ end
 ---@param arg2? string|nil
 function M.task_command(command, arg1, arg2)
     assert(_init_done, _init_err_msg)
-    local ws_info = _get_ws_info_or_warn()
-    if not ws_info then
+    if not _ws_data then
+        _notify_no_ws()
         return
     end
 
     command = command and command:match("^%s*(.-)%s*$") or ""
     command = command ~= "" and command or "run"
-    local config_dir = ws_info.config_dir
+    local config_dir = _ws_data.config_dir
     if command == "run" then
         _load_and_run_task("task", arg1)
     elseif command == "repeat" then
@@ -609,8 +639,8 @@ end
 ---@param command string|nil
 function M.var_command(command)
     assert(_init_done, _init_err_msg)
-    local ws_info = _get_ws_info_or_warn()
-    if not ws_info then
+    if not _ws_data then
+        _notify_no_ws()
         return
     end
 
@@ -619,7 +649,7 @@ function M.var_command(command)
         command = "list"
     end
 
-    local config_dir = ws_info.config_dir
+    local config_dir = _ws_data.config_dir
     if command == "list" then
         variablesmgr.show_variables(config_dir)
     elseif command == "configure" then
@@ -670,10 +700,10 @@ function M.ui_command(command)
     elseif command == "hide" then
         M.hide_window()
     elseif command == "clean" then
-        if _page_manager then _page_manager.delete_expired_groups() end
+        if _ws_data and _ws_data.page_manager then _ws_data.page_manager.delete_expired_groups() end
     elseif command == "save_layout" then
-        if _workspace_info then
-            window.save_layout(_workspace_info.config_dir)
+        if _ws_data then
+            window.save_layout(_ws_data.config_dir)
         end
     else
         vim.notify("Invalid command: " .. command)
@@ -712,10 +742,19 @@ function M.logs_command()
     logs.show_logs()
 end
 
-function M.save_workspace_buffers()
-    local ws_info = _get_ws_info_or_warn()
-    if not ws_info then return 0 end
-    return wssaveutil.save_workspace_buffers(ws_info)
+---@param quiet boolean?
+---@return boolean,number,string?
+function M.save_workspace_buffers(quiet)
+    if not _ws_data then
+        if not quiet then _notify_no_ws() end
+        return false, 0, "No active workspace"
+    end
+    if not _ws_data.ws_config then
+        local err = "Invalid workspace configuration"
+        if not quiet then vim.notify(err) end
+        return false, 0, err
+    end
+    return true, wssaveutil.save_workspace_buffers(_ws_data.ws_dir, _ws_data.ws_config)
 end
 
 function M.winbar_click(id, clicks, button, mods)
@@ -744,21 +783,6 @@ function M.init()
 
     vim.api.nvim_create_autocmd("VimLeavePre", {
         callback = function()
-            -- Stop the timer if it's still running
-            if _save_timer and _save_timer:is_active() then
-                _save_timer:stop()
-                _save_timer:close()
-            end
-
-            if runner.have_running_tasks() then
-                runner.terminate_tasks()
-                local max_waits = 100 -- 10 seconds max
-                while max_waits > 0 and runner.have_running_tasks() do
-                    max_waits = max_waits - 1
-                    vim.wait(100)
-                end
-            end
-
             _close_workspace(true)
         end,
     })

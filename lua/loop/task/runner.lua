@@ -251,7 +251,12 @@ function M.run_task_with_deps(all_tasks, root_name)
         -- Save workspace buffers if any task requires it
         if needs_save then
             local workspace = require("loop.workspace")
-            local saved_count = workspace.save_workspace_buffers()
+            local save_ok, saved_count, save_err = workspace.save_workspace_buffers(true)
+            if not save_ok then
+                on_run_failed(save_err or "Failed to save workspace buffers")
+                _on_run_end(run_id)
+                return
+            end
             if saved_count > 0 then
                 logs.user_log(
                     string.format("Saved %d file%s before running task", saved_count, saved_count == 1 and "" or "s"),

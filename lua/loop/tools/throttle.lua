@@ -38,7 +38,7 @@ function M.throttle_wrap(ms, fn)
         timer = uv.new_timer()
         timer:start(delay, 0, function()
             vim.schedule(function()
-                timer:stop()
+                if timer:is_active() then timer:stop() end
                 timer:close()
                 timer = nil
                 run()

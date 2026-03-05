@@ -60,10 +60,12 @@ local function _report_save_results(saved_count, excluded_count, saved_paths)
 	vim.notify(table.concat(lines, '\n'), level)
 end
 
-function M.save_workspace_buffers(ws_info)
-	local filter = ws_info.config.save
+---@param ws_dir string
+---@param ws_config loop.WorkspaceConfig
+function M.save_workspace_buffers(ws_dir, ws_config)
+	local filter = ws_config.save
 	-- Get absolute, normalized root
-	local root_path = vim.fs.normalize(ws_info.ws_dir)
+	local root_path = vim.fs.normalize(ws_dir)
 	---@diagnostic disable-next-line: undefined-field
 	local real_root = vim.uv.fs_realpath(root_path)
 	if not real_root then return 0 end

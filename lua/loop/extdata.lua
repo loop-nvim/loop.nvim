@@ -173,8 +173,7 @@ function M.on_workspace_load(wsinfo, page_manager)
 	end
 end
 
----@param wsinfo loop.ws.WorkspaceInfo
-function M.on_workspace_unload(wsinfo)
+function M.on_workspace_unload()
 	local names = extensions.ext_names()
 	for _, name in ipairs(names) do
 		local ext_data = _extension_data[name]
@@ -188,8 +187,8 @@ function M.on_workspace_unload(wsinfo)
 	_extension_contexts = {}
 end
 
----@param wsinfo loop.ws.WorkspaceInfo
-function M.save(wsinfo)
+---@param config_dir string
+function M.save(config_dir)
 	local names = extensions.ext_names()
 	for _, name in ipairs(names) do
 		local ext_data = _extension_data[name]
@@ -200,7 +199,7 @@ function M.save(wsinfo)
 		if ext and ext.on_state_will_save then
 			ext.on_state_will_save(ext_data)
 		end
-		local filepath = vim.fs.joinpath(wsinfo.config_dir, "state." .. name .. ".json")
+		local filepath = vim.fs.joinpath(config_dir, "state." .. name .. ".json")
 		jsoncodec.save_to_file(filepath, state)
 	end
 end

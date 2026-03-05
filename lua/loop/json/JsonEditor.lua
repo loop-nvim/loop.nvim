@@ -39,7 +39,7 @@ local uitools = require('loop.tools.uitools')
 ---@field _redo_stack table[]
 ---@field _validation_errors loop.json.ValidationError[]
 ---@field _is_dirty boolean
----@field _value_selection_handler fun(path:string, callback:fun(value:any?))?
+---@field _on_save_handler fun()?
 ---@field _itemtree loop.comp.ItemTree
 ---@field _is_open boolean
 local JsonEditor = class()
@@ -309,9 +309,9 @@ function JsonEditor:init(opts)
     self._is_open = false
 end
 
----@param handler fun(path:string, callback:fun(value:any?))?
-function JsonEditor:set_value_selection_handler(handler)
-    self._value_selection_handler = handler
+---@param handler fun()?
+function JsonEditor:set_on_save_handler(handler)
+    self._on_save_handler = handler
 end
 
 ---@param winid integer?
@@ -530,9 +530,8 @@ end
 ---@param value_type string
 ---@param schema table?
 ---@param default_text string?
----@param value_selection_handler fun(path:string, callback:fun(value:any?))?
 ---@param on_confirm fun(value:any)
-function JsonEditor:_request_value(path, name, value_type, schema, default_text, value_selection_handler, on_confirm)
+function JsonEditor:_request_value(path, name, value_type, schema, default_text, on_confirm)
     if schema and schema["x-valueSelector"] then
         local value_selector_fn_path = schema["x-valueSelector"]
         _call_lua_function(value_selector_fn_path, function(value)
@@ -595,8 +594,8 @@ function JsonEditor:_request_value(path, name, value_type, schema, default_text,
 end
 
 ---@param item loop.comp.ItemTree.Item
----@param multiline? boolean
-function JsonEditor:_edit_value(item, multiline)
+---@param multiline_string? boolean
+function JsonEditor:_edit_value(item, multiline_string)
     local path = item.data.path ---@type string
     local schema = item.data.schema ---@type table
     local current_value = item.data.value ---@type any
@@ -608,18 +607,19 @@ function JsonEditor:_edit_value(item, multiline)
             self:_set_value(path, value)
         end
     end
-    -- Normal scalar editing
-    if multiline and item.data.value_type == "string" then
-        local default_text = tostring(current_value)
-        ---@type table
-        local input_opts = {
-            prompt = ("%s (%s)"):format(item.data.key, item.data.value_type),
-            default_text = default_text,
-        }
-        floatwin.input_multiline(input_opts, on_confirm)
+    if multiline_string then
+        if item.data.value_type == "string" then
+            local default_text = tostring(current_value)
+            ---@type table
+            local input_opts = {
+                prompt = ("%s (%s)"):format(item.data.key, item.data.value_type),
+                default_text = default_text,
+            }
+            floatwin.input_multiline(input_opts, on_confirm)
+        end
         return
     end
-    self:_request_value(path, item.data.key, item.data.value_type, schema, current_value, self._value_selection_handler,
+    self:_request_value(path, item.data.key, item.data.value_type, schema, current_value,
         on_confirm)
 end
 
@@ -773,7 +773,7 @@ end
 function JsonEditor:_get_new_value(path, schema, callback)
     ---@param type_choice string
     local function get_value(type_choice)
-        self:_request_value(path, "New array item", type_choice, schema, "", self._value_selection_handler,
+        self:_request_value(path, "New array item", type_choice, schema, "",
             function(value)
                 callback(value)
             end)
@@ -1004,6 +1004,9 @@ function JsonEditor:save()
         vim.notify("Save failed: " .. tostring(err), vim.log.levels.ERROR)
     else
         self._is_dirty = false
+        if self._on_save_handler then
+            self._on_save_handler()
+        end
     end
 end
 

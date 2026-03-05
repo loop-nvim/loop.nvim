@@ -83,8 +83,10 @@ function M.async_load_text_file(path, opts, callback)
         finished = true
         vim.schedule(function()
             if not aborted then
-                if timer and timer:is_active() then
-                    timer:stop()
+                if timer then
+                    if timer:is_active() then
+                        timer:stop()
+                    end
                     timer:close()
                     timer = nil
                 end
@@ -154,6 +156,53 @@ function M.async_load_text_file(path, opts, callback)
         aborted = true
         finish("Aborted", nil)
     end
+end
+
+---@param dir string Directory path to monitor
+---@param change_callback fun(file:string, status:table|nil) Callback called with changed file name
+---@return fun() cancel_fn Function that stops the monitoring
+function M.monitor_dir(dir, change_callback)
+    local uv = vim.uv or vim.loop
+
+    ---@diagnostic disable-next-line: undefined-field
+    local handle = uv.new_fs_event()
+
+    local terminated = false
+
+    handle:start(dir, {}, function(err, fname, status)
+        if terminated then
+            return
+        end
+        if err then
+            vim.schedule(function()
+                if not terminated then
+                    vim.notify("monitor_dir error: " .. err, vim.log.levels.ERROR)
+                end
+            end)
+            return
+        end
+        if fname then
+            vim.schedule(function()
+                if not terminated then
+                    change_callback(fname, status)
+                end
+            end)
+        end
+    end)
+    local function cancel()
+        if terminated then
+            return
+        end
+        terminated = true
+        if handle then
+            if handle:is_active() then
+                handle:stop()
+            end
+            handle:close()
+            handle = nil
+        end
+    end
+    return cancel
 end
 
 return M
