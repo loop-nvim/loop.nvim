@@ -17,8 +17,6 @@ local selector      = require('loop.tools.selector')
 local extdata       = require("loop.extdata")
 local JsonEditor    = require('loop.json.JsonEditor')
 
-vim.notify("Workspace module loaded")
-
 local _init_done    = false
 
 ---@class loop.ws.WorkspaceInfo
