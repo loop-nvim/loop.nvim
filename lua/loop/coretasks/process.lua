@@ -37,7 +37,7 @@ function M.start_task(ws_dir, task, page_group, on_exit)
 
     local page_data, err_msg = page_group.add_page({
         type = "term",
-        buftype = "term",
+        filetype = "term",
         label = task.name,
         term_args = start_args,
         activate = true,

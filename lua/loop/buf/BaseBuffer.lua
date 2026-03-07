@@ -6,12 +6,13 @@ local throttle = require('loop.tools.throttle')
 
 ---@class loop.comp.Tracker
 ---@field on_change fun()|nil
+---@field on_delete fun()|nil
 
 ---@class loop.comp.BaseBufferOpts
 ---@field name string
----@field buftype string
+---@field filetype string
 ---@field listed boolean
----@field bufhidden "hide"|"delete"
+---@field bufhidden ""|"hide"|"wipe"
 
 ---@class loop.comp.BaseBuffer
 ---@field new fun(self: loop.comp.BaseBuffer, opts:loop.comp.BaseBufferOpts): loop.comp.BaseBuffer
@@ -21,10 +22,11 @@ local BaseBuffer = class()
 function BaseBuffer:init(opts)
     vim.validate("opts", opts, "table")
     vim.validate("opts.name", opts.name, "string")
-    vim.validate("opts.buftype", opts.buftype, "string")
+    vim.validate("opts.filetype", opts.filetype, "string")
     vim.validate("opts.listed", opts.listed, "boolean")
     vim.validate("opts.bufhidden", opts.bufhidden, "string")
-    self._type = opts.buftype
+    assert(opts.bufhidden == "" or opts.bufhidden == "hide" or opts.bufhidden == "wipe", "Invalid bufhidden value in opts")
+    self._filetype = opts.filetype
     self._name = opts.name
     self._listed = opts.listed
     self._bufhidden_action = opts.bufhidden
@@ -138,7 +140,7 @@ end
 
 function BaseBuffer:_setup_buf()
     assert(self._buf > 0)
-    assert(type(self._type) == "string" and self._type ~= "")
+    assert(type(self._filetype) == "string" and self._filetype ~= "")
 
     local buf = self._buf
 
@@ -158,7 +160,7 @@ function BaseBuffer:_setup_buf()
         local b = vim.bo[buf]
         b.buftype = "nofile"
         b.bufhidden = self._bufhidden_action
-        b.filetype = self._type
+        b.filetype = self._filetype
         b.modifiable = false
         b.swapfile = false
         b.undolevels = -1          -- buffer can't become "modified"
@@ -171,6 +173,9 @@ function BaseBuffer:_setup_buf()
         callback = function(ev)
             assert(ev.buf == buf)
             self._buf = -1
+            vim.schedule(function()
+                self._trackers:invoke("on_delete")
+            end)
         end,
     })
 

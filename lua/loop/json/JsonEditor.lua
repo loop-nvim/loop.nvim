@@ -3,7 +3,7 @@ local ItemTreeComp = require("loop.comp.ItemTree")
 local CompBuffer = require("loop.buf.CompBuffer")
 local floatwin = require("loop.tools.floatwin")
 local selector = require("loop.tools.selector")
-local file_util = require("loop.tools.file")
+local filetools = require("loop.tools.file")
 local validator = require("loop.json.validator")
 local jsontools = require("loop.json.jsontools")
 local jsoncodec = require("loop.json.codec")
@@ -41,8 +41,13 @@ local uitools = require('loop.tools.uitools')
 ---@field _is_dirty boolean
 ---@field _on_save_handler fun()?
 ---@field _itemtree loop.comp.ItemTree
+---@field _comp_buf loop.comp.CompBuffer
 ---@field _is_open boolean
 local JsonEditor = class()
+
+local _open_editors = {}
+
+local _buf_filetype = "loop-jsoneditor"
 
 local function _show_help()
     local help_text = {
@@ -92,27 +97,16 @@ local function _call_lua_function(path, ...)
     return fn(...)
 end
 
----@param filetype string
-local function _get_existing_window(filetype)
-    local curwin = vim.api.nvim_get_current_win()
-    local curbuf = vim.api.nvim_win_get_buf(curwin)
-    if vim.bo[curbuf].filetype == filetype then
-        return curwin
-    end
-    local tabpage = vim.api.nvim_get_current_tabpage()
-    local windows = vim.api.nvim_tabpage_list_wins(tabpage)
-    for _, winid in ipairs(windows) do
-        if vim.api.nvim_win_is_valid(winid) then
-            local cfg = vim.api.nvim_win_get_config(winid)
-            if cfg.relative == "" then -- skip poup windows
-                local bufnr = vim.api.nvim_win_get_buf(winid)
-                if vim.bo[bufnr].filetype == filetype then
-                    return winid
-                end
-            end
+
+local function _show_buf(bufnr)
+    local tgtwin = uitools.get_regular_window(function (winid)
+        local buf = vim.api.nvim_win_get_buf(winid)
+        if vim.bo[buf].filetype == _buf_filetype then
+            return true
         end
-    end
-    return -1
+    end)
+    vim.api.nvim_set_current_win(tgtwin)
+    vim.api.nvim_win_set_buf(tgtwin, bufnr)
 end
 
 ---@param schema table|nil
@@ -316,8 +310,24 @@ end
 
 ---@param winid integer?
 function JsonEditor:open(winid)
-    assert(not self._is_open, "Editor already open")
+    if self._is_open then
+        local bufnr = self._comp_buf and self._comp_buf:get_buf()
+        if vim.api.nvim_buf_is_valid(bufnr) then
+            _show_buf(bufnr)
+        end
+        return
+    end
     self._is_open = true
+
+    local existing_editor = _open_editors[self._filepath]
+    if existing_editor then
+        existing_editor:open()
+        return
+    end
+
+    if not filetools.file_exists(self._filepath) then
+        return
+    end
 
     local name = self._opts.name or "JSON Editor"
 
@@ -338,13 +348,21 @@ function JsonEditor:open(winid)
         end,
     })
 
-    local buftype = "loop-jsoneditor"
     local buf = CompBuffer:new({
-        buftype = buftype,
+        filetype = _buf_filetype,
         name = name,
-        bufhidden = "hide",
+        bufhidden = "",
         listed = true,
     })
+
+    self._comp_buf = buf
+
+    buf:add_tracker({
+        on_delete = function()
+            _open_editors[self._filepath] = nil
+        end
+    })
+    _open_editors[self._filepath] = self
 
     local function with_current_item(fn)
         local item = self._itemtree:get_cur_item()
@@ -394,15 +412,7 @@ function JsonEditor:open(winid)
     self._itemtree:link_to_buffer(buf:make_controller())
 
     local bufid = buf:get_or_create_buf()
-    local tgtwin = winid
-    if not tgtwin or tgtwin < 0 then
-        tgtwin = _get_existing_window(buftype)
-        if tgtwin == -1 then
-            tgtwin = uitools.get_regular_window()
-        end
-    end
-    vim.api.nvim_set_current_win(tgtwin)
-    vim.api.nvim_win_set_buf(tgtwin, bufid)
+    _show_buf(bufid)
 end
 
 function JsonEditor:_apply_changes()
@@ -415,7 +425,7 @@ end
 function JsonEditor:_reload_data()
     local ok, data = jsoncodec.load_from_file(self._filepath)
     if not ok then
-        if file_util.file_exists(self._filepath) then
+        if filetools.file_exists(self._filepath) then
             vim.notify("Failed to load JSON: " .. tostring(data), vim.log.levels.WARN)
             return
         else

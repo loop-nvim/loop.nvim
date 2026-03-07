@@ -29,37 +29,42 @@ function M.is_regular_buffer(bufnr)
     return true
 end
 
+---@param override (fun(winid:number):boolean?)?
 ---@return number window number
-function M.get_regular_window()
-    -- Get current tabpage and all its windows
-    local tabpage = vim.api.nvim_get_current_tabpage()
-    local windows = vim.api.nvim_tabpage_list_wins(tabpage)
-    -- Helper: check if a buffer is "regular" (listed, not special, etc.)
-    -- Search through all windows in current tab
-    for _, winid in ipairs(windows) do
-        if vim.api.nvim_win_is_valid(winid) then
-            local cfg = vim.api.nvim_win_get_config(winid)
-            if cfg.relative == "" then -- skip poup windows
-                if not vim.wo[winid].winfixbuf then
-                    local bufnr = vim.api.nvim_win_get_buf(winid)
-                    if M.is_regular_buffer(bufnr) then
-                        return winid
-                    end
-                end
+function M.get_regular_window(override)
+    -- Helper function to check if a window is "regular"
+    local function is_regular_win(winid)
+        if override then
+            local result = override(winid)
+            if result == true or result == false then
+                return result
             end
         end
+        if not vim.api.nvim_win_is_valid(winid) then return false end
+        local cfg = vim.api.nvim_win_get_config(winid)
+        if cfg.relative ~= "" then return false end      -- skip popups
+        if vim.wo[winid].winfixbuf then return false end -- skip fixed windows
+        local bufnr = vim.api.nvim_win_get_buf(winid)
+        return M.is_regular_buffer(bufnr)
     end
-    -- If no regular window found, create a horizontal split
+
+    -- Try current window first
+    local cur_win = vim.api.nvim_get_current_win()
+    if is_regular_win(cur_win) then
+        return cur_win
+    end
+
+    local tabpage = vim.api.nvim_get_current_tabpage()
+    local wins = vim.api.nvim_tabpage_list_wins(tabpage)
+    -- Then loop over all other windows
+    for _, winid in ipairs(wins) do
+        if winid ~= cur_win and is_regular_win(winid) then
+            return winid
+        end
+    end
+    -- No regular window found; create a horizontal split
     vim.cmd('split')
     local new_win = vim.api.nvim_get_current_win()
-    local new_buf = vim.api.nvim_win_get_buf(new_win)
-
-    -- Ensure the new buffer is regular
-    if not M.is_regular_buffer(new_buf) then
-        local buf = vim.api.nvim_create_buf(true, false) -- listed, not scratch
-        vim.api.nvim_win_set_buf(new_win, buf)
-    end
-
     return new_win
 end
 
