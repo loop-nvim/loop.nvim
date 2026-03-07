@@ -30,6 +30,8 @@ local function _build_taskfile_schema()
             assert(provider.get_task_schema,
                 "get_task_schema() not implemented for: " .. task_type)
 
+            table.insert(items.properties.type.enum, task_type)
+
             local provider_schema = provider.get_task_schema()
 
             if provider_schema then
@@ -46,6 +48,7 @@ local function _build_taskfile_schema()
                 end
 
                 local then_schema = vim.fn.deepcopy(base_items)
+                then_schema.description = ("Definition of a `%s` task"):format(task_type)
                 then_schema.properties = vim.tbl_extend("error", then_schema.properties, providers_props)
                 if provider_schema["x-order"] then vim.list_extend(then_schema["x-order"], provider_schema["x-order"]) end
                 then_schema.properties.type = {
@@ -57,10 +60,6 @@ local function _build_taskfile_schema()
                 then_schema["x-valueSelector"] = schema.properties.tasks.items["x-valueSelector"]
                 for _, req in ipairs(provider_schema.required or {}) do
                     table.insert(then_schema.required, req)
-                end
-
-                if provider_schema["x-order"] then
-                    then_schema["x-order"] = provider_schema["x-order"]
                 end
 
                 table.insert(items.allOf, {
@@ -86,11 +85,9 @@ local function _get_single_task_schema(task_type)
         return nil
     end
     assert(provider.get_task_schema, "get_task_schema() not implemented for: " .. task_type)
-
     local base_items = require("loop.task.tasksschema").base_items
 
     local schema = vim.deepcopy(base_items)
-
     local provider_schema = provider.get_task_schema()
     if provider_schema then
         if provider_schema["x-order"] then vim.list_extend(schema["x-order"], provider_schema["x-order"]) end
@@ -116,10 +113,9 @@ local function _task_preview(task)
 end
 
 ---@param content string
----@param tasktype_to_schema table<string,table>
 ---@return loop.Task[]|nil
 ---@return string[]|nil
-local function _load_tasks_from_str(content, tasktype_to_schema)
+local function _load_tasks_from_str(content)
     if content == "" then
         return {}, nil
     end
@@ -130,41 +126,31 @@ local function _load_tasks_from_str(content, tasktype_to_schema)
 
     local data = data_or_err
     do
-        local schema = require("loop.task.tasksschema").base_schema
+        local schema = _build_taskfile_schema()
         local valid, errors = jsonvalidator.validate(schema, data)
         if not valid then
             local strs = jsonvalidator.errors_to_string_arr(errors)
-            table.insert(strs, 1, "Failed to load tasks schema")
+            table.insert(strs, 1, "Failed to load tasks")
             return nil, strs
         end
         if not data or not data.tasks then
             return nil, { "Parsing error" }
         end
     end
-
-    ---@type loop.Task[]
-    local tasks = data.tasks
-    for _, task in ipairs(tasks) do
-        local schema = tasktype_to_schema[task.type]
-        if not schema then
-            return nil, { "No schema for task type: " .. task.type }
+    local byname = {}
+    for _, task in ipairs(data.tasks) do
+        if byname[task.name] ~= nil then
+            return nil, { "Duplicate task name: " .. task.name }
         end
-        local valid, errors = jsonvalidator.validate(schema, task)
-        if not valid then
-            local strs = jsonvalidator.errors_to_string_arr(errors)
-            table.insert(strs, 1, "Failed to load task: " .. task.name)
-            return nil, strs
-        end
+        byname[task.name] = task
     end
-
     return data.tasks, nil
 end
 
 ---@param filepath string
----@param tasktype_to_schema table<string,table>
 ---@return loop.Task[]|nil
 ---@return string[]|nil
-local function _load_tasks_file(filepath, tasktype_to_schema)
+local function _load_tasks_file(filepath)
     local loaded, contents_or_err = uitools.smart_read_file(filepath)
     if not loaded then
         if not filetools.file_exists(filepath) then
@@ -172,31 +158,18 @@ local function _load_tasks_file(filepath, tasktype_to_schema)
         end
         return nil, { contents_or_err }
     end
-    return _load_tasks_from_str(contents_or_err, tasktype_to_schema)
+    return _load_tasks_from_str(contents_or_err)
 end
 
 
 ---@param config_dir string
 ---@return loop.Task[]?,string[]?
 local function _load_tasks(config_dir)
-    local tasktype_to_schema = {}
-    for _, tasktype in ipairs(providers.task_types()) do
-        tasktype_to_schema[tasktype] = _get_single_task_schema(tasktype)
-    end
     local filepath = vim.fs.joinpath(config_dir, "tasks.json")
-    local tasks, errors = _load_tasks_file(filepath, tasktype_to_schema)
+    local tasks, errors = _load_tasks_file(filepath)
     if not tasks then
         return nil, strtools.indent_errors(errors, "error(s) in: " .. filepath)
     end
-
-    local byname = {}
-    for _, task in ipairs(tasks) do
-        if byname[task.name] ~= nil then
-            return nil, { "error in: " .. filepath, "  duplicate task name: " .. task.name }
-        end
-        byname[task.name] = task
-    end
-
     return tasks, nil
 end
 

@@ -99,7 +99,7 @@ end
 
 
 local function _show_buf(bufnr)
-    local tgtwin = uitools.get_regular_window(function (winid)
+    local tgtwin = uitools.get_regular_window(function(winid)
         local buf = vim.api.nvim_win_get_buf(winid)
         if vim.bo[buf].filetype == _buf_filetype then
             return true
@@ -171,66 +171,76 @@ local function _coerce_value(input, wanted_type)
     return input
 end
 
-
 ---@param item loop.comp.ItemTree.Item?
 local function _show_node_help(item)
     if not item or not item.data then
         vim.notify("No node selected", vim.log.levels.WARN)
         return
     end
+
     ---@type loop.JsonEditor.NodeData
     local data = item.data
     local schema = data.schema
     local lines = {}
+
     if schema then
+        -- Helper to add bold label + inline code value
         local function add_field(label, value)
             if value == nil then return end
             if type(value) == "table" then
                 value = vim.inspect(value):gsub("\n", " ")
             end
-            table.insert(lines, ("  %s: %s"):format(label, tostring(value)))
+            table.insert(lines, string.format("**%s:** `%s`", label, tostring(value)))
         end
 
-        if type(schema.description) then
-            table.insert(lines, schema.description)
+        -- Description as heading (if present)
+        if schema.description and #schema.description > 0 then
+            table.insert(lines, "# " .. schema.description)
+            table.insert(lines, "") -- empty line for spacing
         end
 
+        -- Enum values as bullet list
         if schema.enum then
-            local enum_str = table.concat(vim.tbl_map(vim.inspect, schema.enum), ", ")
-            add_field("enum", enum_str)
+            table.insert(lines, "**Enum:**")
+            for _, v in ipairs(schema.enum) do
+                table.insert(lines, string.format("  - `%s`", vim.inspect(v)))
+            end
+            table.insert(lines, "")
         end
 
-        if schema.items and not vim.islist(schema.items) then
+        -- Items type
+        if schema.items and type(schema.items) == "table" and not vim.islist(schema.items) then
             local item_types = _get_allowed_types(schema.items)
-            add_field("items type", table.concat(item_types, " | "))
+            add_field("Items type", table.concat(item_types, " | "))
         end
 
+        -- Required properties
         local req = schema.required or {}
         if #req > 0 then
-            add_field("required properties", table.concat(req, ", "))
+            table.insert(lines, "**Required properties:**")
+            for _, p in ipairs(req) do
+                table.insert(lines, "  - `" .. p .. "`")
+            end
         end
 
+        -- Default value
         if schema.default ~= nil then
-            add_field("default", vim.inspect(schema.default))
+            add_field("Default", vim.inspect(schema.default))
         end
 
-        if schema.format then
-            add_field("format", schema.format)
-        end
-
-        if schema.pattern then
-            add_field("pattern", schema.pattern)
-        end
-
+        -- Format, pattern, range
+        if schema.format then add_field("Format", schema.format) end
+        if schema.pattern then add_field("Pattern", schema.pattern) end
         if schema.minimum or schema.maximum then
-            add_field("range", (schema.minimum or "-∞") .. " ≤ x ≤ " .. (schema.maximum or "∞"))
+            add_field("Range", (schema.minimum or "-∞") .. " ≤ x ≤ " .. (schema.maximum or "∞"))
         end
     end
+
     if #lines == 0 then
-        table.insert(lines, "(no information available)")
+        table.insert(lines, "_No information available_")
     end
 
-    floatwin.show_tooltip(table.concat(lines, "\n"))
+    floatwin.show_tooltip(table.concat(lines, '\n'))
 end
 
 ---@param _ any

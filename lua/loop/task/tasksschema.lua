@@ -14,8 +14,18 @@ local base_schema = {
             description = "List of task definitions",
             additionalProperties = false,
             items = {
+                type = "object",
                 description = "Single task definition entry",
                 ["x-valueSelector"] = "loop.task.jsonhooks.select_taskobj",
+                properties = {
+                    -- Type of task (used for dispatching to task providers)
+                    type = {
+                        type = "string",
+                        description = "Task type (used to determine behavior)",
+                        ["x-valueSelector"] = "loop.task.jsonhooks.select_tasktype",
+                        enum = {}, -- filled programmatically
+                    },
+                }
                 -- conditional tasks schema will be filled here programmatically
             },
         },
@@ -37,15 +47,9 @@ local base_items = {
             minLength = 1,
             description = "Unique, non-empty name of the task"
         },
-
         -- Type of task (used for dispatching to task providers)
         type = {
-            type = "string",
-            description = "Task type (used to determine behavior)",
-            ["x-valueSelector"] = "loop.task.jsonhooks.select_tasktype",
-
         },
-
         -- Behavior when multiple instances of the task are started
         if_running = {
             type = "string",
