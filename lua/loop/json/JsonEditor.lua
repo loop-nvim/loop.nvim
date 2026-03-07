@@ -195,13 +195,13 @@ local function _show_node_help(item)
 
         -- Description as heading (if present)
         if schema.description and #schema.description > 0 then
-            table.insert(lines, "# " .. schema.description)
+            table.insert(lines, schema.description )
             table.insert(lines, "") -- empty line for spacing
         end
 
         -- Enum values as bullet list
         if schema.enum then
-            table.insert(lines, "**Enum:**")
+            table.insert(lines, "Enum")
             for _, v in ipairs(schema.enum) do
                 table.insert(lines, string.format("  - `%s`", vim.inspect(v)))
             end

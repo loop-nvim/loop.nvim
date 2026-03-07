@@ -17,6 +17,7 @@ local base_schema = {
                 type = "object",
                 description = "Single task definition entry",
                 ["x-valueSelector"] = "loop.task.jsonhooks.select_taskobj",
+                ["x-order"] = { "name", "type" },
                 properties = {
                     -- Type of task (used for dispatching to task providers)
                     type = {

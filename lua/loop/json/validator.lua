@@ -44,6 +44,10 @@ end
 local function _validate(schema, data, path, errors, schema_map)
     if schema_map then
         schema_map[path] = vim.tbl_deep_extend("force", schema_map[path] or {}, schema)
+        local map = schema_map[path]
+        for _, key in ipairs({ "if", "then", "else", "allOf", "oneOf" }) do
+            map[key] = nil
+        end
     end
     -- Type check
     local allowed_types = type(schema.type) == "table" and schema.type or { schema.type }
@@ -81,7 +85,11 @@ local function _validate(schema, data, path, errors, schema_map)
 
     -- enum
     if schema.enum and not check_enum(schema.enum, data) then
-        add_error(errors, path, "valid values: " .. table.concat(schema.enum, ", "))
+        local enum_strs = {}
+        for _, v in ipairs(schema.enum) do
+            table.insert(enum_strs, tostring(v))
+        end
+        add_error(errors, path, "valid values: " .. table.concat(enum_strs, ", "))
     end
 
     -- const
@@ -90,10 +98,7 @@ local function _validate(schema, data, path, errors, schema_map)
             add_error(
                 errors,
                 path,
-                ("expecting %s, got %s"):format(
-                    vim.inspect(schema.const),
-                    vim.inspect(data)
-                )
+                ("expecting %s, got %s"):format(tostring(schema.const), tostring(data))
             )
         end
     end
@@ -152,7 +157,7 @@ local function _validate(schema, data, path, errors, schema_map)
         else
             if schema.items then
                 for i, value in ipairs(data) do
-                    _validate(schema.items, value, path .. "/" .. i, errors, schema_map)
+                    _validate(schema.items, value, jsontools.join_path(path, tostring(i)), errors, schema_map)
                 end
             end
         end
@@ -164,7 +169,7 @@ local function _validate(schema, data, path, errors, schema_map)
     end
 
     -- string pattern
-    if type(schema.minLength) == "number" and type(data) == "string" and vim.fn.strdisplaywidth(data) < schema.minLength then
+    if type(schema.minLength) == "number" and type(data) == "string" and #data < schema.minLength then
         local err = schema.minLength > 1 and ("string must be at least %d character"):format(schema.minLength) or
             "string cannot be empty"
         add_error(errors, path, err)
@@ -187,7 +192,9 @@ local function _validate(schema, data, path, errors, schema_map)
 
     -- allOf
     if schema.allOf then
+        local count = #errors
         for _, sub in ipairs(schema.allOf) do
+            if #errors ~= count then break end
             _validate(sub, data, path, errors, schema_map)
         end
     end
@@ -214,9 +221,6 @@ local function _validate(schema, data, path, errors, schema_map)
             end
         end
         if schema_map and best_schema_map then
-            for sub_path, sub_schema in pairs(best_schema_map) do
-                schema_map[sub_path] = sub_schema
-            end
             vim.tbl_extend("force", schema_map, best_schema_map)
         end
         if best_count > 0 and best_errors then
@@ -238,7 +242,7 @@ function M.validate(schema, data, opts)
         schema_map = {}
     end
     local errors = {}
-     _validate(schema, data, "", errors, schema_map)
+    _validate(schema, data, "", errors, schema_map)
     return #errors == 0, errors, schema_map
 end
 
