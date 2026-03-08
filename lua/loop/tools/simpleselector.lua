@@ -62,7 +62,7 @@ local function _update_pos_hint(pbuf, total, cur)
             virt_text = { { count_text, "Comment" } }, -- highlight group
             virt_text_pos = "right_align",
             hl_mode = "blend",
-            priority=1,
+            priority = 1,
         })
     end
 end
@@ -77,15 +77,11 @@ local function _update_list(items, cur, buf, win, list_width)
     local extmarks = {}
     local virt_extmarks = {}
     local prefix_space = "  "
+
     for i, item in ipairs(items) do
         local prefix = (i == cur) and "> " or prefix_space
-        -- ----------------------------
-        -- Efficiently build display_label from label_chunks
-        -- ----------------------------
         lines[i] = prefix .. (item.label:gsub("\n", ""))
-        -- ----------------------------
-        -- Inline highlights
-        -- ----------------------------
+
         local col = #prefix
         if item.label_chunks then
             for _, chunk in ipairs(item.label_chunks) do
@@ -104,9 +100,7 @@ local function _update_list(items, cur, buf, win, list_width)
                 end
             end
         end
-        -- ----------------------------
-        -- Virtual text
-        -- ----------------------------
+
         if item.virt_lines and #item.virt_lines > 0 then
             local vlines = {}
             for _, line in ipairs(item.virt_lines) do
@@ -121,40 +115,35 @@ local function _update_list(items, cur, buf, win, list_width)
             }
         end
     end
+
     vim.api.nvim_buf_clear_namespace(buf, NS_VIRT, 0, -1)
-    -- Apply lines
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    -- Apply inline highlights
+
     for _, mark in ipairs(extmarks) do
         vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col_start, {
             end_col  = mark.col_end,
             hl_group = mark.hl_group,
         })
     end
-    -- Apply virtual text extmarks
     for _, mark in ipairs(virt_extmarks) do
         vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col, mark.opts)
     end
-    -- Move cursor
+
     if vim.api.nvim_win_is_valid(win) then
-        vim.api.nvim_win_set_cursor(win, { math.max(cur, 1), 0 })
+        -- Set the cursor first
+        local target_line = math.max(cur, 1)
+        vim.api.nvim_win_set_cursor(win, { target_line, 0 })
 
+        -- Use a more robust scrolling strategy
         vim.api.nvim_win_call(win, function()
-            local cursor_line = vim.fn.winline()
             local win_height = vim.api.nvim_win_get_height(0)
+            local current_winline = vim.fn.winline()
 
-            if cursor_line < 1 then
-                vim.cmd("normal! zt") -- scroll cursor to top
-            elseif cursor_line >= win_height then
-                local item = items[cursor_line]
-                local extra_lines = item and item.virt_lines and #item.virt_lines or 0
-                if extra_lines > 0 then
-                    -- Scroll enough to show extra virtual lines
-                    local scroll_count = math.min(extra_lines, win_height - 1)
-                    vim.cmd(string.format("normal! %dzb", scroll_count))
-                else
-                    vim.cmd("normal! zb") -- scroll cursor to bottom
-                end
+            -- If the cursor is near the top or bottom, or off-screen, adjust view
+            if current_winline <= 1 then
+                vim.cmd("normal! zt")
+            elseif current_winline >= win_height then
+                vim.cmd("normal! zb")
             end
         end)
     end
@@ -596,7 +585,7 @@ function M.select(opts, callback)
             virt_text = { { frame .. " ", "Comment" } },
             virt_text_pos = "right_align",
             hl_mode = "blend",
-            priority=2,
+            priority = 2,
         })
     end
     local function start_spinner()
@@ -802,7 +791,7 @@ function M.select(opts, callback)
                     function(new_items)
                         if closed or context ~= async_fetch_context then return end
                         if new_items == nil then
-                             stop_spinner()
+                            stop_spinner()
                             return
                         end
                         _process_labels(new_items)
