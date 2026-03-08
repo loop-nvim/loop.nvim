@@ -5,6 +5,52 @@ local uitools = require("loop.tools.uitools")
 local strtools = require("loop.tools.strtools")
 local simple_selector = require('loop.tools.simpleselector')
 
+---@param query string
+---@param opts loop.filepicker.fdopts
+---@return string, string[],boolean
+local function get_search_cmd(query, opts)
+    if vim.fn.executable("fd") == 1 then
+        local args = { "--type", "f", "--fixed-strings", "--color", "never" }
+        -- fd ignores hidden files by default; use --hidden if you wanted them.
+        if opts.exclude_globs then
+            for _, glob in ipairs(opts.exclude_globs) do
+                table.insert(args, "--exclude")
+                table.insert(args, glob)
+            end
+        end
+        table.insert(args, "--")
+        table.insert(args, query)
+        return "fd", args, true
+    end
+
+    -- Fallback to find
+    -- Logic: find . -type f -not -path '*/.*' ...
+    local args = { ".", "-type", "f" }
+
+    -- 1. Ignore hidden files and directories (starts with a dot)
+    table.insert(args, "-not")
+    table.insert(args, "-path")
+    table.insert(args, "*/.*")
+
+    -- 2. Add explicit exclude globs
+    if opts.exclude_globs then
+        for _, glob in ipairs(opts.exclude_globs) do
+            table.insert(args, "-not")
+            table.insert(args, "-path")
+            -- Wrapping in wildcards to match anywhere in the path
+            table.insert(args, "*/" .. glob .. "/*")
+        end
+    end
+
+    -- 3. Case-insensitive path search for the query
+    if query and query ~= "" then
+        table.insert(args, "-ipath")
+        table.insert(args, "*" .. query .. "*")
+    end
+
+    return "find", args, false
+end
+
 ---@class loop.filepicker.fdopts
 ---@field cwd string The root directory for the search
 ---@field include_globs string[] List of glob patterns to include (filtered in Lua)
@@ -17,37 +63,29 @@ local simple_selector = require('loop.tools.simpleselector')
 ---@return fun() cancel Function to kill the underlying process
 local function async_fd_search(query, fd_opts, fetch_opts, callback)
     assert(fd_opts.cwd, "CWD must be provided for file searching")
-
-    -- 1. Setup fd arguments.
-    -- We use --fixed-strings for the query to ensure maximum performance and literal matching.
-    local args = { "--type", "f", "--fixed-strings", "--color", "never" }
-
-    if fd_opts.exclude_globs then
-        for _, glob in ipairs(fd_opts.exclude_globs) do
-            table.insert(args, "--exclude")
-            table.insert(args, glob)
-        end
-    end
-
-    table.insert(args, "--")
-    table.insert(args, query)
-
+    local cmd, args, exclude_globs_handled = get_search_cmd(query, fd_opts)
     -- 2. Pre-compile include globs into LPeg matchers
     -- LPeg is significantly faster than Vim Regex for high-frequency string matching.
-    ---@type table[]
-    local matchers = {}
-    if fd_opts.include_globs and #fd_opts.include_globs > 0 then
-        for _, glob in ipairs(fd_opts.include_globs) do
-            local matcher = vim.glob.to_lpeg(glob)
-            table.insert(matchers, matcher)
+
+    local function to_matchers(globs)
+        local matchers = {}
+        for _, glob in ipairs(globs or {}) do
+            -- pcall handles invalid glob strings gracefully
+            local ok, matcher = pcall(vim.glob.to_lpeg, glob)
+            if ok then table.insert(matchers, matcher) end
         end
+        return matchers
     end
+
+    -- Refactored block
+    local include_matchers = to_matchers(fd_opts.include_globs)
+    local exclude_matchers = (not exclude_globs_handled) and to_matchers(fd_opts.exclude_globs) or {}
 
     local count = 0
     local process
-    process = Process:new("fd", {
+    process = Process:new(cmd, {
         cwd = fd_opts.cwd,
-        cmd = "fd",
+        cmd = cmd,
         args = args,
         on_output = function(data, is_stderr)
             if not data then return end
@@ -55,31 +93,40 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
                 vim.notify_once(data, vim.log.levels.ERROR)
                 return
             end
-
             local items = {}
             for line in data:gmatch("[^\r\n]+") do
-                -- LPeg Matching Logic
-                local allowed = (#matchers == 0)
-                if not allowed then
-                    for i = 1, #matchers do
-                        if matchers[i]:match(line) then
-                            allowed = true
-                            break
-                        end
+                line = line:gsub("^%.[/]", "")
+                local excluded = false
+                for i = 1, #exclude_matchers do
+                    if exclude_matchers[i]:match(line) then
+                        excluded = true
+                        break
                     end
                 end
-
-                if allowed then
-                    if count < 1000 then
-                        table.insert(items, {
-                            label = line,
-                            file = vim.fs.joinpath(fd_opts.cwd, line),
-                            data = line,
-                        })
-                        count = count + 1
-                    else
-                        process:kill()
-                        break
+                if not excluded then
+                    -- LPeg Matching Logic
+                    local allowed = (#include_matchers == 0)
+                    if not allowed then
+                        for i = 1, #include_matchers do
+                            if include_matchers[i]:match(line) then
+                                allowed = true
+                                break
+                            end
+                        end
+                    end
+                    if allowed then
+                        if count < 1000 then
+                            local path = vim.fs.joinpath(fd_opts.cwd, line)
+                            table.insert(items, {
+                                label = line,
+                                file = path,
+                                data = path,
+                            })
+                            count = count + 1
+                        else
+                            process:kill()
+                            break
+                        end
                     end
                 end
             end
@@ -138,10 +185,7 @@ function M.open(opts)
 
     return simple_selector.select(selector_opts, function(path)
         if path then
-            -- Note: path here is 'item.data', which is the relative path from FD.
-            -- We re-join with CWD to ensure the open command is absolute.
-            local full_path = vim.fs.joinpath(opts.cwd or vim.fn.getcwd(), path)
-            uitools.smart_open_file(full_path)
+            uitools.smart_open_file(path)
         end
     end)
 end

@@ -542,7 +542,11 @@ end
 function M.workspace_subcommands(args)
     _ensure_init()
     if #args == 0 then
-        return { "info", "create", "open", "close", "configure", "save", "find_files" }
+        if _ws_data then
+            return { "info", "create", "open", "close", "configure", "save", "find_files" }
+        else
+            return { "create", "open" }
+        end
     end
     return {}
 end

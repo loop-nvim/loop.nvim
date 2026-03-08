@@ -171,7 +171,7 @@ local function _update_preview(formatter, items, cur, buf)
         local antiflicker_timer = vim.defer_fn(function()
             vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
             vim.bo[buf].filetype = ""
-        end, 500)
+        end, 200)
         return function()
             antiflicker_timer = fntools.stop_and_close_timer(antiflicker_timer)
         end
@@ -204,7 +204,7 @@ local function _update_preview(formatter, items, cur, buf)
                 content_set = true
                 if not content then
                     vim.api.nvim_buf_set_lines(buf, 0, -1, false,
-                        { ("Failed to load preview (%s)"):format(tostring(load_err)) })
+                        { ("No preview (%s)"):format(tostring(load_err)) })
                     vim.bo[buf].filetype = "text"
                     return
                 end
@@ -272,17 +272,20 @@ local function _update_preview(formatter, items, cur, buf)
     vim.bo[buf].filetype = ""
 end
 
----@param max integer
----@param cur integer
----@param delta integer
+---@param max integer Total number of items
+---@param cur integer Current 1-based index
+---@param delta integer Direction (-1 for up, 1 for down)
 ---@return integer
 local function _move_wrap(max, cur, delta)
     if max <= 0 then return 1 end
-    -- Standard 1-based modulo wrapping
-    local result = ((cur - 1 + delta) % max) + 1
-    return result < 1 and max or result
+    local new_pos = cur + delta
+    if new_pos < 1 then
+        return max -- Wrap from top to bottom
+    elseif new_pos > max then
+        return 1   -- Wrap from bottom to top
+    end
+    return new_pos
 end
-
 ---@param max integer
 ---@param cur integer
 ---@param delta integer
@@ -411,7 +414,13 @@ local function _compute_horizontal_layout(items, opts)
     local height = math.floor(lines * height_ratio)
 
     if not ratio_mode and #items > 0 then
-        height = math.min(height, #items + 2)
+        local items_height = #items
+        for _, item in ipairs(items) do
+            if item.virt_lines then
+                items_height = items_height + #item.virt_lines
+            end
+        end
+        height = math.min(height, items_height)
     end
 
     height = clamp(height, math.floor(lines * 0.3), lines)
@@ -576,7 +585,6 @@ function M.select(opts, callback)
 
     local function close(result)
         if vimreisze_autocmd_id then
-            vim.notify("deleted resize auto cmd")
             vim.api.nvim_del_autocmd(vimreisze_autocmd_id)
             vimreisze_autocmd_id = nil
         end
@@ -633,13 +641,13 @@ function M.select(opts, callback)
         function()
             if not closed then
                 filtered = _fuzzy_filter(items, query)
-                cur = math.min(cur, #filtered)
+                cur =  math.max(1, math.min(cur, #filtered))
                 update_content()
             end
         end)
 
     local function on_vim_resize()
-        assert(not closed)
+        assert(not closed) -- import to detect bugs with non deleted auto cmds
         -- 1. Recalculate layout based on new screen dimensions
         layout = _compute_horizontal_layout(original_items, {
             has_preview = has_preview,
