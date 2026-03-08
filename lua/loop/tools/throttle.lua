@@ -47,4 +47,39 @@ function M.throttle_wrap(ms, fn)
     end
 end
 
+--- Fixed-Window Trailing Debounce:
+--- • The first call starts a timer and does NOT run immediately.
+--- • All calls during the `ms` wait period are completely ignored.
+--- • Once `ms` passes, the function executes once.
+--- • Only after execution is the system ready to accept a new trigger.
+---@param ms number The wait duration in milliseconds.
+---@param fn function The function to run.
+function M.trailing_fixed_wrap(ms, fn)
+    local is_pending = false
+
+    return function(...)
+        if is_pending then
+            -- We are already waiting for a previous trigger; ignore everything else.
+            return
+        end
+
+        is_pending = true
+        ---@diagnostic disable-next-line: undefined-field
+        local timer = uv.new_timer()
+        timer:start(ms, 0, function()
+            -- Move back to the Neovim main thread for safety
+            vim.schedule(function()
+                -- Cleanup timer handle
+                if timer then
+                    if not timer:is_closing() then timer:close() end
+                end
+                -- Reset state BEFORE running so the function itself
+                -- could technically trigger a new debounce if needed.
+                is_pending = false
+                fn()
+            end)
+        end)
+    end
+end
+
 return M

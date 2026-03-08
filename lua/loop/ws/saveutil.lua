@@ -64,7 +64,7 @@ end
 ---@param ws_config loop.WorkspaceConfig
 ---@return number
 function M.save_workspace_buffers(ws_dir, ws_config)
-	local filter = ws_config.save
+	local filter = ws_config.files
 	if not filter or not filter.include or #filter.include == 0 then
 		return 0
 	end

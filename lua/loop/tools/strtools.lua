@@ -21,11 +21,11 @@ end
 ---@param lines string[] list of strings (may contain newlines)
 ---@return string[] flattened list of strings (no embedded newlines)
 function M.prepare_buffer_lines(lines)
-    local out = {}
-    for _, line in ipairs(lines) do
-        vim.list_extend(out, vim.fn.split(line, "\n", true))
-    end
-    return out
+	local out = {}
+	for _, line in ipairs(lines) do
+		vim.list_extend(out, vim.fn.split(line, "\n", true))
+	end
+	return out
 end
 
 ---@param str string
@@ -33,10 +33,34 @@ end
 ---@return string preview
 ---@return boolean is_different
 function M.crop_string_for_ui(str, max_len)
-    assert(type(str) == 'string', str)
-    max_len = max_len > 2 and max_len or 2
-    if #str <= max_len then return str, false end
-    return str:sub(1, max_len - 1) .. "…", true
+	assert(type(str) == 'string', str)
+	max_len = max_len > 2 and max_len or 2
+	if #str <= max_len then return str, false end
+	return str:sub(1, max_len - 1) .. "…", true
+end
+
+---@param path string
+---@param max_len number
+---@return string preview
+---@return boolean is_different
+function M.smart_crop_path(path, max_len)
+	max_len = math.max(max_len, 0)
+	local len = #path
+	if len <= max_len then return path, false end
+	-- Pre-calculate limit to avoid repeated math
+	-- We need space for the ellipsis (1 byte)
+	local limit = max_len - 1
+	local sep = package.config:sub(1, 1)
+	-- Find the last separator within the allowed limit from the end
+	-- We look for the separator in the substring that fits
+	local tail = path:sub(-limit)
+	local sep_pos = tail:find(sep)
+	if sep_pos then
+		-- Return from the first separator found in the tail to the end
+		return "…" .. tail:sub(sep_pos), true
+	end
+	-- Fallback: If no separator in the tail, just do a hard crop
+	return "…" .. tail, true
 end
 
 ---Helper to check if a path matches a list of glob patterns
@@ -281,6 +305,5 @@ function M.format_grid(items, width)
 	end
 	return table.concat(lines, "\r\n")
 end
-
 
 return M

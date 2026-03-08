@@ -542,7 +542,7 @@ end
 function M.workspace_subcommands(args)
     _ensure_init()
     if #args == 0 then
-        return { "info", "create", "open", "close", "configure", "save" }
+        return { "info", "create", "open", "close", "configure", "save", "find_files" }
     end
     return {}
 end
@@ -572,6 +572,10 @@ function M.workspace_command(command)
     end
     if command == "save" then
         M.save_workspace_buffers()
+        return
+    end
+    if command == "find_files" then
+        M.find_workspace_files()
         return
     end
     vim.notify("Invalid command: " .. command)
@@ -781,6 +785,25 @@ function M.save_workspace_buffers(quiet)
         return false, 0, err_str
     end
     return true, wssaveutil.save_workspace_buffers(_ws_data.ws_dir, ws_config)
+end
+
+function M.find_workspace_files()
+    _ensure_init()
+    if not _ws_data then
+        _notify_no_ws()
+        return
+    end
+    local ws_config, config_err = _load_workspace_config(_ws_data.ws_dir)
+    if not ws_config then
+        vim.notify("Invalid workspace configuration")
+        return
+    end
+    local filepicker = require("loop.tools.filepicker")
+    filepicker.open({
+        cwd = _ws_data.ws_dir,
+        include_globs = ws_config.files.include,
+        exclude_globs = ws_config.files.exclude,
+    })
 end
 
 return M

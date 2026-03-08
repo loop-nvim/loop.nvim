@@ -11,15 +11,15 @@ local schema = {
         },
         workspace = {
             type = "object",
-            required = { "name", "save" },
-            ["x-order"] = { "name", "save" },
+            required = { "name", "files" },
+            ["x-order"] = { "name", "files" },
             properties = {
                 name = {
                     type = { "string" },
                     default = "",
                     description = "Workspace name",
                 },
-                save = {
+                files = {
                     type = { "object", "null" },
                     description = "File saving/filtering options",
                     default = {},

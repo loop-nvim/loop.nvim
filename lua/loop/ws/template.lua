@@ -1,7 +1,7 @@
 ---@type loop.WorkspaceConfig
 return {
     name = "",
-    save = {
+    files = {
         include = { "**/*" },
         exclude = { },
         follow_symlinks = false,
