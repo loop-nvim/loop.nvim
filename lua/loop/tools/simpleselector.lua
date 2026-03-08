@@ -1,7 +1,6 @@
 local filetools  = require("loop.tools.file")
 local fntools    = require('loop.tools.fntools')
 local throttle   = require('loop.tools.throttle')
-local strtools   = require('loop.tools.strtools')
 
 ---@mod loop.selector
 ---@brief Simple floating selector with fuzzy filtering and optional preview.
@@ -80,7 +79,7 @@ local function _update_list(items, cur, buf, win, list_width)
         -- ----------------------------
         -- Efficiently build display_label from label_chunks
         -- ----------------------------
-        lines[i] = prefix .. strtools.smart_crop_path((item.label:gsub("\n", "")), list_width - 3)
+        lines[i] = prefix .. (item.label:gsub("\n", ""))
         -- ----------------------------
         -- Inline highlights
         -- ----------------------------

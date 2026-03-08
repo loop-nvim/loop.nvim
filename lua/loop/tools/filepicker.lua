@@ -118,7 +118,7 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
                         if count < 1000 then
                             local path = vim.fs.joinpath(fd_opts.cwd, line)
                             table.insert(items, {
-                                label = line,
+                                label = strtools.smart_crop_path(line, fetch_opts.list_width),
                                 file = path,
                                 data = path,
                             })

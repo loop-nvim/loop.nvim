@@ -306,4 +306,36 @@ function M.format_grid(items, width)
 	return table.concat(lines, "\r\n")
 end
 
+--- Creates a line-buffered processor.
+---@param callback fun(lines: string[]) The function to call for complete lines.
+---@return fun(chunk: string) feed The function to call whenever new data arrives.
+function M.create_line_buffered_feed(callback)
+	local residue = ""
+	return function(chunk)
+		if not chunk or chunk == "" then
+			return
+		end
+
+		local data = residue .. chunk
+		local start = 1
+		local lines = {}
+
+		while true do
+			local newline_start, newline_end = data:find("\r?\n", start)
+			if not newline_start then
+				break
+			end
+
+			lines[#lines + 1] = data:sub(start, newline_start - 1)
+			start = newline_end + 1
+		end
+
+		residue = data:sub(start)
+
+		if #lines > 0 then
+			callback(lines)
+		end
+	end
+end
+
 return M
