@@ -798,7 +798,7 @@ end
 function JsonEditor:_get_new_value(path, schema, callback)
     ---@param type_choice string
     local function get_value(type_choice)
-        self:_request_value(path, "New array item", type_choice, schema, "",
+        self:_request_value(path, "Value", type_choice, schema, "",
             function(value)
                 callback(value)
             end)

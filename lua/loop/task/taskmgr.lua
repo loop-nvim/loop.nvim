@@ -151,7 +151,7 @@ end
 ---@return loop.Task[]|nil
 ---@return string[]|nil
 local function _load_tasks_file(filepath)
-    local loaded, contents_or_err = uitools.smart_read_file(filepath)
+    local loaded, contents_or_err = filetools.read_content(filepath)
     if not loaded then
         if not filetools.file_exists(filepath) then
             return {}, nil -- not an error

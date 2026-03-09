@@ -139,7 +139,7 @@ end
 ---@param filepath  string
 ---@return boolean success
 ---@return string content or error
-function M.smart_read_file(filepath)
+function M.read_file_or_buffer(filepath)
     local full_path = vim.fn.fnamemodify(filepath, ":p")
     local bufnr = vim.fn.bufnr(full_path, false) -- false = don't create
 

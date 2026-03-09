@@ -18,7 +18,7 @@ function M.load_variables(config_dir)
         return {}, nil
     end
 
-    local loaded, contents_or_err = uitools.smart_read_file(filepath)
+    local loaded, contents_or_err = filetools.read_content(filepath)
     if not loaded then
         return nil, { contents_or_err }
     end
