@@ -3,7 +3,8 @@ local M = {}
 local Process = require("loop.tools.Process")
 local uitools = require("loop.tools.uitools")
 local strtools = require("loop.tools.strtools")
-local simple_selector = require('loop.tools.simpleselector')
+local picker = require('loop.tools.picker')
+local filetools = require("loop.tools.file")
 
 ---@class loop.livegrep.opts
 ---@field cwd string? Optional directory to start search (defaults to getcwd)
@@ -55,7 +56,7 @@ end
 
 ---@param query string
 ---@param grep_opts loop.livegrep.opts
----@param fetch_opts loop.selector.AsyncFetcherOpts
+---@param fetch_opts loop.Picker.AsyncFetcherOpts
 ---@param callback fun(items:table[]?)
 ---@return fun() cancel
 local function async_grep_search(query, grep_opts, fetch_opts, callback)
@@ -146,7 +147,7 @@ function M.live_grep(opts)
     opts = opts or {}
     local cwd = opts.cwd or vim.fn.getcwd()
 
-    return simple_selector.select({
+    return picker.select({
         prompt = "Live Grep",
         file_preview = true,
         async_fetch = function(query, fetch_opts, callback)
@@ -158,7 +159,15 @@ function M.live_grep(opts)
                 cwd = cwd,
                 exclude_globs = opts.exclude_globs or {},
             }, fetch_opts, callback)
-        end
+        end,
+        async_preview = function(item_data, _, callback)
+            local filepath = item_data
+            local cancel_fn = filetools.async_load_text_file(filepath, { max_size = 50 * 1024 * 1024, timeout = 3000 },
+                function(load_err, content)
+                    callback(content)
+                end)
+            return cancel_fn
+        end,
     }, function(selected)
         if selected then
             -- Open file and jump to line/column

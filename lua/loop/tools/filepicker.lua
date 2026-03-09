@@ -3,7 +3,8 @@ local M = {}
 local Process = require("loop.tools.Process")
 local uitools = require("loop.tools.uitools")
 local strtools = require("loop.tools.strtools")
-local simple_selector = require('loop.tools.simpleselector')
+local filetools = require("loop.tools.file")
+local picker = require('loop.tools.picker')
 
 ---@class loop.filepicker.fdopts
 ---@field cwd string The root directory for the search
@@ -59,7 +60,7 @@ end
 
 ---@param query string User input for literal string matching
 ---@param fd_opts loop.filepicker.fdopts Configuration for fd and filtering
----@param fetch_opts loop.selector.AsyncFetcherOpts Layout constraints from the UI
+---@param fetch_opts loop.Picker.AsyncFetcherOpts Layout constraints from the UI
 ---@param callback fun(items:loop.SelectorItem[]?) Called when new items are ready
 ---@return fun() cancel Function to kill the underlying process
 local function async_fd_search(query, fd_opts, fetch_opts, callback)
@@ -117,7 +118,6 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
                         local path = vim.fs.joinpath(fd_opts.cwd, line)
                         table.insert(items, {
                             label = strtools.smart_crop_path(line, fetch_opts.list_width),
-                            file = path,
                             data = path,
                         })
                         count = count + 1
@@ -179,7 +179,7 @@ end
 function M.open(opts)
     opts = opts or {}
 
-    ---@type loop.selector.opts
+    ---@type loop.Picker.opts
     local selector_opts = {
         prompt = "Files",
         file_preview = true,
@@ -196,10 +196,18 @@ function M.open(opts)
                 exclude_globs = opts.exclude_globs or { ".git", "node_modules", "target" },
             }
             return async_fd_search(query, fd_opts, fetch_opts, callback)
+        end,
+        async_preview = function(item_data, opts, callback)
+            local filepath = item_data
+            local cancel_fn = filetools.async_load_text_file(filepath, { max_size = 50 * 1024 * 1024, timeout = 3000 },
+                function(load_err, content)
+                    callback(content)
+                end)
+            return cancel_fn
         end
     }
 
-    return simple_selector.select(selector_opts, function(path)
+    return picker.select(selector_opts, function(path)
         if path then
             uitools.smart_open_file(path)
         end
