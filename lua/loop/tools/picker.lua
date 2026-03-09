@@ -19,21 +19,41 @@ local Spinner    = require("loop.tools.Spinner")
 
 local M          = {}
 
-local NS_PREVIEW = vim.api.nvim_create_namespace("LoopSelectorPreview")
+local NS_CURSOR  = vim.api.nvim_create_namespace("LoopSelectorCursor")
 local NS_VIRT    = vim.api.nvim_create_namespace("LoopSelectorVirtText")
 local NS_SPINNER = vim.api.nvim_create_namespace("LoopSelectorSpinner")
+local NS_PREVIEW = vim.api.nvim_create_namespace("LoopSelectorPreview")
 
 --------------------------------------------------------------------------------
 -- Utility functions
 --------------------------------------------------------------------------------
 
+---@param lwin number
+---@param lbuf integer
+local function _render_cursor(lwin, lbuf)
+    vim.api.nvim_buf_clear_namespace(lbuf, NS_CURSOR, 0, -1)
+    if vim.api.nvim_buf_line_count(lbuf) == 1 then
+        local first = vim.api.nvim_buf_get_lines(lbuf, 0, 1, false)[1]
+        if first == "" then
+            return
+        end
+    end
+    local row = vim.api.nvim_win_get_cursor(lwin)[1]
+    vim.api.nvim_buf_set_extmark(lbuf, NS_CURSOR, row - 1, 0, {
+        virt_text = { { "> ", "Special" } },
+        virt_text_pos = "overlay",
+        priority = 200,
+    })
+end
+
+---@param lwin number
+---@param lbuf number
 ---@param pbuf number
----@param total number
----@param cur number
-local function _update_pos_hint(pbuf, total, cur)
+local function _update_pos_hint(lwin, lbuf, pbuf)
     vim.api.nvim_buf_clear_namespace(pbuf, NS_VIRT, 0, -1)
-    -- Right-padded virtual count (Telescope-style)
-    if total > 0 then
+    local cur = vim.api.nvim_win_get_cursor(lwin)[1]
+    local total = vim.api.nvim_buf_line_count(lbuf)
+    if cur and total > 0 then
         local count_text = string.format("%d/%d", cur, total)
         -- Set virtual text on the first line of the list window (prompt line is usually separate)
         vim.api.nvim_buf_set_extmark(pbuf, NS_VIRT, 0, 0, {
@@ -52,21 +72,23 @@ local function _clear_list(buf)
 end
 
 ---@param items loop.Picker.Item[]
----@param cur integer
----@param buf integer
----@param win integer
----@param list_width number
-local function _add_to_list(items, cur, buf, win, list_width)
+---@param lwin number
+---@param lbuf integer
+local function _add_to_list(items, lwin, lbuf)
     local lines = {}
     local extmarks = {}
     local virt_extmarks = {}
-    local prefix_space = "  "
+    local prefix = "  "
 
-    local start = vim.api.nvim_buf_line_count(buf)
-    cur = cur - start
+    local start = vim.api.nvim_buf_line_count(lbuf)
+    if start == 1 then
+        local first = vim.api.nvim_buf_get_lines(lbuf, 0, 1, false)[1]
+        if first == "" then
+            start = 0
+        end
+    end
 
     for i, item in ipairs(items) do
-        local prefix = (i == cur) and "> " or prefix_space
         lines[i] = prefix .. (item.label:gsub("\n", ""))
 
         local row = start + i - 1
@@ -93,7 +115,7 @@ local function _add_to_list(items, cur, buf, win, list_width)
         if item.virt_lines and #item.virt_lines > 0 then
             local vlines = {}
             for _, line in ipairs(item.virt_lines) do
-                local vl = { { prefix_space } }
+                local vl = { { prefix } }
                 vim.list_extend(vl, line)
                 table.insert(vlines, vl)
             end
@@ -106,33 +128,19 @@ local function _add_to_list(items, cur, buf, win, list_width)
     end
 
     -- Append instead of replace
-    vim.api.nvim_buf_set_lines(buf, start, start, false, lines)
+    local cursor = vim.api.nvim_win_get_cursor(lwin)
+    vim.api.nvim_buf_set_lines(lbuf, start, start, false, lines)
+    vim.api.nvim_win_set_cursor(lwin, cursor)
 
     for _, mark in ipairs(extmarks) do
-        vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col_start, {
+        vim.api.nvim_buf_set_extmark(lbuf, NS_VIRT, mark.row, mark.col_start, {
             end_col  = mark.col_end,
             hl_group = mark.hl_group,
         })
     end
 
     for _, mark in ipairs(virt_extmarks) do
-        vim.api.nvim_buf_set_extmark(buf, NS_VIRT, mark.row, mark.col, mark.opts)
-    end
-
-    if vim.api.nvim_win_is_valid(win) then
-        local target_line = math.max(cur, 1)
-        vim.api.nvim_win_set_cursor(win, { target_line, 0 })
-
-        vim.api.nvim_win_call(win, function()
-            local win_height = vim.api.nvim_win_get_height(0)
-            local current_winline = vim.fn.winline()
-
-            if current_winline <= 1 then
-                vim.cmd("normal! zt")
-            elseif current_winline >= win_height then
-                vim.cmd("normal! zb")
-            end
-        end)
+        vim.api.nvim_buf_set_extmark(lbuf, NS_VIRT, mark.row, mark.col, mark.opts)
     end
 end
 
@@ -374,9 +382,7 @@ function M.select(opts, callback)
     -- State
     --------------------------------------------------------------------------
 
-    local pending_items = {} ---@type loop.Picker.Item[]
     local items_data = {} ---@type any[]
-    local cur = 0
     local closed = false
     local async_preview_cancel
     local async_fetch_cancel
@@ -449,11 +455,30 @@ function M.select(opts, callback)
         end)
     end
 
-    local function move_cursor(new_cur)
-        if new_cur == cur then return end
-        cur = new_cur
+    local function get_cursor()
+        return vim.api.nvim_win_get_cursor(lwin)[1]
+    end
+
+    local function move_cursor(cur, force)
+        if not force then
+            local pos = vim.api.nvim_win_get_cursor(lwin)
+            if cur == pos[1] then return end
+        end
+        vim.api.nvim_win_set_cursor(lwin, { cur, 0 })
+        _render_cursor(lwin, lbuf)
+
+        vim.api.nvim_win_call(lwin, function()
+            local win_height = vim.api.nvim_win_get_height(0)
+            local current_winline = vim.fn.winline()
+
+            if current_winline <= 1 then
+                vim.cmd("normal! zt")
+            elseif current_winline >= win_height then
+                vim.cmd("normal! zb")
+            end
+        end)
+
         if vbuf and vim.api.nvim_buf_is_valid(vbuf) then
-            local item = #items_data[cur]
             if async_preview_cancel then
                 async_preview_cancel()
                 async_preview_cancel = nil
@@ -473,26 +498,6 @@ function M.select(opts, callback)
             end
         end
     end
-
-    local append_panding = throttle.trailing_fixed_wrap(100,
-        function()
-            if closed then return end
-
-            for _, item in ipairs(pending_items) do
-                table.insert(items_data, item.data)
-            end
-
-            if not cur or cur == 0 then
-                move_cursor(1)
-            end
-
-            _add_to_list(pending_items, cur, lbuf, lwin, layout.list_width)
-            pending_items = {}
-
-            if vim.api.nvim_buf_is_valid(pbuf) then
-                _update_pos_hint(pbuf, #items_data, cur)
-            end
-        end)
 
     local function on_vim_resize()
         assert(not closed) -- import to detect bugs with non deleted auto cmds
@@ -537,35 +542,35 @@ function M.select(opts, callback)
     local key_opts = { buffer = pbuf, nowait = true, silent = true }
 
     vim.keymap.set("i", "<CR>", function()
-        close(items_data[cur])
+        close(items_data[get_cursor()])
     end, key_opts)
 
     vim.keymap.set("i", "<Esc>", function() close(nil) end, key_opts)
     vim.keymap.set("i", "<C-c>", function() close(nil) end, key_opts)
 
     vim.keymap.set("i", "<Down>", function()
-        move_cursor(_move_wrap(#items_data, cur, 1))
+        move_cursor(_move_wrap(#items_data, get_cursor(), 1))
     end, key_opts)
 
     vim.keymap.set("i", "<C-n>", function()
-        move_cursor(_move_wrap(#items_data, cur, 1))
+        move_cursor(_move_wrap(#items_data, get_cursor(), 1))
     end, key_opts)
 
     vim.keymap.set("i", "<Up>", function()
-        move_cursor(_move_wrap(#items_data, cur, -1))
+        move_cursor(_move_wrap(#items_data, get_cursor(), -1))
     end, key_opts)
 
     vim.keymap.set("i", "<C-p>", function()
-        move_cursor(_move_wrap(#items_data, cur, -1))
+        move_cursor(_move_wrap(#items_data, get_cursor(), -1))
     end, key_opts)
 
     local page = math.max(1, math.floor(layout.list_height / 2))
     vim.keymap.set("i", "<C-d>", function()
-        move_cursor(_move_clamp(#items_data, cur, page))
+        move_cursor(_move_clamp(#items_data, get_cursor(), page))
     end, key_opts)
 
     vim.keymap.set("i", "<C-u>", function()
-        move_cursor(_move_clamp(#items_data, cur, -page))
+        move_cursor(_move_clamp(#items_data, get_cursor(), -page))
     end, key_opts)
 
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -587,9 +592,13 @@ function M.select(opts, callback)
             end
 
             local query = sanitized
-            items_data = {}
-            pending_items = {}
-            _clear_list(lbuf)
+
+            local clear_items = function()
+                items_data = {}
+                _clear_list(lbuf)
+                move_cursor(1, true)
+                _update_pos_hint(lwin, lbuf, pbuf)
+            end
 
             -- Async incremental fetch
             if async_fetch_cancel then
@@ -598,8 +607,17 @@ function M.select(opts, callback)
             end
             stop_spinner()
 
+            if query == "" then
+                clear_items()
+                return
+            end
+
             async_fetch_context = async_fetch_context + 1
+
+            ---@type number?
             local context = async_fetch_context
+            local waiting_first = true
+
             start_spinner()
             async_fetch_cancel = opts.async_fetch(query, {
                     list_width = math.max(1, layout.list_width - 3),
@@ -607,13 +625,25 @@ function M.select(opts, callback)
                 },
                 function(new_items)
                     if closed or context ~= async_fetch_context then return end
+                    if waiting_first then
+                        waiting_first = false
+                        clear_items()
+                    end
                     if new_items == nil then
+                        context = nil
                         stop_spinner()
                         return
                     end
+                    local was_empty = #items_data == 0
                     _process_labels(new_items)
-                    vim.list_extend(pending_items, new_items)
-                    append_panding()
+                    for _, item in ipairs(new_items) do
+                        table.insert(items_data, item.data)
+                    end
+                    _add_to_list(new_items, lwin, lbuf)
+                    if was_empty then
+                        move_cursor(1, true)
+                    end
+                    _update_pos_hint(lwin, lbuf, pbuf)
                 end)
         end,
     })
