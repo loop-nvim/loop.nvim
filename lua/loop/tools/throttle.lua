@@ -82,4 +82,28 @@ function M.trailing_fixed_wrap(ms, fn)
     end
 end
 
+-- Leading + trailing debounce
+-- • First call runs immediately
+-- • Subsequent calls reset the timer
+-- • When `ms` passes without new calls, fn runs again
+function M.leading_idle_debounce(ms, fn)
+    ---@diagnostic disable-next-line: undefined-field
+    local timer = uv.new_timer()
+    local cooling = false
+    return function()
+        if not cooling then
+            cooling = true
+            fn()
+        end
+        timer:stop()
+        timer:start(ms, 0, function()
+            vim.schedule(function()
+                cooling = false
+                fn()
+            end)
+        end)
+    end
+end
+
+
 return M

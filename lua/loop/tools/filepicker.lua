@@ -197,11 +197,13 @@ function M.open(opts)
             }
             return async_fd_search(query, fd_opts, fetch_opts, callback)
         end,
-        async_preview = function(item_data, opts, callback)
+        async_preview = function(item_data, preview_opts, callback)
             local filepath = item_data
             local cancel_fn = filetools.async_load_text_file(filepath, { max_size = 50 * 1024 * 1024, timeout = 3000 },
                 function(load_err, content)
-                    callback(content)
+                    callback(content, {
+                        filepath = filepath
+                    })
                 end)
             return cancel_fn
         end

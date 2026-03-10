@@ -1,5 +1,6 @@
 local Spinner    = require("loop.tools.Spinner")
 local class      = require("loop.tools.class")
+local fntools    = require("loop.tools.fntools")
 
 ---@mod loop.picker
 ---@brief Floating async picker with fuzzy filtering and optional preview.
@@ -10,9 +11,10 @@ local M          = {}
 -- Namespaces
 --------------------------------------------------------------------------------
 
-local NS_CURSOR  = vim.api.nvim_create_namespace("LoopSelectorCursor")
-local NS_VIRT    = vim.api.nvim_create_namespace("LoopSelectorVirtText")
-local NS_SPINNER = vim.api.nvim_create_namespace("LoopSelectorSpinner")
+local NS_CURSOR  = vim.api.nvim_create_namespace("LoopPlugin_PickerCursor")
+local NS_VIRT    = vim.api.nvim_create_namespace("LoopPlugin_PickerVirtText")
+local NS_SPINNER = vim.api.nvim_create_namespace("LoopPlugin_PickerSpinner")
+local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 
 --------------------------------------------------------------------------------
 -- Types
@@ -34,12 +36,16 @@ local NS_SPINNER = vim.api.nvim_create_namespace("LoopSelectorSpinner")
 ---@field preview_width number
 ---@field preview_height number
 
+---@alias loop.Picker.Fetcher fun(query:string):loop.Picker.Item[]?,number?
 ---@alias loop.Picker.AsyncFetcher fun(query:string,opts:loop.Picker.AsyncFetcherOpts,callback:fun(new_items:loop.Picker.Item[]?)):fun()?
----@alias loop.Picker.AsyncPreviewLoader fun(data:any,opts:loop.Picker.AsyncPreviewOpts,callback:fun(preview:string?)):fun()?
+
+---@alias loop.Picker.AsyncPreviewInfo {filetype:string?,filepath:string?,lnum:number?,col:number?}
+---@alias loop.Picker.AsyncPreviewLoader fun(data:any,opts:loop.Picker.AsyncPreviewOpts,callback:fun(preview:string?,info:loop.Picker.AsyncPreviewInfo?)):fun()?
 
 ---@class loop.Picker.opts
 ---@field prompt string
----@field async_fetch loop.Picker.AsyncFetcher
+---@field fetch loop.Picker.Fetcher?
+---@field async_fetch loop.Picker.AsyncFetcher?
 ---@field async_preview loop.Picker.AsyncPreviewLoader?
 ---@field height_ratio number?
 ---@field width_ratio number?
@@ -72,7 +78,7 @@ local NS_SPINNER = vim.api.nvim_create_namespace("LoopSelectorSpinner")
 ---@param min number
 ---@param max number
 ---@return number
-local function clamp(v, min, max)
+local function _clamp(v, min, max)
     return math.max(min, math.min(max, v))
 end
 
@@ -82,21 +88,21 @@ end
 
 ---@param opts {has_preview:boolean,height_ratio:number?,width_ratio:number?,preview_ratio:number?}
 ---@return loop.Picker.Layout
-local function compute_layout(opts)
+local function _compute_layout(opts)
     local cols = vim.o.columns
     local lines = vim.o.lines
 
     local has_preview = opts.has_preview
     local spacing = has_preview and 2 or 0
 
-    local width = math.floor(cols * clamp(opts.width_ratio or .8, 0, 1))
+    local width = math.floor(cols * _clamp(opts.width_ratio or .8, 0, 1))
 
-    local list_ratio = clamp(opts.preview_ratio or (has_preview and .5 or 1), 0, 1)
+    local list_ratio = _clamp(opts.preview_ratio or (has_preview and .5 or 1), 0, 1)
     local list_width = math.floor(width * list_ratio)
 
-    local prev_width = has_preview and clamp(width - list_width - spacing, 1, width) or 0
+    local prev_width = has_preview and _clamp(width - list_width - spacing, 1, width) or 0
 
-    local height = math.floor(lines * clamp(opts.height_ratio or .7, 0, 1))
+    local height = math.floor(lines * _clamp(opts.height_ratio or .7, 0, 1))
 
     local total_height = height + 3
 
@@ -140,9 +146,11 @@ end
 ---@field spinner loop.tools.Spinner|nil
 ---@field closed boolean
 ---@field items_data any[]
----@field fetch_context integer
+---@field async_fetch_context number
 ---@field async_fetch_cancel fun()|nil
+---@field async_preview_context number
 ---@field async_preview_cancel fun()|nil
+---@field preview_timer table|nil
 local Picker = class()
 
 --------------------------------------------------------------------------------
@@ -159,10 +167,12 @@ function Picker:init(opts, callback)
 
     self.items_data = {}
 
-    self.fetch_context = 0
     self.closed = false
 
+    self.async_fetch_context = 0
     self.async_fetch_cancel = nil
+
+    self.async_preview_context = 0
     self.async_preview_cancel = nil
 
     self.spinner = nil
@@ -178,7 +188,7 @@ end
 function Picker:setup_ui()
     local opts = self.opts
 
-    self.layout = compute_layout {
+    self.layout = _compute_layout {
         has_preview = self.has_preview,
         height_ratio = opts.height_ratio,
         width_ratio = opts.width_ratio,
@@ -197,6 +207,16 @@ function Picker:setup_ui()
             vim.bo[b].bufhidden = "wipe"
             vim.bo[b].swapfile = false
             vim.bo[b].undolevels = -1
+            vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+                buffer = b,
+                once = true,
+                callback = function(ev)
+                    if (b == self.pbuf) then self.pbuf = -1 end
+                    if (b == self.lbuf) then self.lbuf = -1 end
+                    if (b == self.vbuf) then self.vbuf = -1 end
+                    vim.schedule(function() self:close() end)
+                end,
+            })
         end
     end
 
@@ -232,7 +252,7 @@ function Picker:setup_ui()
         vim.wo[self.vwin].wrap = true
     end
 
-    local winhl = "NormalFloat:Normal,FloatBorder:LoopTransparentBorder,CursorLine:Visual"
+    local winhl = "NormalFloat:Normal,FloatBorder:LoopTransparentBorder"
     for _, w in ipairs({ self.pwin, self.lwin, self.vwin }) do
         if w then
             vim.wo[w].winhighlight = winhl
@@ -302,7 +322,8 @@ end
 
 ---@param row integer
 ---@param force boolean?
-function Picker:move_cursor(row, force)
+---@param clamp boolean?
+function Picker:move_cursor(row, force, clamp)
     if not force then
         if row == self:get_cursor() then return end
     end
@@ -310,8 +331,12 @@ function Picker:move_cursor(row, force)
     local total = #self.items_data
     if total == 0 then return end
 
-    if row > total then row = 1 end
-    if row < 1 then row = total end
+    if clamp then
+        row = _clamp(row, 1, total)
+    else
+        if row > total then row = 1 end
+        if row < 1 then row = total end
+    end
 
     vim.api.nvim_win_set_cursor(self.lwin, { row, 0 })
 
@@ -325,6 +350,7 @@ end
 
 ---@return nil
 function Picker:update_preview()
+    if self.closed then return end
     if not self.vbuf then return end
 
     if self.async_preview_cancel then
@@ -332,12 +358,26 @@ function Picker:update_preview()
         self.async_preview_cancel = nil
     end
 
+    -- Cancel any pending "clear" timer
+    self.preview_timer = fntools.stop_and_close_timer(self.preview_timer)
+
     local data = self.items_data[self:get_cursor()]
 
     if not data then
-        vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
+        -- Defer clearing the preview window to avoid flicker during fast scrolls
+        ---@diagnostic disable-next-line: undefined-field
+        local timer = vim.loop.new_timer()
+        self.preview_timer = timer
+        timer:start(100, 0, vim.schedule_wrap(function()
+            if self.closed then return end
+            vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
+            self.preview_timer = nil
+        end))
         return
     end
+
+    self.async_preview_context = self.async_preview_context + 1
+    local context = self.async_preview_context
 
     self.async_preview_cancel = self.opts.async_preview(
         data,
@@ -345,14 +385,42 @@ function Picker:update_preview()
             preview_width = self.layout.prev_width,
             preview_height = self.layout.prev_height
         },
-        function(preview)
-            local lines = preview and vim.split(preview, "\n") or {}
+        function(preview, info)
+            if self.closed or context ~= self.async_preview_context then return end
 
+            local lines = preview and vim.split(preview, "\n") or {}
             if vim.api.nvim_buf_is_valid(self.vbuf) then
                 vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, lines)
+                if info then
+                    -- Set the filetype for syntax highlighting
+                    if info.filetype then
+                        vim.bo[self.vbuf].filetype = info.filetype
+                    elseif info.filepath then
+                        local ft = vim.filetype.match({ filename = info.filepath })
+                        if ft then
+                            vim.bo[self.vbuf].filetype = ft
+                        end
+                    end
+                    if info.lnum then
+                        local lnum = _clamp(info.lnum, 1, #lines)
+                        vim.api.nvim_win_set_cursor(self.vwin, { lnum, 0 })
+                        vim.api.nvim_win_call(self.vwin, function()
+                            vim.cmd("normal! zz") -- center the target line
+                        end)
+                        -- Highlight the target line fully (works for single-line too)
+                        vim.api.nvim_buf_clear_namespace(self.vbuf, NS_PREVIEW, 0, -1)
+                        vim.api.nvim_buf_set_extmark(self.vbuf, NS_PREVIEW, lnum - 1, 0, {
+                            end_row = lnum, -- makes it "multiline" → enables hl_eol
+                            hl_group = "CursorLine",
+                            hl_eol = true,
+                            hl_mode = "blend",
+                        })
+                    end
+                end
             end
         end
     )
+    assert(type(self.async_preview_cancel) == "function")
 end
 
 --------------------------------------------------------------------------------
@@ -404,6 +472,7 @@ function Picker:clear_list()
         vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
     end
 
+    vim.wo[self.lwin].cursorline = false
     self:render_ui()
 end
 
@@ -483,6 +552,8 @@ function Picker:add_new_lines(items)
         vim.api.nvim_buf_set_extmark(self.lbuf, NS_VIRT, mark.row, mark.col, mark.opts)
     end
 
+    vim.wo[self.lwin].cursorline = true
+
     -- 5. Final validation
     local final_count = vim.api.nvim_buf_line_count(self.lbuf)
     assert(#self.items_data == final_count, string.format("Data (%d) != Buf (%d)", #self.items_data, final_count))
@@ -501,34 +572,40 @@ function Picker:run_fetch(query)
 
     self:stop_spinner()
 
-    if query == "" then
+    if self.opts.fetch then
         self:clear_list()
+        local items, initial = self.opts.fetch(query)
+        self:add_new_lines(items)
+        if #self.items_data > 0 then
+            self:move_cursor(initial or 1, true, true)
+        else
+            self:render_ui()
+        end
         return
     end
 
-    self.fetch_context = self.fetch_context + 1
-    local context = self.fetch_context
+    self.async_fetch_context = self.async_fetch_context + 1
+    local context = self.async_fetch_context
 
     local waiting_first = true
-
-    self:start_spinner()
+    local complete = false
 
     self.async_fetch_cancel = self.opts.async_fetch(
         query,
         {
-            list_width = self.layout.list_width,
+            list_width = math.max(1, self.layout.list_width - 2),
             list_height = self.layout.list_height
         },
         function(new_items)
-            if self.closed or context ~= self.fetch_context then return end
+            if self.closed or context ~= self.async_fetch_context then return end
 
             if waiting_first then
                 waiting_first = false
-                self.items_data = {}
-                vim.api.nvim_buf_set_lines(self.lbuf, 0, -1, false, {})
+                self:clear_list()
             end
 
             if new_items == nil then
+                complete = true
                 self:stop_spinner()
                 return
             end
@@ -538,9 +615,16 @@ function Picker:run_fetch(query)
 
             if #self.items_data == #new_items and #self.items_data > 0 then
                 self:move_cursor(1, true)
+            else
+                self:render_ui()
             end
         end
     )
+    assert(type(self.async_fetch_cancel) == "function")
+
+    if not complete then
+        self:start_spinner()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -554,6 +638,8 @@ function Picker:close(result)
 
     self:stop_spinner()
 
+    self.preview_timer = fntools.stop_and_close_timer(self.preview_timer)
+
     if self.async_fetch_cancel then self.async_fetch_cancel() end
     if self.async_preview_cancel then self.async_preview_cancel() end
 
@@ -563,6 +649,7 @@ function Picker:close(result)
         end
     end
 
+    vim.cmd("stopinsert!")
     if result ~= nil then
         vim.schedule(function()
             self.callback(result)
@@ -600,14 +687,22 @@ function Picker:setup_input()
         self:move_cursor(self:get_cursor() - 1)
     end, key_opts)
 
+    vim.keymap.set("i", "<C-d>", function()
+        local cur = self:get_cursor()
+        local step = math.floor(self.layout.list_height / 2)
+        self:move_cursor(cur + step, false, true)
+    end, key_opts)
+
+    vim.keymap.set("i", "<C-u>", function()
+        local cur = self:get_cursor()
+        local step = math.floor(self.layout.list_height / 2)
+        self:move_cursor(cur - step, false, true)
+    end, key_opts)
+
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
         buffer = self.pbuf,
         callback = function()
             local query = vim.api.nvim_buf_get_lines(self.pbuf, 0, 1, false)[1] or ""
-            if query == "" then
-                self:clear_list()
-                return
-            end
             self:run_fetch(query)
         end
     })
@@ -619,7 +714,7 @@ end
 
 function Picker:start()
     self:setup_input()
-    self:render_ui()
+    self:run_fetch("")
 
     vim.api.nvim_set_current_win(self.pwin)
 
@@ -635,10 +730,9 @@ end
 ---@param opts loop.Picker.opts
 ---@param callback loop.Picker.Callback
 function M.select(opts, callback)
-    assert(type(opts.async_fetch) == "function")
+    assert(opts.fetch or opts.async_fetch)
 
     local picker = Picker:new(opts, callback)
-
     picker:start()
 end
 

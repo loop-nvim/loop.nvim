@@ -90,9 +90,11 @@ local function async_grep_search(query, grep_opts, fetch_opts, callback)
                     label_chunks = { { vim.fn.trim(text, "", 0), nil } },
                     virt_lines = { { { location, "Comment" } } },
                     file = abs_path,
-                    lnum = tonumber(lnum),
-                    col = tonumber(col),
-                    data = abs_path
+                    data = {
+                        filepath = abs_path,
+                        lnum = tonumber(lnum),
+                        col = tonumber(col),
+                    }
                 }
                 table.insert(items, item)
                 count = count + 1
@@ -161,10 +163,14 @@ function M.live_grep(opts)
             }, fetch_opts, callback)
         end,
         async_preview = function(item_data, _, callback)
-            local filepath = item_data
-            local cancel_fn = filetools.async_load_text_file(filepath, { max_size = 50 * 1024 * 1024, timeout = 3000 },
+            local data = item_data
+            local cancel_fn = filetools.async_load_text_file(data.filepath, { max_size = 50 * 1024 * 1024, timeout = 3000 },
                 function(load_err, content)
-                    callback(content)
+                    callback(content, {
+                         filepath = data.filepath,
+                         lnum = data.lnum,
+                         col = data.col
+                    })
                 end)
             return cancel_fn
         end,
