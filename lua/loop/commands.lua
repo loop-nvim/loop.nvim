@@ -3,6 +3,7 @@ local M = {}
 -- Dependencies
 local workspace = require("loop.workspace")
 local strtools = require('loop.tools.strtools')
+local selector = require('loop.tools.selector')
 
 function M.complete(arg_lead, cmd_line)
     local function filter(strs)
@@ -26,45 +27,54 @@ function M.complete(arg_lead, cmd_line)
         local cmd = args[2]
         local rest = { unpack(args, 3) }
         rest[#rest] = nil
-            return filter(workspace.get_subcommands(cmd, rest))
+        return filter(workspace.get_subcommands(cmd, rest))
     end
     return {}
 end
+
 ---@param prefix string[]   -- e.g. { "task" }
----@param out loop.tools.Cmd[]
+---@param out string[]
 local function _collect_commands(prefix, out)
-    local cmds = workspace.get_subcommands(prefix[1], { unpack(prefix, 2) })
+    local cmds = workspace.get_subcommands(prefix[1], { unpack(prefix, 2) }, true)
 
     for _, cmd in ipairs(cmds or {}) do
         local parts = vim.list_extend(vim.deepcopy(prefix), { cmd })
-        local vimcmd = "Loop " .. table.concat(parts, " ")
-
-        table.insert(out, {
-            vimcmd = vimcmd,
-        })
-
+        table.insert(out, "Loop " .. table.concat(parts, " "))
         -- recurse to catch deeper subcommands
         _collect_commands(parts, out)
     end
 end
 
 function M.select_command()
-    ---@type loop.tools.Cmd[]
+    ---@type string[]
     local all_cmds = {}
 
     -- Top-level commands
     for _, cmd in ipairs(workspace.get_commands()) do
-        local vimcmd = "Loop " .. cmd
-
-        table.insert(all_cmds, {
-            vimcmd = vimcmd,
-        })
-
+        table.insert(all_cmds, "Loop " .. cmd)
         -- Subcommands (recursive)
         _collect_commands({ cmd }, all_cmds)
     end
 
-    require("loop.tools.cmdmenu").select_and_run_command(all_cmds)
+    local choices = {}
+    for _, cmd in ipairs(all_cmds) do
+        ---@type loop.SelectorItem
+        local item = {
+            label = cmd,
+            data = cmd,
+        }
+        table.insert(choices, item)
+    end
+    selector.select({
+            prompt = "Select command",
+            items = choices,
+        },
+        function(cmd)
+            if cmd then
+                vim.cmd(cmd)
+            end
+        end
+    )
 end
 
 -----------------------------------------------------------
@@ -73,7 +83,6 @@ end
 
 ---@param opts vim.api.keyset.create_user_command.command_args
 function M.dispatch(opts)
-
     local args = strtools.split_shell_args(opts.args)
     local subcmd = args[1]
 

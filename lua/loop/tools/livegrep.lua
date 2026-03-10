@@ -10,6 +10,7 @@ local filetools = require("loop.tools.file")
 ---@field cwd string? Optional directory to start search (defaults to getcwd)
 ---@field include_globs string[]? Optional patterns to filter visible files
 ---@field exclude_globs string[]? Optional patterns for fd to skip (e.g. .git, node_modules)
+---@field history_provider loop.Picker.QueryHistoryProvider?
 ---@field max_results number?
 
 ---@param query string
@@ -119,7 +120,9 @@ local function async_grep_search(query, grep_opts, fetch_opts, callback)
             count = count + 1
 
             if count >= max_results then
-                process:kill()
+                process:kill({
+                    stop_read = true
+                })
                 read_stop = true
                 break
             end
@@ -157,7 +160,11 @@ local function async_grep_search(query, grep_opts, fetch_opts, callback)
     end
 
     return function()
-        if process then process:kill() end
+        if process then
+            process:kill({
+                stop_read = true
+            })
+        end
     end
 end
 
@@ -170,6 +177,7 @@ function M.open(opts)
     return picker.select({
         prompt = "Live Grep",
         file_preview = true,
+        history_provider = opts.history_provider,
         async_fetch = function(query, fetch_opts, callback)
             if not query or #query < 1 then -- Optimization: don't grep for 1 char
                 callback()
@@ -178,6 +186,7 @@ function M.open(opts)
             return async_grep_search(query, {
                 cwd = cwd,
                 exclude_globs = opts.exclude_globs or {},
+                max_results = opts.max_results,
             }, fetch_opts, callback)
         end,
         async_preview = function(item_data, _, callback)

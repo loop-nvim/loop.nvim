@@ -36,6 +36,10 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 ---@field preview_width number
 ---@field preview_height number
 
+---@class loop.Picker.QueryHistoryProvider
+---@field load fun():string[]
+---@field store fun(hist:string[])?
+
 ---@alias loop.Picker.Fetcher fun(query:string):loop.Picker.Item[]?,number?
 ---@alias loop.Picker.AsyncFetcher fun(query:string,opts:loop.Picker.AsyncFetcherOpts,callback:fun(new_items:loop.Picker.Item[]?)):fun()?
 
@@ -47,6 +51,7 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 ---@field fetch loop.Picker.Fetcher?
 ---@field async_fetch loop.Picker.AsyncFetcher?
 ---@field async_preview loop.Picker.AsyncPreviewLoader?
+---@field history_provider loop.Picker.QueryHistoryProvider?
 ---@field height_ratio number?
 ---@field width_ratio number?
 ---@field preview_ratio number?
@@ -151,7 +156,10 @@ end
 ---@field async_preview_context number
 ---@field async_preview_cancel fun()|nil
 ---@field preview_timer table|nil
----@field self.resize_augroup number?
+---@field resize_augroup number?
+---@field current_query string?
+---@field history string[]
+---@field history_idx number
 local Picker = class()
 
 --------------------------------------------------------------------------------
@@ -177,6 +185,15 @@ function Picker:init(opts, callback)
     self.async_preview_cancel = nil
 
     self.spinner = nil
+
+    self.history = {}
+    self.history_idx = 0
+
+    if self.opts.history_provider then
+        self.history = self.opts.history_provider.load() or {}
+        -- Start index at length + 1 (the "empty/new" entry)
+        self.history_idx = #self.history + 1
+    end
 
     self:setup_ui()
 end
@@ -653,6 +670,8 @@ end
 
 ---@param query string
 function Picker:run_fetch(query)
+    self.current_query = query
+
     if self.async_fetch_cancel then
         self.async_fetch_cancel()
         self.async_fetch_cancel = nil
@@ -699,7 +718,6 @@ function Picker:run_fetch(query)
             end
 
             self:add_new_lines(new_items, query)
-            self:render_ui()
 
             if #self.items_data == #new_items and #self.items_data > 0 then
                 self:move_cursor(1, true)
@@ -713,6 +731,37 @@ function Picker:run_fetch(query)
     if not complete then
         self:start_spinner()
     end
+end
+
+function Picker:history_prev()
+    if not self.opts.history_provider or #self.history == 0 then return end
+
+    local new_idx = math.max(1, self.history_idx - 1)
+    if new_idx ~= self.history_idx then
+        self.history_idx = new_idx
+        self:set_prompt_text(self.history[self.history_idx])
+    end
+end
+
+function Picker:history_next()
+    if not self.opts.history_provider then return end
+
+    local new_idx = self.history_idx + 1
+    if new_idx <= #self.history then
+        self.history_idx = new_idx
+        self:set_prompt_text(self.history[self.history_idx])
+    elseif new_idx == #self.history + 1 then
+        -- Return to a blank prompt if moving past the end
+        self.history_idx = new_idx
+        self:set_prompt_text("")
+    end
+end
+
+---Helper to update the prompt and move cursor to end
+function Picker:set_prompt_text(text)
+    vim.api.nvim_buf_set_lines(self.pbuf, 0, -1, false, { text })
+    vim.api.nvim_win_set_cursor(self.pwin, { 1, #text })
+    -- The TextChanged autocmd will trigger run_fetch automatically
 end
 
 --------------------------------------------------------------------------------
@@ -739,6 +788,16 @@ function Picker:close(result)
     for _, w in ipairs({ self.pwin, self.lwin, self.vwin }) do
         if w and vim.api.nvim_win_is_valid(w) then
             vim.api.nvim_win_close(w, true)
+        end
+    end
+
+    -- Save to history if provider exists and result was selected
+    if self.opts.history_provider then
+        if self.current_query and self.current_query ~= "" and self.current_query ~= self.history[#self.history] then
+            table.insert(self.history, self.current_query)
+            if self.opts.history_provider.store then
+                self.opts.history_provider.store(self.history)
+            end
         end
     end
 
@@ -790,6 +849,14 @@ function Picker:setup_input()
         local cur = self:get_cursor()
         local step = math.floor(self.layout.list_height / 2)
         self:move_cursor(cur - step, false, true)
+    end, key_opts)
+
+    vim.keymap.set("i", "<C-j>", function()
+        self:history_next()
+    end, key_opts)
+
+    vim.keymap.set("i", "<C-k>", function()
+        self:history_prev()
     end, key_opts)
 
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {

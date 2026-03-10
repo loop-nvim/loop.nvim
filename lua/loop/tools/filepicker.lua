@@ -149,7 +149,9 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
                 })
                 count = count + 1
             else
-                process:kill()
+                process:kill({
+                    stop_read = true
+                })
                 read_stop = true
                 break
             end
@@ -188,13 +190,19 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
     end
 
     return function()
-        if process then process:kill() end
+        if process then
+            process:kill({
+                stop_read = true
+            })
+        end
     end
 end
 ---@class loop.filepicker.opts
 ---@field cwd string? Optional directory to start search (defaults to getcwd)
 ---@field include_globs string[]? Optional patterns to filter visible files
 ---@field exclude_globs string[]? Optional patterns for fd to skip (e.g. .git, node_modules)
+---@field history_provider loop.Picker.QueryHistoryProvider?
+---@field max_results number?
 
 ---Opens a file picker using fd for discovery and LPeg for glob filtering.
 ---@param opts loop.filepicker.opts?
@@ -205,6 +213,7 @@ function M.open(opts)
     local selector_opts = {
         prompt = "Files",
         file_preview = true,
+        history_provider = opts.history_provider,
         async_fetch = function(query, fetch_opts, callback)
             -- We only search if there is a query, or you can remove this check
             -- to show all files in the CWD on open.
@@ -212,10 +221,12 @@ function M.open(opts)
                 callback()
                 return function() end
             end
+            ---@type loop.filepicker.fdopts
             local fd_opts = {
                 cwd = opts.cwd or vim.fn.getcwd(),
                 include_globs = opts.include_globs or {},
                 exclude_globs = opts.exclude_globs or { ".git", "node_modules", "target" },
+                max_results = opts.max_results,
             }
             return async_fd_search(query, fd_opts, fetch_opts, callback)
         end,

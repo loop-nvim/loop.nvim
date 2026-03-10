@@ -515,8 +515,9 @@ end
 
 ---@param cmd string
 ---@param rest string[]
+---@param for_cmd_menu boolean?
 ---@return string[]
-function M.get_subcommands(cmd, rest)
+function M.get_subcommands(cmd, rest, for_cmd_menu)
     _ensure_init()
     if cmd == "task" then
         return M.task_subcommands(rest)
@@ -525,7 +526,7 @@ function M.get_subcommands(cmd, rest)
     elseif cmd == "ui" then
         return M.ui_subcommands(rest)
     elseif cmd == "page" then
-        return M.page_subcommands(rest)
+        return M.page_subcommands(rest, for_cmd_menu)
     elseif cmd == "var" then
         return M.var_subcommands(rest)
     else
@@ -695,19 +696,22 @@ function M.ui_subcommands(args)
     return {}
 end
 
-function M.page_subcommands(args)
+---@param for_cmd_menu boolean?
+function M.page_subcommands(args, for_cmd_menu)
     _ensure_init()
     if #args == 0 then
         return { "switch", "open" }
     end
-    if #args == 1 and (args[1] == "open" or args[1] == "switch") then
-        local names = window.get_pagegroup_names()
-        return vim.tbl_map(vim.fn.fnameescape, names)
-    end
-    if #args == 2 and (args[1] == "open" or args[1] == "switch") then
-        local group = args[2]
-        local names = window.get_page_names(group)
-        return vim.tbl_map(vim.fn.fnameescape, names)
+    if not for_cmd_menu then
+        if #args == 1 and (args[1] == "open" or args[1] == "switch") then
+            local names = window.get_pagegroup_names()
+            return vim.tbl_map(vim.fn.fnameescape, names)
+        end
+        if #args == 2 and (args[1] == "open" or args[1] == "switch") then
+            local group = args[2]
+            local names = window.get_page_names(group)
+            return vim.tbl_map(vim.fn.fnameescape, names)
+        end
     end
     return {}
 end
@@ -806,11 +810,23 @@ function M.find_workspace_files()
         vim.notify("Invalid workspace configuration")
         return
     end
+    local history_file = vim.fs.joinpath(_ws_data.config_dir, "ffindhist.json")
+    ---@type loop.Picker.QueryHistoryProvider
+    local history_provider = {
+        load = function()
+            local ok, hist = jsoncodec.load_from_file(history_file)
+            return ok and (hist or {}) or {}
+        end,
+        store = function(hist)
+            jsoncodec.save_to_file(history_file, hist)
+        end
+    }
     local filepicker = require("loop.tools.filepicker")
     filepicker.open({
         cwd = _ws_data.ws_dir,
         include_globs = ws_config.files.include,
         exclude_globs = ws_config.files.exclude,
+        history_provider = history_provider,
     })
 end
 
@@ -825,11 +841,23 @@ function M.grep_workspace_files()
         vim.notify("Invalid workspace configuration")
         return
     end
+    local history_file = vim.fs.joinpath(_ws_data.config_dir, "grephist.json")
+    ---@type loop.Picker.QueryHistoryProvider
+    local history_provider = {
+        load = function()
+            local ok, hist = jsoncodec.load_from_file(history_file)
+            return ok and (hist or {}) or {}
+        end,
+        store = function(hist)
+            jsoncodec.save_to_file(history_file, hist)
+        end
+    }
     local livegrep = require("loop.tools.livegrep")
     livegrep.open({
         cwd = _ws_data.ws_dir,
         include_globs = ws_config.files.include,
         exclude_globs = ws_config.files.exclude,
+        history_provider = history_provider,
     })
 end
 
