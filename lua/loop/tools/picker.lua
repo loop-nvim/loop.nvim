@@ -454,7 +454,7 @@ end
 --------------------------------------------------------------------------------
 
 function Picker:request_clear_preview()
-    if not self.preview_timer then
+    if self.vbuf and self.vbuf > 0. and not self.preview_timer then
         -- Defer clearing the preview window to avoid flicker during fast scrolls
         ---@diagnostic disable-next-line: undefined-field
         local timer = vim.loop.new_timer()

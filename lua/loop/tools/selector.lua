@@ -101,7 +101,7 @@ local function _create_fetcher(opts)
                 table.insert(filtered, {
                     label_chunks = chunks,
                     virt_lines = item.virt_lines,
-                    data = item
+                    data = item.data
                 })
             end
         end
