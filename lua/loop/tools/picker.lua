@@ -358,23 +358,14 @@ function Picker:update_preview()
         self.async_preview_cancel = nil
     end
 
-    -- Cancel any pending "clear" timer
-    self.preview_timer = fntools.stop_and_close_timer(self.preview_timer)
-
     local data = self.items_data[self:get_cursor()]
 
     if not data then
-        -- Defer clearing the preview window to avoid flicker during fast scrolls
-        ---@diagnostic disable-next-line: undefined-field
-        local timer = vim.loop.new_timer()
-        self.preview_timer = timer
-        timer:start(100, 0, vim.schedule_wrap(function()
-            if self.closed then return end
-            vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
-            self.preview_timer = nil
-        end))
+        self:request_clear_preview()
         return
     end
+
+    self:cancel_clear_preview_req()
 
     self.async_preview_context = self.async_preview_context + 1
     local context = self.async_preview_context
@@ -462,16 +453,31 @@ end
 -- List manipulation
 --------------------------------------------------------------------------------
 
+function Picker:request_clear_preview()
+    if not self.preview_timer then
+        -- Defer clearing the preview window to avoid flicker during fast scrolls
+        ---@diagnostic disable-next-line: undefined-field
+        local timer = vim.loop.new_timer()
+        self.preview_timer = timer
+        timer:start(100, 0, vim.schedule_wrap(function()
+            if self.closed then return end
+            vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
+            self.preview_timer = nil
+        end))
+        return
+    end
+end
+
+function Picker:cancel_clear_preview_req()
+    self.preview_timer = fntools.stop_and_close_timer(self.preview_timer)
+end
+
 function Picker:clear_list()
     self.items_data = {}
 
     vim.api.nvim_buf_set_lines(self.lbuf, 0, -1, false, {})
     vim.api.nvim_buf_clear_namespace(self.lbuf, NS_VIRT, 0, -1)
-
-    if self.vbuf and vim.api.nvim_buf_is_valid(self.vbuf) then
-        vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
-    end
-
+    self:request_clear_preview()
     vim.wo[self.lwin].cursorline = false
     self:render_ui()
 end

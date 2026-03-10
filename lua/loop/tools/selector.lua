@@ -72,21 +72,31 @@ local function _create_fetcher(opts)
         local q = query:lower()
         for _, item in ipairs(items) do
             local label = item.label or ""
+            if not item.label and item.label_chunks then
+                local parts = {}
+                for _, chunk in ipairs(item.label_chunks) do
+                    if chunk[1] then parts[#parts + 1] = chunk[1] end
+                end
+                label = table.concat(parts)
+            end
             -- fuzzy match returns success, score, positions
             local ok, _, positions = strtools.fuzzy_match(label, q)
             if ok then
                 -- build label_chunks for highlighting
-                local chunks = {}
-                local last = 0
-                for _, pos in ipairs(positions) do
-                    if pos > last + 1 then
-                        table.insert(chunks, { label:sub(last + 1, pos - 1) }) -- normal text
+                local chunks = item.label_chunks
+                if item.label then
+                    chunks = {}
+                    local last = 0
+                    for _, pos in ipairs(positions) do
+                        if pos > last + 1 then
+                            table.insert(chunks, { label:sub(last + 1, pos - 1) }) -- normal text
+                        end
+                        table.insert(chunks, { label:sub(pos, pos), "Label" })     -- highlight
+                        last = pos
                     end
-                    table.insert(chunks, { label:sub(pos, pos), "Label" })     -- highlight
-                    last = pos
-                end
-                if last < #label then
-                    table.insert(chunks, { label:sub(last + 1) })
+                    if last < #label then
+                        table.insert(chunks, { label:sub(last + 1) })
+                    end
                 end
                 table.insert(filtered, {
                     label_chunks = chunks,
