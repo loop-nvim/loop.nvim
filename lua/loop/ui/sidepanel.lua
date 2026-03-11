@@ -160,14 +160,16 @@ end
 
 function M.reset_view_defs()
     M.hide()
+
+    local CompBuffer = require("loop.buf.CompBuffer")
+    local FileTreeComp = require("loop.ui.FileTreeComp")
+    local comp = FileTreeComp:new()
+    local compbuf = CompBuffer:new({ filetype = "loop-filetree", name = "File Tree", bufhidden = "hide", listed = false })
+    comp:link_to_buffer(compbuf:make_controller())
+
     ---@type loop.SideViewDef
     local filetree_def = {
         get_comp_buffers = function()
-            local CompBuffer = require("loop.buf.CompBuffer")
-            local FileTreeComp = require("loop.ui.FileTreeComp")
-            local compbuf = CompBuffer:new({ filetype = "loop-filetree", name = "File Tree", bufhidden = "wipe", listed = false })
-            local comp = FileTreeComp:new()
-            comp:link_to_buffer(compbuf:make_controller())
             return { compbuf }
         end,
         get_ratio = function()
@@ -192,6 +194,7 @@ end
 -- Show
 -- ======================================
 
+---@param name string?
 function M.show(name)
     if not name then
         name = _active_view
@@ -298,7 +301,7 @@ function M.hide()
         end
     end
 
-    destroy_buffers()
+    --destroy_buffers()
 end
 
 ---@param layout table

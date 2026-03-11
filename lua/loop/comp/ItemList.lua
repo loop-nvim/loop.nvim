@@ -75,20 +75,12 @@ function ItemList:link_to_buffer(buf_ctrl)
             self._trackers:invoke("on_selection", item.id, item.data)
         end
     end
-
-    local open_handler = function()
-        local item = get_cur_item()
-        if item then
-            self._trackers:invoke("on_open", item.id, item.data)
-        end
-    end
-
+    
     if self._args.allow_selection then
         self._linked_buf.add_keymap('<CR>', { callback = select_handler, desc = "Select item" })
         self._linked_buf.add_keymap('<2-LeftMouse>', { callback = select_handler, desc = "Select item" })
     end
 
-    self._linked_buf.add_keymap('go', { callback = open_handler, desc = "Open details" })
 
     buf_ctrl:request_refresh()
 end

@@ -6,10 +6,13 @@ local uitools = require("loop.tools.uitools")
 ---@class loop.comp.ItemTree.Item
 ---@field id any
 ---@field data any
+---@field expanded boolean
 
 ---@alias loop.comp.ItemTree.ChildrenCallback fun(cb:fun(items:loop.comp.ItemTree.ItemDef[]))
 
----@class loop.comp.ItemTree.ItemDef : loop.comp.ItemTree.Item
+---@class loop.comp.ItemTree.ItemDef
+---@field id any
+---@field data any
 ---@field children_callback loop.comp.ItemTree.ChildrenCallback?
 ---@field expanded boolean|nil
 
@@ -24,7 +27,6 @@ local uitools = require("loop.tools.uitools")
 
 ---@class loop.comp.ItemTree.Tracker
 ---@field on_selection? fun(id:any,data:any)
----@field on_open? fun(id:any,data:any)
 ---@field on_toggle? fun(id:any,data:any,expanded:boolean)
 
 ---@class loop.comp.ItemTree.VirtText
@@ -186,7 +188,8 @@ function ItemTree:init(args)
     self._flat = {}
 end
 
-function ItemTree:add_tracker(cb) return self._trackers:add_tracker(cb) end
+---@param tracker loop.comp.ItemTree.Tracker
+function ItemTree:add_tracker(tracker) return self._trackers:add_tracker(tracker) end
 
 function ItemTree:_get_cur_node(comp)
     local cursor = comp:get_cursor()
@@ -213,15 +216,15 @@ function ItemTree:link_to_buffer(buf_ctrl)
 
     -- Callbacks
     local callbacks = {
-        open = function()
+        on_enter = function()
+            ---@type any,loop.comp.ItemTree.ItemData?
             local id, data = get_node()
-            if id and data then self._trackers:invoke("on_open", id, data.userdata) end
-        end,
-
-        toggle = function()
-            local id, data = get_node()
-            if id and data and (self._tree:have_children(id) or data.children_callback) then
-                self:toggle_expand(id)
+            if id and data then
+                if (self._tree:have_children(id) or data.children_callback) then
+                    self:toggle_expand(id)
+                else
+                    self._trackers:invoke("on_selection", id, data.userdata)
+                end
             end
         end,
 
@@ -259,9 +262,8 @@ function ItemTree:link_to_buffer(buf_ctrl)
 
     -- Keymap table: key → {callback, description}
     local keymaps = {
-        ["<CR>"] = { callbacks.toggle, "Expand/collapse" },
+        ["<CR>"] = { callbacks.on_enter, "Expand/collapse" },
         ["<2-LeftMouse>"] = { callbacks.toggle, "Expand/collapse" },
-        ["go"] = { callbacks.open, "Open details" },
         -- Non-recursive
         ["zo"] = { callbacks.expand, "Expand node under cursor" },
         ["zc"] = { callbacks.collapse, "Collapse node under cursor" },
@@ -319,7 +321,7 @@ end
 function ItemTree:get_item(id)
     local itemdata = self:_get_data(id)
     if not itemdata then return nil end
-    return { id = id, data = itemdata.userdata }
+    return { id = id, data = itemdata.userdata, expanded = itemdata.expanded }
 end
 
 ---@return loop.comp.ItemTree.Item?
@@ -327,10 +329,11 @@ function ItemTree:get_parent_item(id)
     local par_id = self._tree:get_parent_id(id)
     if not par_id then return nil end
 
+    ---@type loop.comp.ItemTree.ItemData
     local itemdata = self._tree:get_data(par_id)
     if not itemdata then return nil end
 
-    return { id = par_id, data = itemdata.userdata }
+    return { id = par_id, data = itemdata.userdata, expanded = itemdata.expanded }
 end
 
 function ItemTree:clear_items()
@@ -421,11 +424,13 @@ function ItemTree:get_children(parent_id)
     local tree_items = self._tree:get_children(parent_id)
 
     for _, treeitem in ipairs(tree_items) do
+        ---@type loop.comp.ItemTree.ItemData
         local data = treeitem.data
         ---@type loop.comp.ItemTree.Item
         local item = {
             id = treeitem.id,
             data = data.userdata,
+            expanded = data.expanded
         }
         table.insert(items, item)
     end
@@ -713,6 +718,7 @@ function ItemTree:get_items()
         local item = {
             id = treeitem.id,
             data = data.userdata,
+            expanded = data.expanded,
         }
         table.insert(items, item)
     end
