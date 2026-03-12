@@ -25,7 +25,8 @@ function BaseBuffer:init(opts)
     vim.validate("opts.filetype", opts.filetype, "string")
     vim.validate("opts.listed", opts.listed, "boolean")
     vim.validate("opts.bufhidden", opts.bufhidden, "string")
-    assert(opts.bufhidden == "" or opts.bufhidden == "hide" or opts.bufhidden == "wipe", "Invalid bufhidden value in opts")
+    assert(opts.bufhidden == "" or opts.bufhidden == "hide" or opts.bufhidden == "wipe",
+        "Invalid bufhidden value in opts")
     self._filetype = opts.filetype
     self._name = opts.name
     self._listed = opts.listed
@@ -46,7 +47,9 @@ function BaseBuffer:destroy()
     end
     self._destroyed = true
     if self._buf > 0 then
-        vim.api.nvim_buf_delete(self._buf, { force = true })
+        if vim.v.exiting == vim.NIL then
+            vim.api.nvim_buf_delete(self._buf, { force = true })
+        end
     end
 end
 
@@ -63,9 +66,6 @@ function BaseBuffer:make_controller()
         end,
         add_keymap = function(key, keymap)
             obj:add_keymap(key, keymap)
-        end,
-        get_cursor = function()
-            return obj:get_cursor()
         end,
         disable_change_events = function()
             obj:disable_change_events()
@@ -222,14 +222,6 @@ function BaseBuffer:_apply_keymap(key, item)
         pcall(function() vim.keymap.del(modes, key, { buffer = self._buf }) end)
         vim.keymap.set(modes, key, function() item.callback() end, { buffer = self._buf, desc = item.desc })
     end
-end
-
----@return integer[]|nil
-function BaseBuffer:get_cursor()
-    if vim.api.nvim_get_current_buf() ~= self._buf then
-        return nil
-    end
-    return vim.api.nvim_win_get_cursor(0)
 end
 
 return BaseBuffer

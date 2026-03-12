@@ -102,33 +102,30 @@ local function _compute_layout(opts)
     local spacing = has_preview and 2 or 0
     local half_spacing = math.floor(spacing / 2)
 
-    local width
     local list_width
     local prev_width
     if has_preview then
-        width = _clamp(math.floor(cols * (opts.width_ratio or 0.8)), 1, cols)
+        local width = math.ceil(cols * _clamp(opts.width_ratio or 0.8, 0.1, 0.8))
         local half_width = math.floor(width / 2)
         if opts.list_width then
-            list_width = _clamp(opts.list_width + 3, math.floor(half_width / 2), half_width)
+            list_width = _clamp(opts.list_width + 3, math.ceil(half_width / 2), half_width)
         else
             list_width = half_width
         end
         list_width = list_width - half_spacing
         prev_width =  _clamp(width - list_width - half_spacing, 1, width)
     else
-        local max_with = math.floor(cols * (opts.width_ratio or 0.8))
+        local max_with = math.ceil(cols * (opts.width_ratio or 0.8))
         if opts.list_width then
             list_width = _clamp(opts.list_width  + 3, 30, max_with)
         else
             list_width = max_with
         end
-        width = list_width
         prev_width = 0
     end
 
-    local height = math.floor(lines * _clamp(opts.height_ratio or .7, 0, 1))
-
-    local total_height = height + 3
+    local total_height = math.ceil(lines * _clamp(opts.height_ratio or .7, 0.2, 0.8))
+    local list_height = _clamp(total_height - 3, 1, lines)
 
     local row = math.floor((lines - total_height) / 2)
     local col = math.floor((cols - (list_width + prev_width + spacing)) / 2)
@@ -142,12 +139,12 @@ local function _compute_layout(opts)
         list_row = row + 3,
         list_col = col,
         list_width = list_width,
-        list_height = height,
+        list_height = list_height,
 
         prev_row = row + 3,
         prev_col = col + list_width + spacing,
         prev_width = prev_width,
-        prev_height = height
+        prev_height = list_height
     }
 end
 

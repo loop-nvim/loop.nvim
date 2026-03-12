@@ -69,7 +69,6 @@ error('Cannot require a meta file')
 ---@field set_user_data fun(user_data:any)
 ---@field get_user_data fun():any
 ---@field add_keymap fun(key:string,keymap:loop.KeyMap)
----@field get_cursor fun():integer[]|nil
 ---@field disable_change_events fun()
 
 ---@class loop.OutputBufferController : loop.BaseBufferController
@@ -79,6 +78,8 @@ error('Cannot require a meta file')
 
 ---@class loop.CompBufferController : loop.BaseBufferController
 ---@field set_renderer fun(renderer:loop.CompRenderer)
+---@field set_cursor fun(cur:number)?
+---@field get_cursor fun():integer[]|nil
 ---@field request_refresh fun()
 
 ---@alias loop.ReplCompletionHandler fun(input:string, callback:fun(suggestions:string[]?,err:string?))

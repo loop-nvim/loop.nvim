@@ -361,7 +361,6 @@ function JsonEditor:open(winid)
     local buf = CompBuffer:new({
         filetype = _buf_filetype,
         name = name,
-        bufhidden = "",
         listed = true,
     })
 
@@ -554,9 +553,9 @@ end
 ---@param name string
 ---@param value_type string
 ---@param schema table?
----@param default_text string?
+---@param old_value any?
 ---@param on_confirm fun(value:any)
-function JsonEditor:_request_value(path, name, value_type, schema, default_text, on_confirm)
+function JsonEditor:_request_value(path, name, value_type, schema, old_value, on_confirm)
     if schema and schema["x-valueSelector"] then
         local value_selector_fn_path = schema["x-valueSelector"]
         _call_lua_function(value_selector_fn_path, function(value)
@@ -581,11 +580,10 @@ function JsonEditor:_request_value(path, name, value_type, schema, default_text,
         local choices = {}
         local initial
         for i, v in ipairs(values) do
-            local text = tostring(v)
-            if text == default_text then initial = i end
+            if v == old_value then initial = i end
             local desc = desc_list and desc_list[i]
             table.insert(choices, {
-                label = text,
+                label = tostring(v),
                 data = v,
                 virt_lines = desc and { { { desc, "Comment" } } } or nil
             })
@@ -613,7 +611,7 @@ function JsonEditor:_request_value(path, name, value_type, schema, default_text,
     ---@type table
     local input_opts = {
         prompt = ("%s (%s)"):format(name, value_type),
-        default_text = default_text and tostring(default_text),
+        default_text = old_value and tostring(old_value),
     }
     floatwin.input_at_cursor(input_opts, on_input)
 end
@@ -798,7 +796,7 @@ end
 function JsonEditor:_get_new_value(path, schema, callback)
     ---@param type_choice string
     local function get_value(type_choice)
-        self:_request_value(path, "Value", type_choice, schema, "",
+        self:_request_value(path, "Value", type_choice, schema, nil,
             function(value)
                 callback(value)
             end)

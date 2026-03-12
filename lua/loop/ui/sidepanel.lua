@@ -158,26 +158,10 @@ end
 -- Registration
 -- ======================================
 
-function M.reset_view_defs()
+function M.clear_view_defs()
     M.hide()
-
-    local CompBuffer = require("loop.buf.CompBuffer")
-    local FileTreeComp = require("loop.ui.FileTreeComp")
-    local comp = FileTreeComp:new()
-    local compbuf = CompBuffer:new({ filetype = "loop-filetree", name = "File Tree", bufhidden = "hide", listed = false })
-    comp:link_to_buffer(compbuf:make_controller())
-
-    ---@type loop.SideViewDef
-    local filetree_def = {
-        get_comp_buffers = function()
-            return { compbuf }
-        end,
-        get_ratio = function()
-            return {}
-        end
-    }
-    _views = { Files = filetree_def }
-    _active_view = "Files"
+    _views = {}
+    _active_view = nil
 end
 
 ---@param name string
@@ -295,13 +279,12 @@ function M.hide()
 
     vim.api.nvim_clear_autocmds({ group = _ui_auto_group })
 
+    destroy_buffers()
     for _, win in ipairs(wins) do
         if vim.api.nvim_win_is_valid(win) then
             vim.api.nvim_win_close(win, true)
         end
     end
-
-    --destroy_buffers()
 end
 
 ---@param layout table

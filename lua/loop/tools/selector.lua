@@ -36,14 +36,16 @@ local function _no_op()
 end
 
 ---@param items loop.SelectorItem[]
----@return integer
-local function _compute_width(items)
-    local maxw = 0
+---@return number,number
+local function _compute_dimentions(items)
+    local maxw, height = 0, 0
     for _, item in ipairs(items) do
         if item.label then
             maxw = math.max(maxw, vim.fn.strdisplaywidth(item.label))
+            height = height + 1
         end
         if item.label_chunks then
+            height = height + 1
             local w = 0
             for _, chunk in ipairs(item.label_chunks) do
                 w = w + vim.fn.strdisplaywidth(chunk[1])
@@ -52,6 +54,7 @@ local function _compute_width(items)
         end
         if item.virt_lines then
             for _, vl in ipairs(item.virt_lines) do
+                height = height + 1
                 local w = 0
                 for _, chunk in ipairs(vl) do
                     w = w + vim.fn.strdisplaywidth(chunk[1])
@@ -60,7 +63,7 @@ local function _compute_width(items)
             end
         end
     end
-    return maxw
+    return maxw, height
 end
 ---@param opts loop.selector.opts
 ---@return loop.Picker.Fetcher
@@ -156,14 +159,20 @@ end
 ---@param opts loop.selector.opts
 ---@param callback loop.SelectorCallback
 function M.select(opts, callback)
-    local list_width = _compute_width(opts.items)
+    local list_width, list_height = _compute_dimentions(opts.items)
+    local height_ratio
+    if not opts.formatter and not opts.file_preview then
+       height_ratio = (list_height + 3) / vim.o.lines
+    end
     -- Validate and prepare options for the underlying picker
+    ---@type loop.Picker.opts
     local picker_opts = {
         prompt        = opts.prompt,
         fetch         = _create_fetcher(opts),
         async_preview = _create_previewer(opts),
         list_width    = list_width,
         list_wrap     = opts.list_wrap,
+        height_ratio  = height_ratio
     }
 
     picker.select(picker_opts, function(item)

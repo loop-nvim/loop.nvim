@@ -137,6 +137,8 @@ local function _close_workspace(quiet)
 
         extdata.on_workspace_unload()
         runner.on_workspace_close()
+        window.hide_window()
+        sidepanel.clear_view_defs()
 
         if _ws_data.page_manager then
             _ws_data.page_manager.delete_groups()
@@ -217,6 +219,25 @@ local function _configure_workspace(ws_dir)
     editor:open()
 end
 
+local function _register_builtin_sideviews(wsdir)
+    ---@type loop.SideViewDef
+    local filetree_def = {
+        get_comp_buffers = function()
+            local CompBuffer = require("loop.buf.CompBuffer")
+            local FileTreeComp = require("loop.ui.FileTreeComp")
+            local comp = FileTreeComp:new(wsdir)
+            local compbuf = CompBuffer:new({ filetype = "loop-filetree", name = "File Tree", listed = false })
+            comp:link_to_buffer(compbuf:make_controller())
+            compbuf:set_user_data(comp)
+            return { compbuf }
+        end,
+        get_ratio = function()
+            return {}
+        end
+    }
+    sidepanel.register_new_view("files", filetree_def)
+end
+
 ---@param dir string
 ---@return "ok"|"no_ws"|"locked"|"unexpected"
 ---@return string? error_msg
@@ -256,7 +277,8 @@ local function _load_workspace(dir)
     }
 
     taskmgr.reset_providers(dir)
-    sidepanel.reset_view_defs()
+    sidepanel.clear_view_defs()
+    _register_builtin_sideviews(dir)
 
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
     extdata.on_workspace_load(ws_info, _ws_data.page_manager)

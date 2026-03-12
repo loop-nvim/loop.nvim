@@ -634,8 +634,7 @@ local function _add_tab_page(tab, opts)
             filetype = "loop-output",
             name = opts.label,
             listed = false,
-            bufhidden =
-            "hide"
+            bufhidden = "hide"
         })
         local page = Page:new(output_buf)
         _assign_tab_page(tab, page, opts.activate)
@@ -644,7 +643,7 @@ local function _add_tab_page(tab, opts)
         return { page = page:make_controller(), base_buf = ctrl, output_buf = ctrl }
     end
     if opts.type == "comp" then
-        local comp_buf = CompBuffer:new({ filetype = "loop-comp", name = opts.label, listed = false, bufhidden = "hide" })
+        local comp_buf = CompBuffer:new({ filetype = "loop-comp", name = opts.label })
         local page = Page:new(comp_buf)
         _assign_tab_page(tab, page, opts.activate)
         local ctrl = comp_buf:make_controller()

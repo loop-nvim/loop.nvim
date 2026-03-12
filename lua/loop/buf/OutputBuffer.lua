@@ -24,7 +24,6 @@ function OutputBuffer:make_controller()
     return {
         add_keymap = function(...) return self:add_keymap(...) end,
         disable_change_events = function() return self:disable_change_events() end,
-        get_cursor = function() return self:get_cursor() end,
         set_user_data = function(...) return self:set_user_data(...) end,
         get_user_data = function() return self:get_user_data() end,
         set_max_lines = function(n)

@@ -167,6 +167,7 @@ local function _refresh_tree(tree, async_update)
     return flat, have_loading_nodes
 end
 
+---@param args loop.comp.ItemTree.InitArgs
 function ItemTree:init(args)
     assert(args.formatter, "formatter is required")
     assert(not args.header or type(args.header) == "table", "header must be a table")
@@ -185,12 +186,14 @@ function ItemTree:init(args)
     self._render_delay_ms = args.render_delay_ms or 150
 
     self._tree = Tree:new()
-    self._flat = {}
+    self._flat = {} ---@type loop.tools.Tree.FlatNode[]
 end
 
 ---@param tracker loop.comp.ItemTree.Tracker
 function ItemTree:add_tracker(tracker) return self._trackers:add_tracker(tracker) end
 
+---@param comp loop.CompBufferController
+---@return any,any
 function ItemTree:_get_cur_node(comp)
     local cursor = comp:get_cursor()
     if not cursor then return nil end
@@ -206,6 +209,7 @@ function ItemTree:_get_cur_node(comp)
     return node.id, node.data
 end
 
+---@param buf_ctrl loop.CompBufferController
 function ItemTree:link_to_buffer(buf_ctrl)
     -- Helper to get current node
     local function get_node()
@@ -227,7 +231,12 @@ function ItemTree:link_to_buffer(buf_ctrl)
                 end
             end
         end,
-
+        toggle = function()
+            local id, data = get_node()
+            if id and data and (self._tree:have_children(id) or data.children_callback) then
+                self:toggle_expand(id)
+            end
+        end,
         expand = function()
             local id, data = get_node()
             if id and data and (self._tree:have_children(id) or data.children_callback) then
@@ -282,6 +291,18 @@ function ItemTree:link_to_buffer(buf_ctrl)
 end
 
 function ItemTree:dispose() end
+
+function ItemTree:set_cursor_by_id(id)
+    self._active_item_id = id
+    if self._linked_buf and self._flat then
+        for index, node in ipairs(self._flat) do
+            if id == node.id then
+                self._linked_buf.set_cursor(index)
+                break
+            end
+        end
+    end
+end
 
 ---@return loop.comp.ItemTree.Item?
 function ItemTree:get_cur_item()
@@ -479,7 +500,7 @@ function ItemTree:_on_render_request(buf)
 
     local buffer_lines = {}
     local extmarks_data = {}
-    local new_flat_nodes = {}
+    local new_flat_nodes = {} ---@type loop.tools.Tree.FlatNode[]
 
     -- HEADER (left chunk normal, right chunk as virtual text)
     if self._header then
