@@ -23,13 +23,13 @@ function BaseBuffer:init(opts)
     vim.validate("opts", opts, "table")
     vim.validate("opts.name", opts.name, "string")
     vim.validate("opts.filetype", opts.filetype, "string")
-    vim.validate("opts.listed", opts.listed, "boolean")
+    vim.validate("opts.listed", opts.listed, {"nil", "boolean"})
     vim.validate("opts.bufhidden", opts.bufhidden, "string")
     assert(opts.bufhidden == "" or opts.bufhidden == "hide" or opts.bufhidden == "wipe",
         "Invalid bufhidden value in opts")
     self._filetype = opts.filetype
     self._name = opts.name
-    self._listed = opts.listed
+    self._listed = opts.listed or false
     self._bufhidden_action = opts.bufhidden
     self._keymaps = {}
     self._buf = -1

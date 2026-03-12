@@ -174,6 +174,11 @@ function M.register_new_view(name, def)
     end
 end
 
+---@return string[]
+function M.view_names()
+    return vim.fn.sort(vim.tbl_keys(_views))
+end
+
 -- ======================================
 -- Show
 -- ======================================
@@ -284,6 +289,15 @@ function M.hide()
         if vim.api.nvim_win_is_valid(win) then
             vim.api.nvim_win_close(win, true)
         end
+    end
+end
+
+function M.toggle(name)
+    local wins = get_managed_windows()
+    if #wins > 0 then
+        M.hide()
+    else
+        M.show(name)
     end
 end
 

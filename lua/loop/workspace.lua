@@ -526,7 +526,7 @@ end
 ---@return string[]
 function M.get_commands()
     _ensure_init()
-    local cmds = { "workspace", "log", "ui", "page" }
+    local cmds = { "workspace", "log", "ui", "sidepanel", "page" }
     if _ws_data then
         vim.list_extend(cmds, { "task", "var" })
         vim.list_extend(cmds, extdata.lead_commands())
@@ -543,6 +543,8 @@ function M.run_command(cmd, rest, opts)
         M.workspace_command(unpack(rest))
     elseif cmd == "ui" then
         M.ui_command(unpack(rest))
+    elseif cmd == "sidepanel" then
+        M.sidepanel_command(unpack(rest))
     elseif cmd == "page" then
         M.page_command(unpack(rest))
     elseif cmd == "task" then
@@ -575,6 +577,8 @@ function M.get_subcommands(cmd, rest, for_cmd_menu)
         return M.workspace_subcommands(rest)
     elseif cmd == "ui" then
         return M.ui_subcommands(rest)
+    elseif cmd == "sidepanel" then
+        return M.sidepanel_subcommands(rest)
     elseif cmd == "page" then
         return M.page_subcommands(rest, for_cmd_menu)
     elseif cmd == "var" then
@@ -746,6 +750,13 @@ function M.ui_subcommands(args)
     return {}
 end
 
+function M.sidepanel_subcommands(args)
+    if #args == 0 then
+        return sidepanel.view_names()
+    end
+    return {}
+end
+
 ---@param for_cmd_menu boolean?
 function M.page_subcommands(args, for_cmd_menu)
     _ensure_init()
@@ -792,6 +803,14 @@ function M.ui_command(command)
         _save_layout()
     else
         vim.notify("Invalid command: " .. command)
+    end
+end
+
+function M.sidepanel_command(command)
+    if command == nil or command == "" then
+        sidepanel.toggle()
+    else
+        sidepanel.show(command)
     end
 end
 
