@@ -699,11 +699,11 @@ end
 function ItemTree:_expand_recursive(id)
     local item = self:_get_data(id)
     if not item then return end
-    if not item.expanded then
+    -- recusive expand does not async fetched nodes (children_callback) for performance
+    if not item.expanded and self._tree:have_children(id) then
         item.expanded = true
         self._trackers:invoke("on_toggle", id, item.userdata, true)
     end
-
     local children = self._tree:get_children(id)
     for _, child in ipairs(children) do
         self:_expand_recursive(child.id)
