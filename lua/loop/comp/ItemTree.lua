@@ -500,6 +500,7 @@ function ItemTree:_on_render_request(buf)
 
     local buffer_lines = {}
     local extmarks_data = {}
+    local hl_ranges = {}
     local new_flat_nodes = {} ---@type loop.tools.Tree.FlatNode[]
 
     -- HEADER (left chunk normal, right chunk as virtual text)
@@ -509,6 +510,7 @@ function ItemTree:_on_render_request(buf)
         local right_chunk = self._header[2] or { "" }
         -- Full-line background
         table.insert(extmarks_data, {
+
             row = row,
             start_col = 0,
             mark = {
@@ -589,13 +591,11 @@ function ItemTree:_on_render_request(buf)
             first_row = first_row or row
 
             for _, hl in ipairs(cur_hls) do
-                table.insert(extmarks_data, {
+                table.insert(hl_ranges, {
+                    hl = hl.group,
                     row = row,
                     start_col = hl.start_col,
-                    mark = {
-                        end_col = hl.end_col,
-                        hl_group = hl.group,
-                    }
+                    end_col = hl.end_col
                 })
             end
 
@@ -652,6 +652,18 @@ function ItemTree:_on_render_request(buf)
 
     for _, data in ipairs(extmarks_data) do
         vim.api.nvim_buf_set_extmark(buf, _ns_id, data.row, data.start_col, data.mark)
+    end
+
+    -- apply highlight ranges
+    for _, r in ipairs(hl_ranges) do
+        vim.hl.range(
+            buf,
+            _ns_id,
+            r.hl,
+            { r.row, r.start_col },
+            { r.row, r.end_col },
+            { inclusive = false }
+        )
     end
 
     return true
