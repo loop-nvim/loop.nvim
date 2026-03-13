@@ -1,7 +1,7 @@
 local class = require('loop.tools.class')
 local Tree = require("loop.tools.Tree")
 local Trackers = require("loop.tools.Trackers")
-local uitools = require("loop.tools.uitools")
+local table_clear = require("table.clear")
 
 ---@class loop.comp.ItemTree.Item
 ---@field id any
@@ -24,6 +24,8 @@ local uitools = require("loop.tools.uitools")
 ---@field children_loading boolean|nil
 ---@field load_sequence number
 ---@field is_loading boolean|nil
+---@field _cached_output {text: any, virt: any}? -- Cache storage
+---@field _dirty boolean?                        -- Cache invalidation flag
 
 ---@class loop.comp.ItemTree.Tracker
 ---@field on_selection? fun(id:any,data:any)
@@ -88,6 +90,7 @@ local function _itemdef_to_itemdata(item)
         expanded = item.expanded,
         reload_children = true,
         load_sequence = 1,
+        _dirty = true,
     }
 end
 
@@ -187,6 +190,16 @@ function ItemTree:init(args)
 
     self._tree = Tree:new()
     self._flat = {} ---@type loop.tools.Tree.FlatNode[]
+
+    -- Reusable scratchpads
+    self._buffer_lines = {}
+    self._extmarks_data = {}
+    self._hl_calls = {}
+    -- Pre-allocate indent cache
+    self._indent_cache = {}
+    for i = 0, 20 do
+        self._indent_cache[i] = string.rep(args.indent_string or "  ", i)
+    end
 end
 
 ---@param tracker loop.comp.ItemTree.Tracker
@@ -398,8 +411,9 @@ end
 function ItemTree:set_item_data(id, data)
     ---@type loop.comp.ItemTree.ItemData?
     local base_data = self._tree:get_data(id)
-    assert(base_data, "it not found: " .. tostring(id))
+    assert(base_data, "id not found: " .. tostring(id))
     base_data.userdata = data
+    base_data._dirty = true
     self._tree:set_item_data(id, base_data)
     self:_request_render()
 end
@@ -497,9 +511,10 @@ function ItemTree:_on_render_request(buf)
     end
     self._no_delay_next_render = false
 
-    local buffer_lines = {}
-    local extmarks_data = {}
-    local hl_ranges = {}
+
+    table_clear(self._buffer_lines)
+    table_clear(self._extmarks_data)
+    table_clear(self._hl_calls)
 
     -- HEADER (left chunk normal, right chunk as virtual text)
     if self._header then
@@ -507,7 +522,7 @@ function ItemTree:_on_render_request(buf)
         local left_chunk = self._header[1] or { "" }
         local right_chunk = self._header[2] or { "" }
         -- Full-line background
-        table.insert(extmarks_data, {
+        table.insert(self._extmarks_data, {
             row, 0,
             {
                 line_hl_group = _header_hl_group,
@@ -515,10 +530,10 @@ function ItemTree:_on_render_request(buf)
         })
         -- Left-aligned text
         local line = left_chunk[1] or ""
-        table.insert(buffer_lines, line)
+        table.insert(self._buffer_lines, line)
         -- Left chunk highlight
         if left_chunk[2] then
-            table.insert(extmarks_data, {
+            table.insert(self._extmarks_data, {
                 row, 0, {
                 end_col = #line,
                 hl_group = left_chunk[2],
@@ -528,7 +543,7 @@ function ItemTree:_on_render_request(buf)
         -- Right-aligned virtual text
         local right_text = right_chunk[1] or ""
         if #right_text > 0 then
-            table.insert(extmarks_data, {
+            table.insert(self._extmarks_data, {
                 row, 0, -- start_col ignored for virt_text
                 {
                     virt_text = { { right_text, right_chunk[2] } },
@@ -556,6 +571,7 @@ function ItemTree:_on_render_request(buf)
     for i = 0, 20 do indent_cache[i] = s_rep(indent_str, i) end
 
     for _, flatnode in ipairs(flat) do
+        ---@type loop.comp.ItemTree.ItemData
         local item = flatnode.data
         local item_id = flatnode.id
         local depth = flatnode.depth or 0
@@ -572,33 +588,41 @@ function ItemTree:_on_render_request(buf)
         local prefix = icon ~= "" and (indent .. icon .. " ") or (indent .. expand_padding)
         local prefix_len = #prefix
 
-        -- 3. ELIMINATE INNER FUNCTIONS & TABLE CHURN
-        -- Instead of a 'flush' closure, we handle line breaks inline
-        local text_chunks, virt_chunks = self._formatter(item_id, item.userdata, item.expanded)
+        -- CACHE LOGIC START
+        if item._dirty or not item._cached_output then
+            local text_chunks, virt_chunks = self._formatter(item_id, item.userdata, item.expanded)
+            item._cached_output = { text = text_chunks, virt = virt_chunks }
+            item._dirty = false
+        end
+
+        local text_chunks = item._cached_output.text
+        local virt_chunks = item._cached_output.virt
+        -- CACHE LOGIC END
+
 
         local current_line = prefix
         local current_col = prefix_len
-        local row_offset = #buffer_lines
+        local row_offset = #self._buffer_lines
 
         for i = 1, #text_chunks do
             local chunk = text_chunks[i]
             local text, hl, is_nl = chunk[1], chunk[2], chunk[3]
             local text_len = #text
-
             if text_len > 0 then
                 if hl then
-                    -- Record highlight as extmark immediately
-                    t_insert(extmarks_data, {
-                        row_offset, current_col,
-                        { end_col = current_col + text_len, hl_group = hl, priority = 10 }
+                    -- Queue for vim.hl.range instead of extmarks
+                    table.insert(self._hl_calls, {
+                        hl = hl,
+                        row = row_offset,
+                        s_col = current_col,
+                        e_col = current_col + text_len
                     })
                 end
                 current_line = current_line .. text
                 current_col = current_col + text_len
             end
-
             if is_nl then
-                t_insert(buffer_lines, current_line)
+                t_insert(self._buffer_lines, current_line)
                 -- Prep for next line (multi-line node support)
                 row_offset = row_offset + 1
                 current_line = s_rep(" ", prefix_len)
@@ -607,36 +631,28 @@ function ItemTree:_on_render_request(buf)
         end
 
         -- Finalize the last (or only) line of this node
-        t_insert(buffer_lines, current_line)
+        t_insert(self._buffer_lines, current_line)
 
         -- 4. BATCH VIRTUAL TEXT
         if virt_chunks and #virt_chunks > 0 then
-            t_insert(extmarks_data, {
-                #buffer_lines - 1, 0,
-                { virt_text = virt_chunks, virt_text_pos = "right_align" }
+            t_insert(self._extmarks_data, {
+                #self._buffer_lines - 1, 0,
+                { virt_text = virt_chunks, hl_mode = "combine" }
             })
         end
     end
 
     vim.api.nvim_buf_clear_namespace(buf, _ns_id, 0, -1)
     vim.bo[buf].modifiable = true
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, buffer_lines)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, self._buffer_lines)
     vim.bo[buf].modifiable = false
 
-    for _, data in ipairs(extmarks_data) do
-        vim.api.nvim_buf_set_extmark(buf, _ns_id, data[1], data[2], data[3])
+    for _, h in ipairs(self._hl_calls) do
+        vim.hl.range(buf, _ns_id, h.hl, { h.row, h.s_col }, { h.row, h.e_col })
     end
 
-    -- apply highlight ranges
-    for _, r in ipairs(hl_ranges) do
-        vim.hl.range(
-            buf,
-            _ns_id,
-            r.hl,
-            { r.row, r.start_col },
-            { r.row, r.end_col },
-            { inclusive = false }
-        )
+    for _, data in ipairs(self._extmarks_data) do
+        vim.api.nvim_buf_set_extmark(buf, _ns_id, data[1], data[2], data[3])
     end
 
     return true
@@ -646,6 +662,7 @@ function ItemTree:toggle_expand(id)
     local item = self:_get_data(id)
     if item then
         item.expanded = not item.expanded
+        item._dirty = true -- state change may affect the formatter
         self:_request_render()
         self._trackers:invoke("on_toggle", id, item.userdata, item.expanded)
     end
