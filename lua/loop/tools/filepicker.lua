@@ -15,78 +15,6 @@ local picker = require('loop.tools.picker')
 
 local uv = vim.loop
 
--- Async recursive directory search
-local function async_walk_dir(dir, query, include_globs, exclude_globs, max_results, on_chunk, on_done)
-    max_results = max_results or 1000
-    local results_count = 0
-    local pending_dirs = { dir }
-
-    local function is_excluded(path)
-        for _, pat in ipairs(exclude_globs or {}) do
-            if path:match(pat) then return true end
-        end
-        return false
-    end
-
-    local function is_included(path)
-        if not include_globs or #include_globs == 0 then return true end
-        for _, pat in ipairs(include_globs) do
-            if path:match(pat) then return true end
-        end
-        return false
-    end
-
-    local function process_next_dir()
-        if results_count >= max_results or #pending_dirs == 0 then
-            vim.schedule(function()
-                on_done()
-            end)
-            return
-        end
-
-        local path = table.remove(pending_dirs, 1)
-        local fd = uv.fs_scandir(path)
-        if fd then
-            local chunk = {}
-            while true do
-                local name, type_ = uv.fs_scandir_next(fd)
-                if not name then break end
-                local full_path = vim.fs.joinpath(path, name)
-                if type_ == "file" then
-                    if full_path:lower():find(query:lower(), 1, true)
-                        and is_included(full_path)
-                        and not is_excluded(full_path)
-                    then
-                        table.insert(chunk, full_path)
-                        results_count = results_count + 1
-                        if results_count >= max_results then break end
-                    end
-                elseif type_ == "directory" then
-                    table.insert(pending_dirs, full_path)
-                end
-            end
-            if #chunk > 0 then
-                vim.schedule(function()
-                    on_chunk(chunk)
-                end)
-            end
-        end
-
-        -- Continue processing next directory in the next event loop tick
-        vim.schedule(function()
-            process_next_dir()
-        end)
-    end
-
-    -- Start processing
-    process_next_dir()
-
-    -- Return a cancel function
-    return function()
-        pending_dirs = {}
-    end
-end
-
 local function _build_label_chunks(display, query)
     local chunks = {}
     if query and query ~= "" then
@@ -115,8 +43,7 @@ local function _build_label_chunks(display, query)
 end
 
 local function async_lua_search(query, fd_opts, fetch_opts, callback)
-    local cancel_fn
-    cancel_fn = async_walk_dir(
+    local cancel_fn = filetools.async_walk_dir(
         fd_opts.cwd,
         query,
         fd_opts.include_globs,
@@ -139,6 +66,7 @@ local function async_lua_search(query, fd_opts, fetch_opts, callback)
             callback(nil)
         end
     )
+    assert(type(cancel_fn) == "function")
     return cancel_fn
 end
 
