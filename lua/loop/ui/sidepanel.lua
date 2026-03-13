@@ -66,44 +66,6 @@ local function get_managed_windows()
     return wins
 end
 
--- ======================================
--- Layout
--- ======================================
-
-local function capture_layout()
-    if not _active_view then
-        return
-    end
-
-    local def = _views[_active_view]
-    if not def then
-        return
-    end
-
-    local wins = get_managed_windows()
-    if #wins == 0 then
-        return
-    end
-
-    local total = 0
-    local heights = {}
-
-    for i, win in ipairs(wins) do
-        local h = vim.api.nvim_win_get_height(win)
-        heights[i] = h
-        total = total + h
-    end
-
-    local ratios = {}
-
-    for i, h in ipairs(heights) do
-        ratios[i] = h / total
-    end
-
-    def.ratios = ratios
-    def.width_ratio = vim.api.nvim_win_get_width(wins[1]) / vim.o.columns
-end
-
 local function apply_ratios(windows, ratios, width_ratio)
     if #windows == 0 then
         return
@@ -199,6 +161,13 @@ function M.show(name)
         return
     end
 
+    if not name or name == _active_view then
+        local wins = get_managed_windows()
+        if #wins > 0 then
+            return
+        end
+    end
+
     _active_view = name
 
     if #_active_buffers > 0 then
@@ -273,13 +242,12 @@ function M.show(name)
     })
 end
 
--- ======================================
--- Hide
--- ======================================
+function M.is_visible()
+    local wins = get_managed_windows()
+    return #wins > 0
+end
 
 function M.hide()
-    capture_layout()
-
     local wins = get_managed_windows()
 
     vim.api.nvim_clear_autocmds({ group = _ui_auto_group })
@@ -298,39 +266,6 @@ function M.toggle(name)
         M.hide()
     else
         M.show(name)
-    end
-end
-
----@param layout table
-function M.save_layout(layout)
-    layout.sideview = {}
-    capture_layout()
-    for name, def in pairs(_views) do
-        if def.ratios then
-            layout.sideview[name] = {
-                ratios = def.ratios,
-                width_ratio = def.width_ratio,
-            }
-        end
-    end
-    --vim.notify("saved layout: " .. vim.inspect(layout))
-end
-
----@param layout table
-function M.load_layout(layout)
-    --vim.notify("load layout: " .. vim.inspect(layout))
-    local data = layout.sideview
-    if not data then
-        return
-    end
-
-    for name, sizes in pairs(data) do
-        local def = _views[name]
-
-        if def then
-            def.ratios = sizes.ratios
-            def.width_ratio = sizes.width_ratio
-        end
     end
 end
 

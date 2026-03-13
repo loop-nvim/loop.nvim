@@ -749,30 +749,6 @@ function M.create_page_manager()
     return _create_page_manager()
 end
 
----@param layout table
-function M.save_layout(layout)
-    if _loop_win == -1 then
-        return
-    end
-    local editor_height = vim.o.lines - vim.o.cmdheight     -- subtract command line
-    local height = vim.api.nvim_win_get_height(_loop_win)
-    -- only save of we are not the only window vertically
-    if height == editor_height then
-        return
-    end
-    local ratio = height / vim.o.lines
-    _loop_win_height_ratio = ratio
-    layout.height = ratio
-end
-
----@param layout table
-function M.load_layout(layout)
-    _loop_win_height_ratio = layout.height or .20
-    if _loop_win ~= -1 and _loop_win_height_ratio then
-        vim.api.nvim_win_set_height(_loop_win, math.floor(vim.o.lines * _loop_win_height_ratio))
-    end
-end
-
 function M.init()
     if _init_done then
         error('Loop.nvim: init() cannot be called more than once')

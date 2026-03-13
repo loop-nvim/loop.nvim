@@ -84,31 +84,6 @@ local function _get_config_dir(workspace_dir)
     return dir
 end
 
-
----@return table?
-local function _load_layout()
-    if not _ws_data then return end
-    local loaded, data = jsoncodec.load_from_file(vim.fs.joinpath(_ws_data.config_dir, "layout.json"))
-    if not loaded then return end
-    window.load_layout(data and data.window or {})
-    sidepanel.load_layout(data and data.sidepanel or {})
-    return data
-end
-
-local function _save_layout()
-    if not _ws_data then
-        return false
-    end
-    local filepath = vim.fs.joinpath(_ws_data.config_dir, "layout.json")
-    local loaded, data = jsoncodec.load_from_file(filepath)
-    local layout = loaded and data or {}
-    layout.window = layout.window or {}
-    layout.sidepanel = layout.sidepanel or {}
-    window.save_layout(layout.window)
-    sidepanel.save_layout(layout.sidepanel)
-    jsoncodec.save_to_file(filepath, layout)
-end
-
 local function _save_workspace()
     if not _ws_data then
         return false
@@ -300,8 +275,6 @@ local function _load_workspace(dir)
     if ws_config and ws_config.name then
         statusline.set_workspace_name(ws_config.name)
     end
-
-    _load_layout()
 
     return "ok", nil
 end
@@ -526,7 +499,7 @@ end
 ---@return string[]
 function M.get_commands()
     _ensure_init()
-    local cmds = { "workspace", "log", "ui", "sidepanel", "page" }
+    local cmds = { "workspace", "log", "statuspanel", "sidepanel", "page" }
     if _ws_data then
         vim.list_extend(cmds, { "task", "var" })
         vim.list_extend(cmds, extdata.lead_commands())
@@ -541,8 +514,8 @@ function M.run_command(cmd, rest, opts)
     _ensure_init()
     if cmd == "workspace" then
         M.workspace_command(unpack(rest))
-    elseif cmd == "ui" then
-        M.ui_command(unpack(rest))
+    elseif cmd == "statuspanel" then
+        M.statuspanel_command(unpack(rest))
     elseif cmd == "sidepanel" then
         M.sidepanel_command(unpack(rest))
     elseif cmd == "page" then
@@ -575,8 +548,8 @@ function M.get_subcommands(cmd, rest, for_cmd_menu)
         return M.task_subcommands(rest)
     elseif cmd == "workspace" then
         return M.workspace_subcommands(rest)
-    elseif cmd == "ui" then
-        return M.ui_subcommands(rest)
+    elseif cmd == "statuspanel" then
+        return M.statuspanel_subcommands(rest)
     elseif cmd == "sidepanel" then
         return M.sidepanel_subcommands(rest)
     elseif cmd == "page" then
@@ -743,15 +716,18 @@ function M.var_command(command)
     end
 end
 
-function M.ui_subcommands(args)
+function M.statuspanel_subcommands(args)
     if #args == 0 then
-        return { "toggle", "show", "hide", "clean", "save_layout" }
+        return { "toggle", "show", "hide", "clean" }
     end
     return {}
 end
 
 function M.sidepanel_subcommands(args)
     if #args == 0 then
+        return { "toggle", "show", "hide" }
+    end
+    if #args == 1 and args[1] == "show" then
         return sidepanel.view_names()
     end
     return {}
@@ -788,7 +764,7 @@ function M.page_command(command, arg1, arg2)
     end
 end
 
-function M.ui_command(command)
+function M.statuspanel_command(command)
     _ensure_init()
     if not command or command == "toggle" then
         M.toggle_window()
@@ -799,41 +775,47 @@ function M.ui_command(command)
     elseif command == "clean" then
         if _ws_data and _ws_data.page_manager then _ws_data.page_manager.delete_expired_groups() end
         extdata.clean_page_groups()
-    elseif command == "save_layout" then
-        _save_layout()
     else
         vim.notify("Invalid command: " .. command)
     end
 end
 
-function M.sidepanel_command(command)
-    if command == nil or command == "" then
+function M.sidepanel_command(command, name)
+    if command == nil or command == "" or command == "toggle" then
         sidepanel.toggle()
+    elseif command == "show" then
+        sidepanel.show(name)
+    elseif command == "hide" then
+        sidepanel.hide()
     else
-        sidepanel.show(command)
+        vim.notify("Invalid sidepanel command: " .. tostring(command))
     end
 end
 
 function M.show_window()
     _ensure_init()
-    window.show_window()
-    sidepanel.show()
+    if not window.is_visible() then
+        if sidepanel.is_visible() then
+            sidepanel.hide()
+            window.show_window()
+            sidepanel.show()
+        else
+            window.show_window()
+        end
+    end
 end
 
 function M.hide_window()
     _ensure_init()
     window.hide_window()
-    sidepanel.hide()
 end
 
 function M.toggle_window()
     _ensure_init()
     if window.is_visible() then
-        window.hide_window()
-        sidepanel.hide()
+        M.hide_window()
     else
-        window.show_window()
-        sidepanel.show()
+        M.show_window()
     end
 end
 
