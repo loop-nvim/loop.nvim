@@ -1,5 +1,6 @@
 local M = {}
 
+local loopconfig = require('loop').config
 local Process = require("loop.tools.Process")
 local uitools = require("loop.tools.uitools")
 local strtools = require("loop.tools.strtools")
@@ -12,50 +13,150 @@ local picker = require('loop.tools.picker')
 ---@field exclude_globs string[] List of glob patterns for fd to ignore
 ---@field max_results number?
 
----@param query string
----@param opts loop.filepicker.fdopts
----@return string, string[],boolean
-local function get_search_cmd(query, opts)
-    if vim.fn.executable("fd") == 1 then
-        local args = { "--type", "f", "--fixed-strings", "--color", "never" }
-        -- fd ignores hidden files by default; use --hidden if you wanted them.
-        if opts.exclude_globs then
-            for _, glob in ipairs(opts.exclude_globs) do
-                table.insert(args, "--exclude")
-                table.insert(args, glob)
+local uv = vim.loop
+
+-- Async recursive directory search
+local function async_walk_dir(dir, query, include_globs, exclude_globs, max_results, on_chunk, on_done)
+    max_results = max_results or 1000
+    local results_count = 0
+    local pending_dirs = { dir }
+
+    local function is_excluded(path)
+        for _, pat in ipairs(exclude_globs or {}) do
+            if path:match(pat) then return true end
+        end
+        return false
+    end
+
+    local function is_included(path)
+        if not include_globs or #include_globs == 0 then return true end
+        for _, pat in ipairs(include_globs) do
+            if path:match(pat) then return true end
+        end
+        return false
+    end
+
+    local function process_next_dir()
+        if results_count >= max_results or #pending_dirs == 0 then
+            vim.schedule(function()
+                on_done()
+            end)
+            return
+        end
+
+        local path = table.remove(pending_dirs, 1)
+        local fd = uv.fs_scandir(path)
+        if fd then
+            local chunk = {}
+            while true do
+                local name, type_ = uv.fs_scandir_next(fd)
+                if not name then break end
+                local full_path = vim.fs.joinpath(path, name)
+                if type_ == "file" then
+                    if full_path:lower():find(query:lower(), 1, true)
+                        and is_included(full_path)
+                        and not is_excluded(full_path)
+                    then
+                        table.insert(chunk, full_path)
+                        results_count = results_count + 1
+                        if results_count >= max_results then break end
+                    end
+                elseif type_ == "directory" then
+                    table.insert(pending_dirs, full_path)
+                end
+            end
+            if #chunk > 0 then
+                vim.schedule(function()
+                    on_chunk(chunk)
+                end)
             end
         end
-        table.insert(args, "--")
-        table.insert(args, query)
-        return "fd", args, true
+
+        -- Continue processing next directory in the next event loop tick
+        vim.schedule(function()
+            process_next_dir()
+        end)
     end
 
-    -- Fallback to find
-    -- Logic: find . -type f -not -path '*/.*' ...
-    local args = { ".", "-type", "f" }
+    -- Start processing
+    process_next_dir()
 
-    -- 1. Ignore hidden files and directories (starts with a dot)
-    table.insert(args, "-not")
-    table.insert(args, "-path")
-    table.insert(args, "*/.*")
+    -- Return a cancel function
+    return function()
+        pending_dirs = {}
+    end
+end
 
-    -- 2. Add explicit exclude globs
+local function _build_label_chunks(display, query)
+    local chunks = {}
+    if query and query ~= "" then
+        local lower_display = display:lower()
+        local lower_query = query:lower()
+        local start_idx = 1
+
+        while true do
+            local s, e = lower_display:find(lower_query, start_idx, true)
+            if not s then
+                if start_idx <= #display then
+                    table.insert(chunks, { display:sub(start_idx) })
+                end
+                break
+            end
+            if s > start_idx then
+                table.insert(chunks, { display:sub(start_idx, s - 1) })
+            end
+            table.insert(chunks, { display:sub(s, e), "Label" })
+            start_idx = e + 1
+        end
+    else
+        table.insert(chunks, { display })
+    end
+    return chunks
+end
+
+local function async_lua_search(query, fd_opts, fetch_opts, callback)
+    local cancel_fn
+    cancel_fn = async_walk_dir(
+        fd_opts.cwd,
+        query,
+        fd_opts.include_globs,
+        fd_opts.exclude_globs,
+        fd_opts.max_results,
+        function(chunk)
+            local items = {}
+            for _, path in ipairs(chunk) do
+                local display = path:gsub("^" .. fd_opts.cwd .. "[/\\]?", "")
+                table.insert(items,
+                    {
+                        label_chunks = _build_label_chunks(display, query),
+                        data = path
+                    })
+            end
+            callback(items)
+        end,
+        function()
+            -- Finished
+            callback(nil)
+        end
+    )
+    return cancel_fn
+end
+
+---@param query string
+---@param opts loop.filepicker.fdopts
+---@return string?, string[]?
+local function get_search_cmd(query, opts)
+    local args = { "--type", "f", "--fixed-strings", "--color", "never" }
+    -- fd ignores hidden files by default; use --hidden if you wanted them.
     if opts.exclude_globs then
         for _, glob in ipairs(opts.exclude_globs) do
-            table.insert(args, "-not")
-            table.insert(args, "-path")
-            -- Wrapping in wildcards to match anywhere in the path
-            table.insert(args, "*/" .. glob .. "/*")
+            table.insert(args, "--exclude")
+            table.insert(args, glob)
         end
     end
-
-    -- 3. Case-insensitive path search for the query
-    if query and query ~= "" then
-        table.insert(args, "-ipath")
-        table.insert(args, "*" .. query .. "*")
-    end
-
-    return "find", args, false
+    table.insert(args, "--")
+    table.insert(args, query)
+    return "fd", args
 end
 
 ---@param query string User input for literal string matching
@@ -65,7 +166,7 @@ end
 ---@return fun() cancel Function to kill the underlying process
 local function async_fd_search(query, fd_opts, fetch_opts, callback)
     assert(fd_opts.cwd, "CWD must be provided for file searching")
-    local cmd, args, exclude_globs_handled = get_search_cmd(query, fd_opts)
+    local cmd, args = get_search_cmd(query, fd_opts)
 
     -- LPeg matchers for include/exclude globs
     local function to_matchers(globs)
@@ -78,7 +179,6 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
     end
 
     local include_matchers = to_matchers(fd_opts.include_globs)
-    local exclude_matchers = (not exclude_globs_handled) and to_matchers(fd_opts.exclude_globs) or {}
 
     local process
     local read_stop = false
@@ -92,16 +192,6 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
 
             line = line:gsub("^%.[/]", "")
 
-            -- Apply exclude globs
-            local excluded = false
-            for i = 1, #exclude_matchers do
-                if exclude_matchers[i]:match(line) then
-                    excluded = true
-                    break
-                end
-            end
-            if excluded then goto continue end
-
             -- Apply include globs
             local allowed = (#include_matchers == 0)
             if not allowed then
@@ -112,6 +202,7 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
                     end
                 end
             end
+
             if not allowed then goto continue end
 
             if count < max_results then
@@ -119,30 +210,7 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
                 local display = strtools.smart_crop_path(line, fetch_opts.list_width)
 
                 -- Build label_chunks with case-insensitive substring highlighting
-                local chunks = {}
-                if query and query ~= "" then
-                    local lower_display = display:lower()
-                    local lower_query = query:lower()
-                    local start_idx = 1
-
-                    while true do
-                        local s, e = lower_display:find(lower_query, start_idx, true)
-                        if not s then
-                            if start_idx <= #display then
-                                table.insert(chunks, { display:sub(start_idx) })
-                            end
-                            break
-                        end
-                        if s > start_idx then
-                            table.insert(chunks, { display:sub(start_idx, s - 1) })
-                        end
-                        table.insert(chunks, { display:sub(s, e), "Label" })
-                        start_idx = e + 1
-                    end
-                else
-                    table.insert(chunks, { display })
-                end
-
+                local chunks = _build_label_chunks(display, query)
                 table.insert(items, {
                     label_chunks = chunks, -- use chunks instead of label
                     data = path,
@@ -228,7 +296,11 @@ function M.open(opts)
                 exclude_globs = opts.exclude_globs or { ".git", "node_modules", "target" },
                 max_results = opts.max_results,
             }
-            return async_fd_search(query, fd_opts, fetch_opts, callback)
+            if loopconfig.use_fd_find then
+                return async_fd_search(query, fd_opts, fetch_opts, callback)
+            else
+                return async_lua_search(query, fd_opts, fetch_opts, callback)
+            end
         end,
         async_preview = function(item_data, preview_opts, callback)
             local filepath = item_data

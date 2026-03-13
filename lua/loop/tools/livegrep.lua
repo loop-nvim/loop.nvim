@@ -62,6 +62,11 @@ end
 ---@return fun() cancel
 local function async_grep_search(query, grep_opts, fetch_opts, callback)
     local cmd, args = get_grep_cmd(query, grep_opts)
+    if vim.fn.executable(cmd) ~= 1 then
+        vim.notify_once(("Grep executable `%s` not found"):format(cmd), vim.log.levels.ERROR)
+        callback(nil)
+        return function() end
+    end
     local count = 0
     local process
     local max_results = grep_opts.max_results or 1000
