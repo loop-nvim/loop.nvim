@@ -62,8 +62,8 @@ function M.get_regular_window(override)
             return winid
         end
     end
-    -- No regular window found; create a horizontal split
-    vim.cmd('split')
+    -- No regular window found; create a vertial split
+    vim.cmd('vsplit')
     local new_win = vim.api.nvim_get_current_win()
     return new_win
 end

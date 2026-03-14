@@ -1,4 +1,5 @@
 local class = require("loop.tools.class")
+local table_clear = require("table.clear")
 
 ---@class loop.tools.Tree.Item
 ---@field id any
@@ -482,86 +483,60 @@ end
 ---@field depth integer
 
 ---Flatten the tree in depth-first order.
----
----Used for UIs (Neovim buffers, virtual lists, etc.)
----@param filter (fun(id:any,data:any):nil|"keep"|"exclude"|"exclude_children")|nil
+---@param filter (fun(id:any, data:any):boolean?)?  Return false to skip children
 ---@return loop.tools.Tree.FlatNode[]
 function Tree:flatten(filter)
-	---@type loop.tools.Tree.FlatNode<any>[]
 	local out = {}
+	self:flatten_into(out, filter)
+	return out
+end
 
-	-- Set to track visited node IDs during this traversal
-	local visited = {}
-	local path = {} -- for better error reporting (shows the cycle path)
-
-	local function walk(id, depth, filter_applied)
-		local node = self._nodes[id]
-		if not node then
-			error(string.format("Tree:flatten() - Invalid node id %s (nil node)", tostring(id)))
-		end
-
-		local filter_mode
-		if not filter_applied then
-			filter_mode = filter and filter(id, node.data) or nil
-			if filter_mode then
-				filter_applied = true
-				if filter_mode == 'exclude' then
-					goto continue
-				end
-			end
-		end
-
-		-- Cycle detection
-		if visited[id] then
-			-- Build a readable cycle path
-			local cycle_start = id
-			local path_str = {}
-			for i = #path, 1, -1 do
-				table.insert(path_str, 1, tostring(path[i]))
-				if path[i] == cycle_start then break end
-			end
-			table.insert(path_str, tostring(id)) -- close the loop
-
-			assert(false, string.format(
-				"Cycle detected in tree structure during flatten(): %s → %s (loop closes)",
-				table.concat(path_str, " → "), tostring(id)
-			))
-		end
-
-		-- Mark as being visited (in current path)
-		visited[id] = true
-		table.insert(path, id)
-
-		out[#out + 1] = {
+---Flatten the tree in depth-first order.
+---@param out loop.tools.Tree.FlatNode[]
+---@param filter (fun(id:any, data:any):boolean?)?  Return false to skip children
+function Tree:flatten_into(out, filter)
+	table_clear(out)
+	-- Handler function for walk
+	local function handler(id, data, depth)
+		table.insert(out, {
 			id = id,
-			data = node.data,
+			data = data,
 			depth = depth,
-		}
-
-		if not filter_mode or filter_mode ~= 'exclude_children' then
-			local child = node.first_child
-			while child do
-				walk(child, depth + 1, filter_applied)
-				child = self._nodes[child].next_sibling
-			end
+		})
+		-- Return filter result for children traversal
+		if filter then
+			return filter(id, data)
+		else
+			return true -- traverse children by default
 		end
+	end
+	self:walk(handler)
+end
 
-		-- Backtrack: remove from current path
-		table.remove(path)
+---Walk the tree in depth-first order recursively.
+---@param handler fun(id:any, data:any, depth:number):boolean Return false to skip children
+function Tree:walk(handler)
+	-- Internal recursive function
+	local function walk_node(current_id, depth)
+		local node = self._nodes[current_id]
+		if not node then return end
 
-		::continue::
+		local keep_children = handler(current_id, node.data, depth)
+		if keep_children == false then return end
+
+		local child = node.first_child
+		while child do
+			walk_node(child, depth + 1)
+			child = self._nodes[child].next_sibling
+		end
 	end
 
+	-- Start from root nodes (depth = 0)
 	local id = self._root_first
 	while id do
-		if visited[id] then
-			assert(false, string.format("Node %s appears under multiple roots - not a valid forest", tostring(id)))
-		end
-		walk(id, 0, false)
+		walk_node(id, 0)
 		id = self._nodes[id].next_sibling
 	end
-
-	return out
 end
 
 ---Validate internal tree invariants.

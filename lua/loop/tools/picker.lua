@@ -124,7 +124,7 @@ local function _compute_layout(opts)
         prev_width = 0
     end
 
-    local total_height = math.ceil(lines * _clamp(opts.height_ratio or .7, 0.2, 0.8))
+    local total_height = math.ceil(lines * _clamp(opts.height_ratio or .7, 0.3, 0.8))
     local list_height = _clamp(total_height - 3, 1, lines)
 
     local row = math.floor((lines - total_height) / 2)

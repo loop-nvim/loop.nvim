@@ -61,26 +61,6 @@ vim.api.nvim_set_hl(0, _header_hl_group, {
     end)()
 })
 
-local function _normalize_text_chunks(chunks)
-    local out = {}
-
-    for _, chunk in ipairs(chunks or {}) do
-        local text = chunk[1] or ""
-        local hl = chunk[2]
-
-        local parts = vim.split(text, "\n", { trimempty = false })
-        for i, part in ipairs(parts) do
-            table.insert(out, {
-                part,        -- text
-                hl,          -- highlight
-                (i < #parts) -- is new line
-            })
-        end
-    end
-
-    return out
-end
-
 ---@param item loop.comp.ItemTree.ItemDef
 ---@return loop.comp.ItemTree.ItemData
 local function _itemdef_to_itemdata(item)
@@ -92,82 +72,6 @@ local function _itemdef_to_itemdata(item)
         load_sequence = 1,
         _dirty = true,
     }
-end
-
----@param tree loop.tools.Tree
----@param async_update fun()
-local function _refresh_tree(tree, async_update)
-    ---@param parent_id any
-    ---@param loaded_children loop.comp.ItemTree.ItemDef[]
-    local set_children = function(parent_id, loaded_children)
-        local old_ids = {}
-        for _, child in ipairs(tree:get_children(parent_id)) do
-            old_ids[child.id] = true
-        end
-        for _, child in ipairs(loaded_children or {}) do
-            old_ids[child.id] = nil
-            ---@type loop.comp.ItemTree.ItemData
-            local child_basedata = tree:get_data(child.id)
-            if child_basedata then
-                local existing_parent = tree:get_parent_id(child.id)
-                assert(
-                    not existing_parent or existing_parent == parent_id,
-                    "id exists under a different node: " .. tostring(child.id)
-                )
-                if child.data then child_basedata.userdata = child.data end
-                if child.expanded ~= nil then child_basedata.expanded = child.expanded end
-                child_basedata.children_callback = child.children_callback
-                if child_basedata.children_callback then
-                    child_basedata.reload_children = true
-                    child_basedata.load_sequence = child_basedata.load_sequence + 1
-                else
-                    tree:remove_children(child.id)
-                end
-            else
-                tree:add_item(parent_id, child.id, _itemdef_to_itemdata(child))
-            end
-        end
-        for id, _ in pairs(old_ids) do
-            tree:remove_item(id)
-        end
-    end
-
-    local flat = {}
-    local have_loading_nodes = false
-    local nodes = tree:flatten(function(id, data)
-        if not data.expanded then
-            return "exclude_children"
-        end
-        return nil
-    end)
-
-    for _, flat_node in ipairs(nodes) do
-        table.insert(flat, flat_node)
-        ---@type loop.comp.ItemTree.ItemData
-        local item = flat_node.data
-        if item.expanded then
-            local item_id = flat_node.id
-            if item.children_callback and item.reload_children ~= false then
-                item.reload_children = false
-                item.children_loading = true
-                have_loading_nodes = true
-
-                local sequence = item.load_sequence
-                vim.schedule(function()
-                    if sequence ~= item.load_sequence or not item.children_callback then return end
-                    item.children_callback(function(loaded_children)
-                        if sequence ~= item.load_sequence then return end
-                        if tree:get_data(item_id) then
-                            item.children_loading = false
-                            set_children(item_id, loaded_children)
-                            async_update()
-                        end
-                    end)
-                end)
-            end
-        end
-    end
-    return flat, have_loading_nodes
 end
 
 ---@param args loop.comp.ItemTree.InitArgs
@@ -217,7 +121,9 @@ function ItemTree:_get_cur_node(comp)
         end
         row = row - 1
     end
+
     local node = self._flat[row]
+
     if not node then return nil end
     return node.id, node.data
 end
@@ -378,8 +284,11 @@ end
 ---@param parent_id any
 ---@param item loop.comp.ItemTree.ItemDef
 function ItemTree:add_item(parent_id, item)
-    self._tree:add_item(parent_id, item.id, _itemdef_to_itemdata(item))
-    self:_request_render()
+    local item_data = _itemdef_to_itemdata(item)
+    self._tree:add_item(parent_id, item.id, item_data)
+    if not self:_request_children(item.id, item_data) then
+        self:_request_render()
+    end
 end
 
 ---@param parent_id any
@@ -388,7 +297,6 @@ function ItemTree:add_items(parent_id, items)
     for _, item in ipairs(items) do
         self._tree:add_item(parent_id, item.id, _itemdef_to_itemdata(item))
     end
-    self:_request_render()
 end
 
 ---@param parent_id any
@@ -406,6 +314,11 @@ function ItemTree:set_children(parent_id, children)
     end
     self._tree:set_children(parent_id, baseitems)
     self:_request_render()
+    for _, item in ipairs(baseitems) do
+        if item.data.children_callback then
+            self:_request_children(item.id, item.data)
+        end
+    end
 end
 
 function ItemTree:set_item_data(id, data)
@@ -429,7 +342,7 @@ function ItemTree:set_children_callback(id, callback)
         base_data.load_sequence = base_data.load_sequence + 1
     end
     self._tree:set_item_data(id, base_data)
-    self:_request_render()
+    self:_request_children(id, base_data)
 end
 
 ---@param item loop.comp.ItemTree.ItemDef
@@ -499,18 +412,17 @@ function ItemTree:_request_render()
 end
 
 function ItemTree:_on_render_request(buf)
-    local flat, have_loading_nodes = _refresh_tree(self._tree, function()
-        vim.schedule(function() self:_request_render() end)
-    end)
-    if have_loading_nodes and not self._no_delay_next_render then
-        vim.defer_fn(function()
-            self._no_delay_next_render = true
-            self:_request_render()
-        end, self._render_delay_ms or 150)
-        return false
-    end
-    self._no_delay_next_render = false
-
+    --local flat, have_loading_nodes = _refresh_tree(self._tree, function()
+    --    vim.schedule(function() self:_request_render() end)
+    --end)
+    --if have_loading_nodes and not self._no_delay_next_render then
+    --    vim.defer_fn(function()
+    --        self._no_delay_next_render = true
+    --         self:_request_render()
+    --      end, self._render_delay_ms or 150)
+    --     return false
+    --end
+    --self._no_delay_next_render = false
 
     table_clear(self._buffer_lines)
     table_clear(self._extmarks_data)
@@ -554,8 +466,6 @@ function ItemTree:_on_render_request(buf)
         end
     end
 
-    self._flat = flat
-
     -- Cache these outside the loop to avoid repeated overhead
     local t_insert = table.insert
     local s_rep = string.rep
@@ -566,15 +476,15 @@ function ItemTree:_on_render_request(buf)
     local loading_char = self._loading_char
     local expand_padding = s_rep(" ", vim.fn.strdisplaywidth(expand_char)) .. " "
 
-    -- Pre-generate indents for common depths (e.g., up to 20) to avoid s_rep
-    local indent_cache = {}
-    for i = 0, 20 do indent_cache[i] = s_rep(indent_str, i) end
 
-    for _, flatnode in ipairs(flat) do
-        ---@type loop.comp.ItemTree.ItemData
-        local item = flatnode.data
+    self._tree:flatten_into(self._flat, function(id, data)
+        return data.expanded ~= false
+    end)
+
+    for _, flatnode in ipairs(self._flat) do
         local item_id = flatnode.id
-        local depth = flatnode.depth or 0
+        local item = flatnode.data ---@cast item loop.comp.ItemTree.ItemData
+        local depth = flatnode.depth
 
         -- 2. FAST PREFIX CONSTRUCTION
         local icon = ""
@@ -584,7 +494,7 @@ function ItemTree:_on_render_request(buf)
                 or expand_char
         end
 
-        local indent = indent_cache[depth] or s_rep(indent_str, depth)
+        local indent = self._indent_cache[depth] or s_rep(indent_str, depth)
         local prefix = icon ~= "" and (indent .. icon .. " ") or (indent .. expand_padding)
         local prefix_len = #prefix
 
@@ -659,38 +569,42 @@ function ItemTree:_on_render_request(buf)
 end
 
 function ItemTree:toggle_expand(id)
-    local item = self:_get_data(id)
-    if item then
-        item.expanded = not item.expanded
-        item._dirty = true -- state change may affect the formatter
-        self:_request_render()
-        self._trackers:invoke("on_toggle", id, item.userdata, item.expanded)
+    local data = self:_get_data(id)
+    if data then
+        if not data.expanded then
+            self:expand(id)
+        else
+            self:collapse(id)
+        end
     end
 end
 
 function ItemTree:expand(id)
     ---@type loop.comp.ItemTree.ItemData
-    local item = self._tree:get_data(id)
-    if item then
-        item.expanded = true
-        self:_request_render()
-        self._trackers:invoke("on_toggle", id, item.userdata, true)
+    local data = self._tree:get_data(id)
+    if data then
+        data.expanded = true
+        data._dirty = true -- state change may affect the formatter
+        if not self:_request_children(id, data) then
+            self:_request_render()
+        end
+        self._trackers:invoke("on_toggle", id, data.userdata, true)
     end
 end
 
 function ItemTree:collapse(id)
     ---@type loop.comp.ItemTree.ItemData
-    local item = self._tree:get_data(id)
-    if item then
-        item.expanded = false
+    local data = self._tree:get_data(id)
+    if data then
+        data.expanded = false
+        data._dirty = true -- state change may affect the formatter
         self:_request_render()
-        self._trackers:invoke("on_toggle", id, item.userdata, false)
+        self._trackers:invoke("on_toggle", id, data.userdata, false)
     end
 end
 
 function ItemTree:expand_all(id)
     self:_expand_recursive(id)
-    self:_request_render()
 end
 
 function ItemTree:collapse_all(id)
@@ -699,12 +613,15 @@ function ItemTree:collapse_all(id)
 end
 
 function ItemTree:_expand_recursive(id)
-    local item = self:_get_data(id)
-    if not item then return end
+    local data = self:_get_data(id)
+    if not data then return end
     -- recusive expand does not async fetched nodes (children_callback) for performance
-    if not item.expanded and self._tree:have_children(id) then
-        item.expanded = true
-        self._trackers:invoke("on_toggle", id, item.userdata, true)
+    if not data.expanded and (self._tree:have_children(id) or data.children_callback) then
+        data.expanded = true
+        if not self:_request_children(id, data) then
+            self:_request_render()
+        end
+        self._trackers:invoke("on_toggle", id, data.userdata, true)
     end
     local children = self._tree:get_children(id)
     for _, child in ipairs(children) do
@@ -750,6 +667,66 @@ end
 
 function ItemTree:refresh_content()
     self:_request_render()
+end
+
+---@param item_id any
+---@param item_data loop.comp.ItemTree.ItemData
+---@return boolean
+function ItemTree:_request_children(item_id, item_data)
+    local tree = self._tree
+    ---@param parent_id any
+    ---@param loaded_children loop.comp.ItemTree.ItemDef[]
+    local set_children = function(parent_id, loaded_children)
+        local old_ids = {}
+        for _, child in ipairs(tree:get_children(parent_id)) do
+            old_ids[child.id] = true
+        end
+        for _, child in ipairs(loaded_children or {}) do
+            old_ids[child.id] = nil
+            ---@type loop.comp.ItemTree.ItemData
+            local child_basedata = tree:get_data(child.id)
+            if child_basedata then
+                local existing_parent = tree:get_parent_id(child.id)
+                assert(
+                    not existing_parent or existing_parent == parent_id,
+                    "id exists under a different node: " .. tostring(child.id)
+                )
+                if child.data then child_basedata.userdata = child.data end
+                if child.expanded ~= nil then child_basedata.expanded = child.expanded end
+                child_basedata.children_callback = child.children_callback
+                if child_basedata.children_callback then
+                    child_basedata.reload_children = true
+                    child_basedata.load_sequence = child_basedata.load_sequence + 1
+                else
+                    tree:remove_children(child.id)
+                end
+            else
+                tree:add_item(parent_id, child.id, _itemdef_to_itemdata(child))
+            end
+        end
+        for id, _ in pairs(old_ids) do
+            tree:remove_item(id)
+        end
+    end
+    ---@type loop.comp.ItemTree.ItemData
+    if item_data.children_callback and item_data.reload_children ~= false then
+        item_data.reload_children = false
+        item_data.children_loading = true
+        local sequence = item_data.load_sequence
+        vim.schedule(function()
+            if sequence ~= item_data.load_sequence or not item_data.children_callback then return end
+            item_data.children_callback(function(loaded_children)
+                if sequence ~= item_data.load_sequence then return end
+                if tree:get_data(item_id) then
+                    item_data.children_loading = false
+                    set_children(item_id, loaded_children)
+                    self:_request_render()
+                end
+            end)
+        end)
+        return true
+    end
+    return false
 end
 
 return ItemTree

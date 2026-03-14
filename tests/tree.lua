@@ -231,7 +231,7 @@ describe("loop.tools.Tree (new API)", function()
 
         local flat = tree:flatten(function(id)
             if id == "B" then
-                return "exclude_children"
+                return false
             end
         end)
 
