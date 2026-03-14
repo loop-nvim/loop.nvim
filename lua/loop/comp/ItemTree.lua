@@ -410,159 +410,101 @@ function ItemTree:_request_render()
         self._linked_buf.request_refresh()
     end
 end
-
 function ItemTree:_on_render_request(buf)
-    --local flat, have_loading_nodes = _refresh_tree(self._tree, function()
-    --    vim.schedule(function() self:_request_render() end)
-    --end)
-    --if have_loading_nodes and not self._no_delay_next_render then
-    --    vim.defer_fn(function()
-    --        self._no_delay_next_render = true
-    --         self:_request_render()
-    --      end, self._render_delay_ms or 150)
-    --     return false
-    --end
-    --self._no_delay_next_render = false
-
     table_clear(self._buffer_lines)
     table_clear(self._extmarks_data)
     table_clear(self._hl_calls)
 
-    -- HEADER (left chunk normal, right chunk as virtual text)
-    if self._header then
-        local row = 0
-        local left_chunk = self._header[1] or { "" }
-        local right_chunk = self._header[2] or { "" }
-        -- Full-line background
-        table.insert(self._extmarks_data, {
-            row, 0,
-            {
-                line_hl_group = _header_hl_group,
-            }
-        })
-        -- Left-aligned text
-        local line = left_chunk[1] or ""
-        table.insert(self._buffer_lines, line)
-        -- Left chunk highlight
-        if left_chunk[2] then
-            table.insert(self._extmarks_data, {
-                row, 0, {
-                end_col = #line,
-                hl_group = left_chunk[2],
-            }
-            })
-        end
-        -- Right-aligned virtual text
-        local right_text = right_chunk[1] or ""
-        if #right_text > 0 then
-            table.insert(self._extmarks_data, {
-                row, 0, -- start_col ignored for virt_text
-                {
-                    virt_text = { { right_text, right_chunk[2] } },
-                    virt_text_pos = "right_align",
-                    hl_mode = "combine",
-                }
-            })
-        end
-    end
-
-    -- Cache these outside the loop to avoid repeated overhead
     local t_insert = table.insert
     local s_rep = string.rep
 
+    -- 1. HEADER RENDERING
+    if self._header then
+        local row = 0
+        local left, right = self._header[1] or {}, self._header[2] or {}
+        local line = left[1] or ""
+        
+        t_insert(self._buffer_lines, line)
+        t_insert(self._extmarks_data, { row, 0, { line_hl_group = _header_hl_group } })
+        
+        if left[2] then
+            t_insert(self._hl_calls, { hl = left[2], row = row, s_col = 0, e_col = #line })
+        end
+        if right[1] and #right[1] > 0 then
+            t_insert(self._extmarks_data, { row, 0, {
+                virt_text = { { right[1], right[2] } },
+                virt_text_pos = "right_align",
+                hl_mode = "combine",
+            }})
+        end
+    end
+
+    -- 2. FLATTEN TREE
+    self._tree:flatten_into(self._flat, function(_, data) return data.expanded ~= false end)
+
     local indent_str = self._indent_string
-    local expand_char = self._expand_char
-    local collapse_char = self._collapse_char
-    local loading_char = self._loading_char
+    local expand_char, collapse_char, loading_char = self._expand_char, self._collapse_char, self._loading_char
     local expand_padding = s_rep(" ", vim.fn.strdisplaywidth(expand_char)) .. " "
 
-
-    self._tree:flatten_into(self._flat, function(id, data)
-        return data.expanded ~= false
-    end)
-
+    -- 3. NODE RENDERING
     for _, flatnode in ipairs(self._flat) do
-        local item_id = flatnode.id
-        local item = flatnode.data ---@cast item loop.comp.ItemTree.ItemData
-        local depth = flatnode.depth
+        local item_id, item, depth = flatnode.id, flatnode.data, flatnode.depth
+        local row = #self._buffer_lines
 
-        -- 2. FAST PREFIX CONSTRUCTION
+        -- Prefix Construction
         local icon = ""
         if item_id and (self._tree:have_children(item_id) or item.children_callback) then
-            icon = (item.children_loading and loading_char)
-                or (item.expanded and collapse_char)
-                or expand_char
+            icon = (item.children_loading and loading_char) or (item.expanded and collapse_char) or expand_char
         end
 
         local indent = self._indent_cache[depth] or s_rep(indent_str, depth)
         local prefix = icon ~= "" and (indent .. icon .. " ") or (indent .. expand_padding)
-        local prefix_len = #prefix
-
-        -- CACHE LOGIC START
+        
+        -- Cache/Formatter Logic
         if item.dirty or not item._cached_output then
-            local text_chunks, virt_chunks = self._formatter(item_id, item.userdata, item.expanded)
-            item._cached_output = { text = text_chunks, virt = virt_chunks }
+            local text, virt = self._formatter(item_id, item.userdata, item.expanded)
+            item._cached_output = { text = text, virt = virt }
             item.dirty = false
         end
 
         local text_chunks = item._cached_output.text
-        local virt_chunks = item._cached_output.virt
-        -- CACHE LOGIC END
-
-
         local current_line = prefix
-        local current_col = prefix_len
-        local row_offset = #self._buffer_lines
+        local col = #prefix
 
         for i = 1, #text_chunks do
             local chunk = text_chunks[i]
-            local text, hl, is_nl = chunk[1], chunk[2], chunk[3]
-            local text_len = #text
-            if text_len > 0 then
-                if hl then
-                    -- Queue for vim.hl.range instead of extmarks
-                    table.insert(self._hl_calls, {
-                        hl = hl,
-                        row = row_offset,
-                        s_col = current_col,
-                        e_col = current_col + text_len
-                    })
+            local txt, hl = chunk[1], chunk[2]
+            local len = #txt
+            if len > 0 then
+                if hl then 
+                    t_insert(self._hl_calls, { hl = hl, row = row, s_col = col, e_col = col + len }) 
                 end
-                current_line = current_line .. text
-                current_col = current_col + text_len
-            end
-            if is_nl then
-                t_insert(self._buffer_lines, current_line)
-                -- Prep for next line (multi-line node support)
-                row_offset = row_offset + 1
-                current_line = s_rep(" ", prefix_len)
-                current_col = prefix_len
+                current_line = current_line .. txt
+                col = col + len
             end
         end
 
-        -- Finalize the last (or only) line of this node
         t_insert(self._buffer_lines, current_line)
 
-        -- 4. BATCH VIRTUAL TEXT
-        if virt_chunks and #virt_chunks > 0 then
-            t_insert(self._extmarks_data, {
-                #self._buffer_lines - 1, 0,
-                { virt_text = virt_chunks, hl_mode = "combine" }
-            })
+        -- Virtual Text
+        local virt = item._cached_output.virt
+        if virt and #virt > 0 then
+            t_insert(self._extmarks_data, { row, 0, { virt_text = virt, hl_mode = "combine" } })
         end
     end
 
+    -- 4. BUFFER UPDATES
     vim.api.nvim_buf_clear_namespace(buf, _ns_id, 0, -1)
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, self._buffer_lines)
     vim.bo[buf].modifiable = false
 
+    -- Batch apply highlights and extmarks
     for _, h in ipairs(self._hl_calls) do
         vim.hl.range(buf, _ns_id, h.hl, { h.row, h.s_col }, { h.row, h.e_col })
     end
-
-    for _, data in ipairs(self._extmarks_data) do
-        vim.api.nvim_buf_set_extmark(buf, _ns_id, data[1], data[2], data[3])
+    for _, d in ipairs(self._extmarks_data) do
+        vim.api.nvim_buf_set_extmark(buf, _ns_id, d[1], d[2], d[3])
     end
 
     return true
