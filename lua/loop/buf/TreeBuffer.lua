@@ -40,7 +40,7 @@ local strtools = require('loop.tools.strtools')
 ---@field formatter loop.comp.TreeBuffer.FormatterFn
 ---@field expand_char string?
 ---@field collapse_char string?
----@field enable_loading_indictaor boolean?
+---@field enable_loading_indicator boolean?
 ---@field loading_char string?
 ---@field indent_string string?
 ---@field render_delay_ms number?
@@ -51,7 +51,7 @@ local strtools = require('loop.tools.strtools')
 ---@field on_selection? fun(id:any,data:any)
 ---@field on_toggle? fun(id:any,data:any,expanded:boolean)
 
-local _ns_id = vim.api.nvim_create_namespace('LoopLuginTreeBuffer')
+local _ns_id = vim.api.nvim_create_namespace('LoopPluginTreeBuffer')
 
 local _header_hl_group = "LoopLuginTreeBufferHeader"
 vim.api.nvim_set_hl(0, _header_hl_group, {
@@ -78,6 +78,8 @@ local function _itemdef_to_itemdata(item)
     }
 end
 
+local _filter = function(_, data) return data.expanded ~= false end
+
 ---@param opts loop.comp.TreeBufferOpts
 function TreeBuffer:init(opts)
     BaseBuffer.init(self, opts.base_opts)
@@ -87,7 +89,7 @@ function TreeBuffer:init(opts)
 
     self._expand_char = opts.expand_char or "▶"
     self._collapse_char = opts.collapse_char or "▼"
-    self._loading_char = opts.enable_loading_indictaor and (opts.loading_char or "⧗") or nil
+    self._loading_char = opts.enable_loading_indicator and (opts.loading_char or "⧗") or nil
     self._indent_string = opts.indent_string or "  "
 
     -- Pre-allocate indent cache
@@ -294,7 +296,7 @@ function TreeBuffer:_full_render()
         end
     end
 
-    local flat = self._tree:flatten(nil, function(_, data) return data.expanded ~= false end)
+    local flat = self._tree:flatten(nil, _filter)
 
     for _, flatnode in ipairs(flat) do
         local row = #buffer_lines
@@ -409,7 +411,7 @@ function TreeBuffer:set_children(parent_id, children)
     end
 
     -- 2. Update the tree data
-    local old_size = self._tree:tree_size(parent_id)
+    local old_size = self._tree:tree_size(parent_id, _filter)
     self._tree:set_children(parent_id, baseitems)
 
     if parent_id == nil then
@@ -432,7 +434,7 @@ function TreeBuffer:set_children(parent_id, children)
         end
         local base_depth = self._tree:get_depth(parent_id)
         -- 3. Flatten only the updated subtree
-        local new_flat = self._tree:flatten(parent_id, function(_, data) return data.expanded ~= false end)
+        local new_flat = self._tree:flatten(parent_id, _filter)
         for _, node in ipairs(new_flat) do
             node.depth = base_depth + node.depth
         end
@@ -536,7 +538,7 @@ function TreeBuffer:expand(id)
     if idx ~= -1 then
         local base_depth = self._tree:get_depth(id)
         -- 3. Generate new flat range for this node + its now-visible children
-        local new_subtree_flat = self._tree:flatten(id, function(_, d) return d.expanded ~= false end)
+        local new_subtree_flat = self._tree:flatten(id, _filter)
         for _, node in ipairs(new_subtree_flat) do
             node.depth = base_depth + node.depth
         end
@@ -670,7 +672,7 @@ function TreeBuffer:add_item(parent_id, item)
         -- 5. Render New Child if Parent is Expanded
         if parent_data and parent_data.expanded ~= false then
             -- Insert at the end of the parent's current visible subtree
-            local insert_pos = parent_idx + self._tree:tree_size(parent_id) - 1
+            local insert_pos = parent_idx + self._tree:tree_size(parent_id, _filter) - 1
             local node = {
                 id = item.id,
                 data = item_data,

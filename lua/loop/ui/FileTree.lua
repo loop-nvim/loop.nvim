@@ -8,6 +8,8 @@ local uv         = vim.loop
 ---@field path string
 ---@field name string
 ---@field is_dir boolean
+---@field icon string
+---@field icon_hl string
 ---@field _children_waiters fun(children:loop.comp.FileTree.ItemDef[])[]?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.ItemTree.ItemDef
@@ -96,6 +98,7 @@ function FileTree:init(opts)
     self._exclude_patterns = self:_compile_globs(opts.exclude_globs)
 
     self:_set_root(self.root)
+    self._reveal_counter = 0
 end
 
 ---@return loop.comp.BaseBuffer
@@ -106,13 +109,11 @@ end
 ---@param globs string[]|nil
 ---@return string[]|nil
 function FileTree:_compile_globs(globs)
-    if not globs or #globs == 0 then
-        return nil
-    end
-
+    if not globs or #globs == 0 then return nil end
     local compiled = {}
     for _, g in ipairs(globs) do
-        table.insert(compiled, vim.fn.glob2regpat(g))
+        -- Compile into a vim.regex object
+        table.insert(compiled, vim.regex(vim.fn.glob2regpat(g)))
     end
     return compiled
 end
@@ -121,16 +122,14 @@ end
 ---@param patterns string[]|nil
 ---@return boolean
 function FileTree:_match_patterns(path, patterns)
-    if not patterns then
-        return false
-    end
-
+    if not patterns then return false end
     for i = 1, #patterns do
-        if vim.fn.match(path, patterns[i]) ~= -1 then
+        -- .match_str is significantly faster than vim.fn.match
+        ---@diagnostic disable-next-line: undefined-field
+        if patterns[i]:match_str(path) then
             return true
         end
     end
-
     return false
 end
 
@@ -166,7 +165,9 @@ function FileTree:_set_root(path)
         data = {
             path = path,
             name = vim.fn.fnamemodify(path, ":t"),
-            is_dir = true
+            is_dir = true,
+            icon = "",
+            icon_hl = "Directory"
         }
     }
 
@@ -180,41 +181,12 @@ end
 ---@param id string
 ---@param data loop.comp.FileTree.ItemData
 function FileTree:_file_formatter(id, data)
-    if not data then
-        return {}, {}
-    end
-    local chunks = {}
-    local icon, icon_hl, text_hl
-    if data.is_dir then
-        icon = " "
-        icon_hl = "Directory"
-        text_hl = icon_hl
-    else
-        local ext = data.name:match("%.([^.]+)$")
-        if not _dev_icons_attempt then
-            local loaded
-            loaded, devicons = pcall(require, "nvim-web-devicons")
-            if not loaded then devicons = nil end
-        end
-        -- try devicons first
-        if devicons then
-            local devicon_icon, devicon_hl = devicons.get_icon(data.name, ext, { default = false })
-            if devicon_icon then
-                icon = devicon_icon
-                icon_hl = devicon_hl or "Normal"
-            else
-                icon = file_icons[ext] or file_icons.default
-                icon_hl = "Normal"
-            end
-        else
-            icon = file_icons[ext] or file_icons.default
-            icon_hl = "Normal"
-        end
-    end
-    table.insert(chunks, { icon, icon_hl })
-    table.insert(chunks, { " " })
-    table.insert(chunks, { data.name, text_hl })
-    return chunks, {}
+    if not data then return {}, {} end
+    return {
+        { data.icon, data.icon_hl },
+        { " " },
+        { data.name }
+    }, {}
 end
 
 -- register listener for when a directory's children are loaded
@@ -223,75 +195,98 @@ function FileTree:_on_children_loaded(item, fn)
     data._children_waiters = data._children_waiters or {}
     table.insert(data._children_waiters, fn)
 end
-
----@param path string
----@param cb fun(items:loop.comp.FileTree.ItemDef[])
 function FileTree:_read_dir(path, cb)
-    ---@diagnostic disable-next-line: undefined-field
-    local handle = uv.fs_scandir(path)
-    local children = {}
-
+    vim.notify("read dir: " .. path)
+    local handle, err = uv.fs_scandir(path)
     if not handle then
-        cb(children)
+        vim.schedule(function() cb({}) end)
         return
     end
 
-    while true do
-        ---@diagnostic disable-next-line: undefined-field
-        local name, type = uv.fs_scandir_next(handle)
-        if not name then break end
-
-        local full = vim.fs.joinpath(path, name)
-        local is_dir = type == "directory"
-        local rel = vim.fs.relpath(self.root, full)
-        if not rel then
-            vim.notify_once("directory scanning error")
-            goto continue
+    local entries = {}
+    
+    -- In luv, the handle is closed automatically when uv.fs_scandir_next 
+    -- returns nil. To "fix" a leak, we just ensure we always exhaust it.
+    local success, err_next = pcall(function()
+        while true do
+            local name, type = uv.fs_scandir_next(handle)
+            if not name then break end
+            table.insert(entries, { name = name, type = type })
         end
-        if self:_should_include(rel, is_dir) then
-            ---@type loop.comp.FileTree.ItemDef
-            local item = {
-                id = full,
-                parent_id = path,
-                expanded = false,
-                data = {
-                    path = full,
-                    name = name,
-                    is_dir = is_dir
-                }
-            }
-
-            if is_dir then
-                item.children_callback = function(cb2)
-                    self:_read_dir(full, cb2)
-                end
-            end
-
-            table.insert(children, item)
-        end
-        ::continue::
-    end
-
-    table.sort(children, function(a, b)
-        if a.data.is_dir ~= b.data.is_dir then
-            return a.data.is_dir
-        end
-        return a.data.name < b.data.name
     end)
 
-    cb(children)
+    if not success then
+        -- If something went wrong during iteration, we still want to 
+        -- provide what we found or an empty list.
+        print("Error during scan: " .. tostring(err_next))
+    end
 
-    -- notify listeners waiting for this directory
-    local parent = self._tree:get_item(path)
-    if parent then
-        local waiters = parent.data._children_waiters
-        if waiters then
-            parent.data._children_waiters = nil
-            for _, fn in ipairs(waiters) do
-                fn(children)
+    vim.schedule(function()
+        -- The rest of your logic remains the same
+        local children = {}
+        
+        -- Optimization: Load devicons once per directory scan
+        if not _dev_icons_attempt then
+            _dev_icons_attempt = true
+            local loaded, res = pcall(require, "nvim-web-devicons")
+            if loaded then devicons = res end
+        end
+
+        for _, entry in ipairs(entries) do
+            local full = vim.fs.joinpath(path, entry.name)
+            local is_dir = entry.type == "directory"
+            local rel = vim.fs.relpath(self.root, full)
+
+            if rel and self:_should_include(rel, is_dir) then
+                local icon, icon_hl
+                if is_dir then
+                    icon, icon_hl = "", "Directory"
+                else
+                    local ext = entry.name:match("%.([^.]+)$") or ""
+                    if devicons then
+                        local d_icon, d_hl = devicons.get_icon(entry.name, ext, { default = false })
+                        icon = d_icon or ""
+                        icon_hl = d_hl or "Normal"
+                    else
+                        icon = ""
+                        icon_hl = "Normal"
+                    end
+                end
+
+                local item = {
+                    id = full,
+                    parent_id = path,
+                    expanded = false,
+                    data = {
+                        path = full,
+                        name = entry.name,
+                        is_dir = is_dir,
+                        icon = icon,
+                        icon_hl = icon_hl
+                    }
+                }
+                if is_dir then
+                    item.children_callback = function(c) self:_read_dir(full, c) end
+                end
+                table.insert(children, item)
             end
         end
-    end
+
+        table.sort(children, function(a, b)
+            if a.data.is_dir ~= b.data.is_dir then return a.data.is_dir end
+            return a.data.name:lower() < b.data.name:lower()
+        end)
+
+        cb(children)
+
+        -- Notify reveal waiters
+        local parent = self._tree:get_item(path)
+        if parent and parent.data._children_waiters then
+            local waiters = parent.data._children_waiters
+            parent.data._children_waiters = nil
+            for _, fn in ipairs(waiters) do fn(children) end
+        end
+    end)
 end
 
 -- async reveal
@@ -317,10 +312,18 @@ function FileTree:reveal(path)
         end
     end
     local parts = rel ~= "" and vim.split(rel, "/", { plain = true }) or {}
-    self:_reveal_step(root, parts, 1)
+    self._reveal_counter = self._reveal_counter + 1
+    local current_request = self._reveal_counter
+    self:_reveal_step(root, parts, 1, current_request)
 end
 
-function FileTree:_reveal_step(parent, parts, idx)
+---@param parent string The current directory path we are looking inside
+---@param parts string[] The split segments of the relative path to the target
+---@param idx number The current index in parts we are looking for
+---@param token number
+function FileTree:_reveal_step(parent, parts, idx, token)
+    if token ~= self._reveal_counter then return end -- Abort stale request
+    -- Base Case: We've reached the end of the path parts
     if idx > #parts then
         self._tree:set_cursor_by_id(parent)
         return
@@ -328,18 +331,47 @@ function FileTree:_reveal_step(parent, parts, idx)
 
     local next_path = vim.fs.joinpath(parent, parts[idx])
     local parent_item = self._tree:get_item(parent)
-    if not parent_item then return end
 
-    local function continue()
-        self:_reveal_step(next_path, parts, idx + 1)
-    end
-
-    if parent_item.expanded then
-        continue()
+    -- Safety: If the parent doesn't exist in the tree, we can't go deeper
+    if not parent_item then
         return
     end
 
+    ---@param children loop.comp.FileTree.ItemDef[]|nil
+    local function continue(children)
+        -- Verify the target child actually exists in this directory.
+        -- If 'children' is nil, it means the item was already expanded,
+        -- so we check the TreeBuffer directly.
+        local exists = false
+        if children then
+            for _, child in ipairs(children) do
+                if child.id == next_path then
+                    exists = true
+                    break
+                end
+            end
+        else
+            exists = self._tree:get_item(next_path) ~= nil
+        end
+
+        if exists then
+            self:_reveal_step(next_path, parts, idx + 1, token)
+        else
+            -- Target is likely hidden/filtered; stop and focus the last visible parent
+            self._tree:set_cursor_by_id(parent)
+        end
+    end
+
+    -- If already expanded, we don't need to wait for a callback
+    if parent_item.expanded then
+        continue(nil)
+        return
+    end
+
+    -- Register the waiter BEFORE triggering expansion to avoid race conditions
     self:_on_children_loaded(parent_item, continue)
+
+    -- This triggers _read_dir which eventually calls our 'continue' waiter
     self._tree:expand(parent)
 end
 

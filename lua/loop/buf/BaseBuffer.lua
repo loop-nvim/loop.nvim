@@ -169,6 +169,7 @@ function BaseBuffer:_setup_buf()
         b.swapfile = false
         b.undolevels = -1          -- buffer can't become "modified"
         b.buflisted = self._listed -- hide from :ls
+        b.modeline = false
     end
 
     vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {

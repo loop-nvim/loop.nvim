@@ -242,6 +242,7 @@ function Picker:setup_ui()
             vim.bo[b].bufhidden = "wipe"
             vim.bo[b].swapfile = false
             vim.bo[b].undolevels = -1
+            vim.bo[b].modeline = false
             vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
                 buffer = b,
                 once = true,
@@ -682,6 +683,8 @@ end
 
 ---@param query string
 function Picker:run_fetch(query)
+    -- Record if the query actually changed (to reset cursor) vs. just appending results
+    local is_new_query = (query ~= self.current_query)
     self.current_query = query
 
     if self.async_fetch_cancel then
@@ -691,7 +694,6 @@ function Picker:run_fetch(query)
 
     self:stop_spinner()
 
-    ---@type loop.Picker.FetcherOpts
     local fetch_opts = {
         list_width = math.max(1, self.layout.list_width - 2),
         list_height = self.layout.list_height,
@@ -701,11 +703,7 @@ function Picker:run_fetch(query)
         self:clear_list()
         local items, initial = self.opts.fetch(query, fetch_opts)
         self:add_new_lines(items, query)
-        if #self.items_data > 0 then
-            self:move_cursor(initial or 1, true, true)
-        else
-            self:render_ui()
-        end
+        self:move_cursor(initial or 1, true, true)
         return
     end
 
@@ -721,6 +719,12 @@ function Picker:run_fetch(query)
         function(new_items)
             if self.closed or context ~= self.async_fetch_context then return end
 
+            -- Capture current cursor before we modify the list
+            local saved_cursor = 1
+            if not is_new_query and not waiting_first then
+                saved_cursor = self:get_cursor()
+            end
+
             if waiting_first then
                 waiting_first = false
                 self:clear_list()
@@ -734,10 +738,13 @@ function Picker:run_fetch(query)
 
             self:add_new_lines(new_items, query)
 
-            if #self.items_data == #new_items and #self.items_data > 0 then
-                self:move_cursor(1, true)
+            -- If it's the very first render of a brand new query, go to top.
+            -- Otherwise, keep the user's cursor where it was (clamped to list size).
+            if is_new_query and #self.items_data > 0 then
+                self:move_cursor(1, true, true)
+                is_new_query = false -- Reset so subsequent async chunks don't snap to top
             else
-                self:render_ui()
+                self:move_cursor(saved_cursor, true, true)
             end
         end
     )
