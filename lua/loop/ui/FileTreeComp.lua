@@ -125,7 +125,7 @@ function FileTree:_file_formatter(id, data)
     local chunks = {}
 
     local icon = data.is_dir and " " or " "
-    local hl = data.is_dir and "Directory" or (self._active_file_id == id) and "Special" or "Normal"
+    local hl = data.is_dir and "Directory" or (self._active_file_id == id) or "Normal"
 
     table.insert(chunks, { icon, hl })
     table.insert(chunks, { data.name, hl })
@@ -217,9 +217,6 @@ function FileTree:reveal(path)
     end
     path = vim.fs.normalize(path)
     local root = self.root
-    if path ~= root then
-        return
-    end
     local rel = vim.fs.relpath(self.root, path)
     if not rel then
         return
@@ -230,9 +227,7 @@ end
 
 function FileTree:_reveal_step(parent, parts, idx)
     if idx > #parts then
-        self._active_file_id = parent
         self:set_cursor_by_id(parent)
-        self:_request_render()
         return
     end
 
@@ -272,7 +267,6 @@ function FileTree:link_to_buffer(comp)
         end
     })
 
-    --[[
     -- track active buffer
     self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
         callback = function()
@@ -285,7 +279,6 @@ function FileTree:link_to_buffer(comp)
             end
         end
     })
-    ]]
 end
 
 function FileTree:dispose()

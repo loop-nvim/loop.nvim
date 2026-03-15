@@ -206,13 +206,16 @@ function ItemTree:link_to_buffer(buf_ctrl)
         self._linked_buf.add_keymap(key, { callback = map[1], desc = map[2] })
     end
 
-    buf_ctrl:request_refresh()
+    self:_request_render()
 end
 
 function ItemTree:dispose() end
 
 function ItemTree:set_cursor_by_id(id)
-    self._active_item_id = id
+    if self._render_pending then
+        self._pending_active_item_id = id
+        return
+    end
     if self._linked_buf and self._flat then
         for index, node in ipairs(self._flat) do
             if id == node.id then
@@ -407,10 +410,13 @@ end
 
 function ItemTree:_request_render()
     if self._linked_buf then
+        self._render_pending = true
         self._linked_buf.request_refresh()
     end
 end
+
 function ItemTree:_on_render_request(buf)
+    self._render_pending = false
     table_clear(self._buffer_lines)
     table_clear(self._extmarks_data)
     table_clear(self._hl_calls)
@@ -423,10 +429,10 @@ function ItemTree:_on_render_request(buf)
         local row = 0
         local left, right = self._header[1] or {}, self._header[2] or {}
         local line = left[1] or ""
-        
+
         t_insert(self._buffer_lines, line)
         t_insert(self._extmarks_data, { row, 0, { line_hl_group = _header_hl_group } })
-        
+
         if left[2] then
             t_insert(self._hl_calls, { hl = left[2], row = row, s_col = 0, e_col = #line })
         end
@@ -435,7 +441,7 @@ function ItemTree:_on_render_request(buf)
                 virt_text = { { right[1], right[2] } },
                 virt_text_pos = "right_align",
                 hl_mode = "combine",
-            }})
+            } })
         end
     end
 
@@ -459,7 +465,7 @@ function ItemTree:_on_render_request(buf)
 
         local indent = self._indent_cache[depth] or s_rep(indent_str, depth)
         local prefix = icon ~= "" and (indent .. icon .. " ") or (indent .. expand_padding)
-        
+
         -- Cache/Formatter Logic
         if item.dirty or not item._cached_output then
             local text, virt = self._formatter(item_id, item.userdata, item.expanded)
@@ -476,8 +482,8 @@ function ItemTree:_on_render_request(buf)
             local txt, hl = chunk[1], chunk[2]
             local len = #txt
             if len > 0 then
-                if hl then 
-                    t_insert(self._hl_calls, { hl = hl, row = row, s_col = col, e_col = col + len }) 
+                if hl then
+                    t_insert(self._hl_calls, { hl = hl, row = row, s_col = col, e_col = col + len })
                 end
                 current_line = current_line .. txt
                 col = col + len
@@ -507,6 +513,10 @@ function ItemTree:_on_render_request(buf)
         vim.api.nvim_buf_set_extmark(buf, _ns_id, d[1], d[2], d[3])
     end
 
+    if self._pending_active_item_id then
+        self:set_cursor_by_id(self._pending_active_item_id)
+        self._pending_active_item_id = nil
+    end
     return true
 end
 
