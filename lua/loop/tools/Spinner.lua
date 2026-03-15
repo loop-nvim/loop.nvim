@@ -1,7 +1,5 @@
 local uv = vim.loop
 
----@alias uv_timer_t table
-
 local class = require('loop.tools.class')
 local fntools = require('loop.tools.fntools')
 

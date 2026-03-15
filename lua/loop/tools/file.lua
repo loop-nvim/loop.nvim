@@ -69,6 +69,7 @@ function M.async_load_text_file(path, opts, callback)
     local timeout_ms = opts.timeout or 3000
     local uv = vim.uv or vim.loop
 
+    ---@diagnostic disable-next-line: undefined-field
     local timer = uv.new_timer()
     local fd = nil
     local chunks = {}
@@ -95,7 +96,8 @@ function M.async_load_text_file(path, opts, callback)
 
         -- 2. Close the file handle safely
         if fd then
-            pcall(uv.fs_close, fd)
+            ---@diagnostic disable-next-line: undefined-field
+            uv.fs_close(fd)
             fd = nil
         end
 
@@ -116,10 +118,12 @@ function M.async_load_text_file(path, opts, callback)
     end)
 
     -- Open file
+    ---@diagnostic disable-next-line: undefined-field
     uv.fs_open(path, "r", 438, function(open_err, opened_fd)
         -- Immediate Guard: If an error occurred or we already timed out/aborted
         if open_err or finished or aborted then
-            if opened_fd then pcall(uv.fs_close, opened_fd) end
+            ---@diagnostic disable-next-line: undefined-field
+            if opened_fd then uv.fs_close(opened_fd) end
             if open_err and not (finished or aborted) then
                 return finish("Could not open file: " .. open_err, nil)
             end
@@ -129,6 +133,7 @@ function M.async_load_text_file(path, opts, callback)
         fd = opened_fd
 
         -- Check file stats
+        ---@diagnostic disable-next-line: undefined-field
         uv.fs_fstat(fd, function(stat_err, stat)
             if finished or aborted then return end
             if stat_err then return finish("Stat error: " .. stat_err, nil) end
@@ -141,6 +146,7 @@ function M.async_load_text_file(path, opts, callback)
                 -- Double check fd is still valid before every read call
                 if not fd or finished or aborted then return end
 
+                ---@diagnostic disable-next-line: undefined-field
                 uv.fs_read(fd, 8192, offset, function(read_err, data)
                     if finished or aborted then return end
 

@@ -68,7 +68,6 @@ function FileTree:init(opts)
 
     self._tree:add_tracker({
         on_create = function()
-            vim.notify("Autocmd created")
             self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
                 callback = function()
                     local buf = vim.api.nvim_get_current_buf()
@@ -85,7 +84,6 @@ function FileTree:init(opts)
             if self.bufenter_autocmd_id then
                 vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
                 self.bufenter_autocmd_id = nil
-                vim.notify("Autocmd deleted")
             end
         end,
         on_selection = function(id, data)
@@ -195,7 +193,9 @@ function FileTree:_on_children_loaded(item, fn)
     data._children_waiters = data._children_waiters or {}
     table.insert(data._children_waiters, fn)
 end
+
 function FileTree:_read_dir(path, cb)
+    ---@diagnostic disable-next-line: undefined-field
     local handle, err = uv.fs_scandir(path)
     if not handle then
         vim.schedule(function() cb({}) end)
@@ -203,11 +203,12 @@ function FileTree:_read_dir(path, cb)
     end
 
     local entries = {}
-    
-    -- In luv, the handle is closed automatically when uv.fs_scandir_next 
+
+    -- In luv, the handle is closed automatically when uv.fs_scandir_next
     -- returns nil. To "fix" a leak, we just ensure we always exhaust it.
     local success, err_next = pcall(function()
         while true do
+            ---@diagnostic disable-next-line: undefined-field
             local name, type = uv.fs_scandir_next(handle)
             if not name then break end
             table.insert(entries, { name = name, type = type })
@@ -215,7 +216,7 @@ function FileTree:_read_dir(path, cb)
     end)
 
     if not success then
-        -- If something went wrong during iteration, we still want to 
+        -- If something went wrong during iteration, we still want to
         -- provide what we found or an empty list.
         print("Error during scan: " .. tostring(err_next))
     end
@@ -223,7 +224,7 @@ function FileTree:_read_dir(path, cb)
     vim.schedule(function()
         -- The rest of your logic remains the same
         local children = {}
-        
+
         -- Optimization: Load devicons once per directory scan
         if not _dev_icons_attempt then
             _dev_icons_attempt = true
