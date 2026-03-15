@@ -196,7 +196,6 @@ function FileTree:_on_children_loaded(item, fn)
     table.insert(data._children_waiters, fn)
 end
 function FileTree:_read_dir(path, cb)
-    vim.notify("read dir: " .. path)
     local handle, err = uv.fs_scandir(path)
     if not handle then
         vim.schedule(function() cb({}) end)
