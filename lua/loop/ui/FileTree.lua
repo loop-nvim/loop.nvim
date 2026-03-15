@@ -65,6 +65,27 @@ function FileTree:init(opts)
     })
 
     self._tree:add_tracker({
+        on_create = function()
+            vim.notify("Autocmd created")
+            self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
+                callback = function()
+                    local buf = vim.api.nvim_get_current_buf()
+                    if uitools.is_regular_buffer(buf) then
+                        local path = vim.api.nvim_buf_get_name(buf)
+                        if path ~= "" then
+                            self:reveal(path)
+                        end
+                    end
+                end
+            })
+        end,
+        on_delete = function()
+            if self.bufenter_autocmd_id then
+                vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
+                self.bufenter_autocmd_id = nil
+                vim.notify("Autocmd deleted")
+            end
+        end,
         on_selection = function(id, data)
             uitools.smart_open_file(data.path)
         end,
@@ -291,7 +312,7 @@ function FileTree:reveal(path)
         -- We check if 'id' is a prefix of 'path'
         if item.id ~= self.root and item.expanded then
             if not vim.startswith(path, item.id) then
-                self:collapse(item.id)
+                self._tree:collapse(item.id)
             end
         end
     end
@@ -301,7 +322,7 @@ end
 
 function FileTree:_reveal_step(parent, parts, idx)
     if idx > #parts then
-        self:set_cursor_by_id(parent)
+        self._tree:set_cursor_by_id(parent)
         return
     end
 
@@ -319,7 +340,7 @@ function FileTree:_reveal_step(parent, parts, idx)
     end
 
     self:_on_children_loaded(parent_item, continue)
-    self:expand(parent)
+    self._tree:expand(parent)
 end
 
 function FileTree:open(path)

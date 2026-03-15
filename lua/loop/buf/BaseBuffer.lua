@@ -5,8 +5,9 @@ local throttle = require('loop.tools.throttle')
 ---@alias loop.comp.Keymaps table<string,loop.KeyMap>
 
 ---@class loop.comp.Tracker
----@field on_change fun()|nil
----@field on_delete fun()|nil
+---@field on_create fun()?
+---@field on_change fun()?
+---@field on_delete fun()?
 
 ---@class loop.comp.BaseBufferOpts
 ---@field name string
@@ -134,6 +135,7 @@ function BaseBuffer:get_or_create_buf()
 
     self._buf = vim.api.nvim_create_buf(false, true)
     self:_setup_buf()
+    self._trackers:invoke("on_create")
     return self._buf, true
 end
 

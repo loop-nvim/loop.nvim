@@ -376,6 +376,23 @@ function TreeBuffer:_get_cur_item()
     return id, self:_get_data(id)
 end
 
+function TreeBuffer:set_cursor_by_id(id)
+    local buf = self:get_buf()
+    if buf <= 0 then return end
+    local winid = vim.fn.bufwinid(buf)
+    if winid <= 0 then return end
+    local idx = -1
+    for i, id2 in ipairs(self._flat_ids) do
+        if id == id2 then
+            idx = i
+            break
+        end
+    end
+    if idx > 0 then
+        vim.api.nvim_win_set_cursor(winid, { idx, 0 })
+    end
+end
+
 ---@return loop.comp.TreeBuffer.Item?
 function TreeBuffer:get_cur_item()
     local id, itemdata = self:_get_cur_item()
