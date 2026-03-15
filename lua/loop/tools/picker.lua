@@ -28,7 +28,7 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 
 ---@alias loop.Picker.Callback fun(data:any|nil)
 
----@class loop.Picker.AsyncFetcherOpts
+---@class loop.Picker.FetcherOpts
 ---@field list_width number
 ---@field list_height number
 
@@ -41,8 +41,8 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 ---@field load fun():string[]
 ---@field store fun(hist:string[])?
 
----@alias loop.Picker.Fetcher fun(query:string):loop.Picker.Item[]?,number?
----@alias loop.Picker.AsyncFetcher fun(query:string,opts:loop.Picker.AsyncFetcherOpts,callback:fun(new_items:loop.Picker.Item[]?)):fun()?
+---@alias loop.Picker.Fetcher fun(query:string,opts:loop.Picker.FetcherOpts):loop.Picker.Item[]?,number?
+---@alias loop.Picker.AsyncFetcher fun(query:string,opts:loop.Picker.FetcherOpts,callback:fun(new_items:loop.Picker.Item[]?)):fun()?
 
 ---@alias loop.Picker.AsyncPreviewInfo {filetype:string?,filepath:string?,lnum:number?,col:number?}
 ---@alias loop.Picker.AsyncPreviewLoader fun(data:any,opts:loop.Picker.AsyncPreviewOpts,callback:fun(preview:string?,info:loop.Picker.AsyncPreviewInfo?)):fun()?
@@ -78,7 +78,7 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 
 --------------------------------------------------------------------------------
 -- Utility
---------------------------------------------------------------------------------
+------------------------------------------------layout_height--------------------------------
 
 ---@param v number
 ---@param min number
@@ -113,11 +113,11 @@ local function _compute_layout(opts)
             list_width = half_width
         end
         list_width = list_width - half_spacing
-        prev_width =  _clamp(width - list_width - half_spacing, 1, width)
+        prev_width = _clamp(width - list_width - half_spacing, 1, width)
     else
         local max_with = math.ceil(cols * (opts.width_ratio or 0.8))
         if opts.list_width then
-            list_width = _clamp(opts.list_width  + 3, 30, max_with)
+            list_width = _clamp(opts.list_width + 3, 30, max_with)
         else
             list_width = max_with
         end
@@ -127,7 +127,7 @@ local function _compute_layout(opts)
     local total_height = math.ceil(lines * _clamp(opts.height_ratio or .7, 0.3, 0.8))
     local list_height = _clamp(total_height - 3, 1, lines)
 
-    local row = math.floor((lines - total_height) / 2)
+    local row = math.floor((lines - total_height - 1) / 2)
     local col = math.floor((cols - (list_width + prev_width + spacing)) / 2)
 
     return {
@@ -691,9 +691,15 @@ function Picker:run_fetch(query)
 
     self:stop_spinner()
 
+    ---@type loop.Picker.FetcherOpts
+    local fetch_opts = {
+        list_width = math.max(1, self.layout.list_width - 2),
+        list_height = self.layout.list_height,
+    }
+
     if self.opts.fetch then
         self:clear_list()
-        local items, initial = self.opts.fetch(query)
+        local items, initial = self.opts.fetch(query, fetch_opts)
         self:add_new_lines(items, query)
         if #self.items_data > 0 then
             self:move_cursor(initial or 1, true, true)
@@ -711,10 +717,7 @@ function Picker:run_fetch(query)
 
     self.async_fetch_cancel = self.opts.async_fetch(
         query,
-        {
-            list_width = math.max(1, self.layout.list_width - 2),
-            list_height = self.layout.list_height,
-        },
+        fetch_opts,
         function(new_items)
             if self.closed or context ~= self.async_fetch_context then return end
 

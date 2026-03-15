@@ -41,7 +41,7 @@ end
 
 ---@param query string
 ---@param grep_opts loop.livegrep.opts
----@param fetch_opts loop.Picker.AsyncFetcherOpts
+---@param fetch_opts loop.Picker.FetcherOpts
 ---@param callback fun(items:table[]?)
 ---@return fun() cancel
 local function async_grep_search(query, grep_opts, fetch_opts, callback)
@@ -120,7 +120,6 @@ local function async_grep_search(query, grep_opts, fetch_opts, callback)
     end)
 
     process = Process:new(cmd, {
-        cmd = cmd,
         cwd = grep_opts.cwd,
         args = args,
         on_output = function(data, is_stderr)

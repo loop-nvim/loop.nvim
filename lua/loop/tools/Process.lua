@@ -10,7 +10,6 @@ local function _safe_close(h)
 end
 
 ---@class loop.Process.Opts
----@field cmd string
 ---@field args string[]|nil
 ---@field env {string:string}|nil
 ---@field cwd string
@@ -18,16 +17,16 @@ end
 ---@field on_exit fun(code:number, signal:number)
 
 ---@class loop.Process
----@field new fun(self: loop.Process, name : string, opts : loop.Process.Opts) : loop.Process
+---@field new fun(self: loop.Process, cmd : string, opts : loop.Process.Opts) : loop.Process
 ---@field start fun(self: loop.Process) : boolean,string?
 local Process = class()
 
----@param name string
-function Process:init(name, opts)
-    assert(type(opts.cmd) == "string", "cmd is required")
+---@param cmd string
+function Process:init(cmd, opts)
+    assert(type(cmd) == "string", "cmd is required")
     assert(opts.cwd, "cwd is required")
 
-    self.cmd = opts.cmd
+    self.cmd = cmd
     self.args = opts.args or {}
     self.cwd = opts.cwd
 

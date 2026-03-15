@@ -31,7 +31,7 @@ Neovim >= 0.10
 **lazy.nvim**
 ```lua
 {
-    "mbfoss/loop.nvim",
+    "loop-nvim/loop.nvim",
     lazy = false, -- Loop will lazy load itself
     config = function()
         require("loop").setup({})
@@ -39,16 +39,14 @@ Neovim >= 0.10
 }
 ```
 
-
-Run `:helptags ALL` after installing.
-
 ## Quick Start
 
 1. Create a workspace in the current directory (`:Loop workspace create`). The confiration editor will open.
 2. Adjust the configuration as required (`:Loop workspace configure` to reopen the configuration editor)
 3. Use `:Loop task configure` to open the task list editor and create new tasks.
 4. Use `:Loop task run` to run tasks.
-5. Use `:Loop ui` to show or hide the Loop window (task output).
+5. Use `:Loop statuspanel` to show or hide the Loop status panel (task output).
+5. Use `:Loop sidepanel` to show or hide the Loop status side panel (file tree or other plugin dependant views).
 
 Workspaces in the current directory are opened automatically on startup when neovim is started without arguments.
 
@@ -110,12 +108,12 @@ Commands be selected using the command selector by typing `:Loop`
 | `:Loop task terminate_all` | Stop all tasks |
 | `:Loop var list` | List variables |
 | `:Loop var configure` | Edit variables.json |
-| `:Loop ui toggle` | Toggle UI |
-| `:Loop ui show` | Show UI |
-| `:Loop ui hide` | Hide UI |
-| `:Loop ui clean` | Remove expired output groups |
+| `:Loop statuspanel` | Toggle status panel |
+| `:Loop statuspanel show` | Show status panel |
+| `:Loop statuspanel hide` | Hide status panel |
+| `:Loop statuspanel clean` | Remove old tasks output pages form the status panel |
 | `:Loop page switch` | Switch output page |
-| `:Loop page open [group] [page]` | Open specific page |
+| `:Loop page open [group] [page]` | Open specific page in the current window |
 | `:Loop log` | View plugin logs |
 
 ## Task Types
@@ -168,10 +166,10 @@ lualine_c = { function() return require("loop.statusline").status() end, "filena
 
 ## Extensions
 
-- [loop-build.nvim](https://github.com/mbfoss/loop-build.nvim) — Defines a "build" task type and provides templates for various build tasks
-- [loop-debug.nvim](https://github.com/mbfoss/loop-debug.nvim) — Defines a "debug" task type and provides templates for various debug tasks
-- [loop-cmake.nvim](https://github.com/mbfoss/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
-- [loop-marks.nvim](https://github.com/mbfoss/loop-marks.nvim) - Workspace based named bookmarks and notes
+- [loop-build.nvim](https://github.com/loop-nvim/loop-build.nvim) — Defines a "build" task type and provides templates for various build tasks
+- [loop-debug.nvim](https://github.com/loop-nvim/loop-debug.nvim) — Defines a "debug" task type and provides templates for various debug tasks
+- [loop-cmake.nvim](https://github.com/loop-nvim/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
+- [loop-marks.nvim](https://github.com/loop-nvim/loop-marks.nvim) - Workspace based named bookmarks and notes
 
 
 ## License

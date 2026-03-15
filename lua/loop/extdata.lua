@@ -20,7 +20,8 @@ local _extension_data = {}
 
 local _reserved_cmd_providers = {
 	workspace = true,
-	ui = true,
+	statuspanel = true,
+	sidepanel = true,
 	page = true,
 	logs = true,
 	help = true,

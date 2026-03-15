@@ -76,7 +76,7 @@ end
 
 ---@param query string User input for fuzzy matching
 ---@param fd_opts loop.filepicker.fdopts Configuration for directory walking
----@param fetch_opts loop.Picker.AsyncFetcherOpts Layout constraints from the UI
+---@param fetch_opts loop.Picker.FetcherOpts Layout constraints from the UI
 ---@param callback fun(items:loop.SelectorItem[]?) Called when new items are ready
 ---@return fun() cancel Function to stop the directory walk
 local function async_lua_search(query, fd_opts, fetch_opts, callback)
@@ -162,7 +162,7 @@ end
 
 ---@param query string User input for literal string matching
 ---@param fd_opts loop.filepicker.fdopts Configuration for fd and filtering
----@param fetch_opts loop.Picker.AsyncFetcherOpts Layout constraints from the UI
+---@param fetch_opts loop.Picker.FetcherOpts Layout constraints from the UI
 ---@param callback fun(items:loop.SelectorItem[]?) Called when new items are ready
 ---@return fun() cancel Function to kill the underlying process
 local function async_fd_search(query, fd_opts, fetch_opts, callback)
@@ -237,7 +237,6 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
 
     process = Process:new(cmd, {
         cwd = fd_opts.cwd,
-        cmd = cmd,
         args = args,
         on_output = function(data, is_stderr)
             if read_stop then return end
