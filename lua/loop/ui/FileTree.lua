@@ -68,23 +68,8 @@ function FileTree:init(opts)
 
     self._tree:add_tracker({
         on_create = function()
-            self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
-                callback = function()
-                    local buf = vim.api.nvim_get_current_buf()
-                    if uitools.is_regular_buffer(buf) then
-                        local path = vim.api.nvim_buf_get_name(buf)
-                        if path ~= "" then
-                            self:reveal(path)
-                        end
-                    end
-                end
-            })
         end,
         on_delete = function()
-            if self.bufenter_autocmd_id then
-                vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
-                self.bufenter_autocmd_id = nil
-            end
         end,
         on_selection = function(id, data)
             uitools.smart_open_file(data.path)
@@ -300,17 +285,6 @@ function FileTree:reveal(path)
     if not rel then
         return
     end
-    -- 1. Collapse everything that isn't a parent of the target path
-    local items = self._tree:get_items()
-    for _, item in ipairs(items) do
-        -- Don't collapse the root and don't collapse if the item is a parent of our target
-        -- We check if 'id' is a prefix of 'path'
-        if item.id ~= self.root and item.expanded then
-            if not vim.startswith(path, item.id) then
-                self._tree:collapse(item.id)
-            end
-        end
-    end
     local parts = rel ~= "" and vim.split(rel, "/", { plain = true }) or {}
     self._reveal_counter = self._reveal_counter + 1
     local current_request = self._reveal_counter
@@ -379,6 +353,30 @@ function FileTree:open(path)
     path = vim.fs.normalize(path)
     self.root = path
     self:_set_root(path)
+end
+
+---@param collapse_others boolean?
+function FileTree:reveal_current_file(collapse_others)
+    local buf = vim.api.nvim_get_current_buf()
+    if uitools.is_regular_buffer(buf) then
+        local path = vim.api.nvim_buf_get_name(buf)
+        if path ~= "" then
+            if collapse_others then
+                -- Collapse everything that isn't a parent of the target path
+                local items = self._tree:get_items()
+                for _, item in ipairs(items) do
+                    -- Don't collapse the root and don't collapse if the item is a parent of our target
+                    -- We check if 'id' is a prefix of 'path'
+                    if item.id ~= self.root and item.expanded then
+                        if not vim.startswith(path, item.id) then
+                            self._tree:collapse(item.id)
+                        end
+                    end
+                end
+            end
+            self:reveal(path)
+        end
+    end
 end
 
 return FileTree

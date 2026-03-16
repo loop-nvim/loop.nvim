@@ -120,7 +120,11 @@ end
 ---@return loop.Picker.AsyncPreviewLoader|nil
 local function _create_previewer(opts)
     if opts.file_preview then
-        return pickertools.default_file_preview
+        return function(data, opts, callback)
+            return pickertools.default_file_preview(data.file, {
+                lnum = data.lnum,
+            }, callback)
+        end
     end
     if opts.formatter then
         return function(data, _, callback)

@@ -29,7 +29,7 @@ function ListBuffer:init(opts)
 
     self._formatter = opts.formatter
     self._header = opts.header
-    self._prefix = opts.current_item_prefix or ">"
+    self._prefix = (opts.current_item_prefix or ">") .. " "
     self._current_id = nil
 
     ---@type table<any, number>
