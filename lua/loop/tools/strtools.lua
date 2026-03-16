@@ -18,6 +18,13 @@ function M.special_marker3()
 	return "\240\159\188\130"
 end
 
+---@param str string
+---@param len number
+---@return string
+function M.pad_right(str, len)
+	return str .. string.rep(" ", math.max(0, len - #str))
+end
+
 ---@param lines string[] list of strings (may contain newlines)
 ---@return string[] flattened list of strings (no embedded newlines)
 function M.prepare_buffer_lines(lines)

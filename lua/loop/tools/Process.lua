@@ -145,19 +145,19 @@ function Process:running()
     return self.handle ~= nil
 end
 
----@param opts {timeout_ms:number?,stop_read:boolean?}
+---@param opts {timeout_ms:number?,stop_read:boolean?}?
 function Process:kill(opts)
     if self.exited or self.killed then return end
     self.killed = true
     _safe_close(self.stdin)
-    if opts.stop_read then
+    if not opts or opts.stop_read then
         _safe_close(self.stdout)
         _safe_close(self.stderr)
     end
     if self.handle and not self.handle:is_closing() then
         self.handle:kill("SIGTERM")
     end
-    if opts.timeout_ms then
+    if opts and opts.timeout_ms then
         vim.defer_fn(function()
             if not self.exited and self.handle and not self.handle:is_closing() then
                 self.handle:kill("SIGKILL")

@@ -44,7 +44,7 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 ---@alias loop.Picker.Fetcher fun(query:string,opts:loop.Picker.FetcherOpts):loop.Picker.Item[]?,number?
 ---@alias loop.Picker.AsyncFetcher fun(query:string,opts:loop.Picker.FetcherOpts,callback:fun(new_items:loop.Picker.Item[]?)):fun()?
 
----@alias loop.Picker.AsyncPreviewInfo {filetype:string?,filepath:string?,lnum:number?,col:number?}
+---@alias loop.Picker.AsyncPreviewInfo {filetype:string?,filepath:string?,lnum:number?,col:number?,error_msg:string?}
 ---@alias loop.Picker.AsyncPreviewLoader fun(data:any,opts:loop.Picker.AsyncPreviewOpts,callback:fun(preview:string?,info:loop.Picker.AsyncPreviewInfo?)):fun()?
 
 ---@class loop.Picker.opts
@@ -146,6 +146,26 @@ local function _compute_layout(opts)
         prev_width = prev_width,
         prev_height = list_height
     }
+end
+
+---@param msg string
+---@param width number
+---@param height number
+---@return string[]
+local function _center_for_previwer(msg, width, height)
+    -- horizontal centering
+    local pad_left = math.max(0, math.floor((width - #msg) / 2) + 1)
+    local centered = string.rep(" ", pad_left) .. msg
+
+    -- vertical centering
+    local pad_top = math.max(0, math.floor((height + 1) / 2))
+
+    local lines = {}
+    for _ = 1, pad_top do
+        table.insert(lines, "")
+    end
+    table.insert(lines, centered)
+    return lines
 end
 
 --------------------------------------------------------------------------------
@@ -476,20 +496,30 @@ function Picker:update_preview()
     self.async_preview_context = self.async_preview_context + 1
     local context = self.async_preview_context
 
+    local preview_width = math.max(0, self.layout.prev_width - 2)   -- -2 for borders
+    local preview_height = math.max(0, self.layout.prev_height - 2) -- -2 for borders
+
     self.async_preview_cancel = self.opts.async_preview(
         data,
         {
-            preview_width = self.layout.prev_width,
-            preview_height = self.layout.prev_height,
+            preview_width = preview_width,
+            preview_height = preview_height,
             antiflicker_delay = self.antiflicker_delay,
         },
         function(preview, info)
             if self.closed or context ~= self.async_preview_context then return end
             self:cancel_clear_preview_req()
-            local lines = preview and vim.split(preview, "\n") or {}
+            local lines
+            if preview then
+                lines = vim.split(preview, "\n")
+            elseif info and info.error_msg then
+                lines = _center_for_previwer(info.error_msg, preview_width, preview_height)
+            else
+                lines = {}
+            end
             if vim.api.nvim_buf_is_valid(self.vbuf) then
                 vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, lines)
-                if info then
+                if preview and info then
                     -- Set the filetype for syntax highlighting
                     if info.filetype then
                         vim.bo[self.vbuf].filetype = info.filetype
@@ -514,6 +544,8 @@ function Picker:update_preview()
                             hl_mode = "blend",
                         })
                     end
+                else
+                    vim.bo[self.vbuf].filetype = ""
                 end
             end
         end
@@ -695,8 +727,8 @@ function Picker:run_fetch(query)
     self:stop_spinner()
 
     local fetch_opts = {
-        list_width = math.max(1, self.layout.list_width - 2),
-        list_height = self.layout.list_height,
+        list_width = math.max(1, self.layout.list_width - 2), -- -2 for borders
+        list_height = math.max(1, self.layout.list_height - 2),
     }
 
     if self.opts.fetch then

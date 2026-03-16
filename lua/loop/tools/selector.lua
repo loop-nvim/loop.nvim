@@ -1,8 +1,9 @@
-local picker    = require("loop.tools.picker")
-local filetools = require("loop.tools.file")
-local strtools  = require("loop.tools.strtools")
+local picker      = require("loop.tools.picker")
+local filetools   = require("loop.tools.file")
+local strtools    = require("loop.tools.strtools")
+local pickertools = require("loop.tools.pickertools")
 
-local M         = {}
+local M           = {}
 
 ---@mod loop.selector
 ---@brief Simple floating selector with fuzzy filtering and optional preview.
@@ -118,37 +119,15 @@ end
 ---@param opts loop.selector.opts
 ---@return loop.Picker.AsyncPreviewLoader|nil
 local function _create_previewer(opts)
-    -- If preview is disabled entirely, return nil
-    if not opts.file_preview and not opts.formatter then
-        return nil
+    if opts.file_preview then
+        return pickertools.default_file_preview
     end
-
-    return function(data, _, callback)
-        -- 1. Use Formatter if provided
-        if opts.formatter then
+    if opts.formatter then
+        return function(data, _, callback)
             local content, ft = opts.formatter(data.data)
             callback(content, { filetype = ft })
             return _no_op
         end
-        -- 2. Fallback to Async File Loader if filepath exists
-        if data.filepath or data.file then
-            local path = data.filepath or data.file
-            local cancel_fn = filetools.async_load_text_file(
-                path,
-                { max_size = 50 * 1024 * 1024, timeout = 3000 },
-                function(_, content)
-                    callback(content, {
-                        filepath = path,
-                        lnum = data.lnum,
-                        col = data.col
-                    })
-                end
-            )
-            return cancel_fn
-        end
-        -- 3. No preview available for this item
-        callback(nil)
-        return _no_op
     end
 end
 
@@ -162,7 +141,7 @@ function M.select(opts, callback)
     local list_width, list_height = _compute_dimentions(opts.items)
     local height_ratio
     if not opts.formatter and not opts.file_preview then
-       height_ratio = (list_height + 3) / vim.o.lines
+        height_ratio = (list_height + 3) / vim.o.lines
     end
     -- Validate and prepare options for the underlying picker
     ---@type loop.Picker.opts

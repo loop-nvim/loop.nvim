@@ -139,7 +139,7 @@ function M.async_load_text_file(path, opts, callback)
             if stat_err then return finish("Stat error: " .. stat_err, nil) end
 
             if stat.size > max_size then
-                return finish("File exceeds max size limit (" .. opts.max_size .. "MB)", nil)
+                return finish("File exceeds max size limit (" .. max_size .. "MB)", nil)
             end
 
             local function read_next()
@@ -163,7 +163,7 @@ function M.async_load_text_file(path, opts, callback)
 
                     -- Binary check (Null byte detection)
                     if data:find("\0", 1, true) then
-                        return finish("Binary file detected", nil)
+                        return finish("Binary file", nil)
                     end
 
                     total_read = total_read + #data

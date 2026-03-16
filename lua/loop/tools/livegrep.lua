@@ -4,7 +4,7 @@ local Process = require("loop.tools.Process")
 local uitools = require("loop.tools.uitools")
 local strtools = require("loop.tools.strtools")
 local picker = require('loop.tools.picker')
-local filetools = require("loop.tools.file")
+local pickertools = require("loop.tools.pickertools")
 
 ---@class loop.livegrep.opts
 ---@field cwd string? Optional directory to start search (defaults to getcwd)
@@ -172,19 +172,12 @@ function M.open(opts)
                 max_results = opts.max_results,
             }, fetch_opts, callback)
         end,
-        async_preview = function(item_data, _, callback)
-            local data = item_data
-            local cancel_fn = filetools.async_load_text_file(data.filepath,
-                { max_size = 50 * 1024 * 1024, timeout = 3000 },
-                function(load_err, content)
-                    callback(content, {
-                        filepath = data.filepath,
-                        lnum = data.lnum,
-                        col = data.col
-                    })
-                end)
-            return cancel_fn
-        end,
+            async_preview = function(data, opts, callback)
+                return pickertools.default_file_preview(data.filepath, {
+                    lnum = data.lnum,
+                    col = data.col
+                }, callback)
+            end,
     }, function(selected)
         if selected then
             -- Open file and jump to line/column
