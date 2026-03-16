@@ -409,11 +409,13 @@ function JsonEditor:open(winid)
     _show_buf(self._tree:get_or_create_buf())
 end
 
-function JsonEditor:_apply_changes()
+---@param next_cursor string?
+function JsonEditor:_apply_changes(next_cursor)
     self:save()
-    vim.schedule(function()
-        self:_reload_data()
-    end)
+    self:_reload_data()
+    if next_cursor then
+        self._tree:set_cursor_by_id(next_cursor)
+    end
 end
 
 function JsonEditor:_reload_data()
@@ -445,7 +447,14 @@ function JsonEditor:_reload_tree()
     for _, e in ipairs(self._validation_errors) do
         errors[e.path] = e.err_msg:gsub("\n", " ")
     end
+    local cursor = self._tree:get_cursor()
     self:_upsert_tree_items(self._data, "", nil, self._schema, errors)
+    if cursor then
+        if not self._tree:set_cursor(cursor) then
+            local ok, err = self._tree:set_cursor({ cursor[1], 0 })
+            assert(ok, err)
+        end
+    end
 end
 
 ---@param tbl table
@@ -695,7 +704,7 @@ function JsonEditor:_add_new(item, where)
                 local pos = insert_pos or last_pos
                 pos = math.min(pos, last_pos)
                 table.insert(parent.data.value, pos, value)
-                self:_apply_changes()
+                self:_apply_changes(jsontools.join_path(parent.data.path, tostring(pos)))
             end
         end)
     elseif vt == "object" then
@@ -704,7 +713,7 @@ function JsonEditor:_add_new(item, where)
                 assert(type(key) == "string")
                 self:_push_undo()
                 parent.data.value[key] = value
-                self:_apply_changes()
+                self:_apply_changes(jsontools.join_path(parent.data.path, key))
             end
         end)
     else

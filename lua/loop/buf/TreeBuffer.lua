@@ -345,6 +345,88 @@ function TreeBuffer:_full_render()
     self:_apply_metadata(buf, hl_calls, extmarks_data)
 end
 
+---Helper to surgically re-render a specific range in the buffer
+---@private
+function TreeBuffer:_render_range(start_idx, old_size, new_flat)
+    local buf = self:get_buf()
+    if buf <= 0 or self._redering_suspended then return end
+
+    -- 1. SAVE: Identify which ID the cursor is currently on
+    local winid = self:_get_winid()
+    local saved_id = nil
+    local saved_cursor = nil
+    if winid and winid > 0 then
+        saved_cursor = vim.api.nvim_win_get_cursor(winid)
+        saved_id = saved_cursor and self._flat_ids[saved_cursor[1]] or nil
+    end
+
+    local new_lines, new_ids = {}, {}
+    local range_hls, range_exts = {}, {}
+    local start_row = start_idx - 1
+
+    -- Generate new content
+    for i, flatnode in ipairs(new_flat) do
+        local row = start_row + i - 1
+        local line, hls, exts = self:_render_node(flatnode, row)
+        table.insert(new_lines, line)
+        table.insert(new_ids, flatnode.id)
+        for _, h in ipairs(hls) do table.insert(range_hls, h) end
+        for _, e in ipairs(exts) do table.insert(range_exts, e) end
+    end
+
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_clear_namespace(buf, _ns_id, start_row, start_row + old_size)
+    vim.api.nvim_buf_set_lines(buf, start_row, start_row + old_size, false, new_lines)
+
+    -- --- Sync id_to_idx map ---
+
+    -- 1. Remove IDs that are being deleted
+    for i = 0, old_size - 1 do
+        local old_id = self._flat_ids[start_idx + i]
+        if old_id ~= nil then
+            self._id_to_idx[old_id] = nil
+        end
+    end
+
+    -- 2. Update the flat_ids array
+    for _ = 1, old_size do
+        table.remove(self._flat_ids, start_idx)
+    end
+    for i, id in ipairs(new_ids) do
+        table.insert(self._flat_ids, start_idx + i - 1, id)
+    end
+
+    -- 3. Re-index from the point of change to the end
+    -- This handles both the new items and the items shifted by the surgery
+    for i = start_idx, #self._flat_ids do
+        local id = self._flat_ids[i]
+        if id ~= nil then
+            self._id_to_idx[id] = i
+        end
+    end
+
+    self:_apply_metadata(buf, range_hls, range_exts)
+    vim.bo[buf].modifiable = false
+
+    -- 2. RESTORE: Put the cursor back on the item it was on
+    if winid and winid > 0 and saved_id then
+        if not self:set_cursor_by_id(saved_id) then
+            pcall(vim.api.nvim_win_set_cursor, winid, saved_cursor)
+        end
+    end
+end
+
+---Wipes all items from the tree and clears the buffer (preserving header if defined)
+function TreeBuffer:clear_items()
+    -- 1. Reset the underlying tree structure
+    self._tree = Tree:new()
+    -- 2. Clear the flattened ID tracker
+    self._flat_ids = {}
+    self._id_to_idx = {}
+    -- 3. Trigger a full render to clear the buffer lines and metadata
+    self:_full_render()
+end
+
 ---@return loop.comp.TreeBuffer.ItemData
 function TreeBuffer:_get_data(id)
     return self._tree:get_data(id)
@@ -405,6 +487,30 @@ function TreeBuffer:_get_winid()
         winid = vim.fn.bufwinid(buf)
     end
     return winid
+end
+
+---@return {[1]:number,[2]:number}?
+function TreeBuffer:get_cursor()
+    local winid = self:_get_winid()
+    if not winid or winid <= 0 then return end
+    return vim.api.nvim_win_get_cursor(winid)
+end
+
+---@param cur {[1]:number,[2]:number}
+---@param clamp_row boolean?
+---@return boolean,string?
+function TreeBuffer:set_cursor(cur, clamp_row)
+    local winid = self:_get_winid()
+    if not winid or winid <= 0 then return false end
+    local buf = self:get_buf()
+    if buf <= 0 then return false end
+    local line_count = vim.api.nvim_buf_line_count(buf)
+    local line, col = cur[1], cur[2]
+    if clamp_row ~= false then
+        line = math.max(1, math.min(line, line_count))
+    end
+    local ok, err = pcall(vim.api.nvim_win_set_cursor, winid, { line, col })
+    return ok, err and tostring(err)
 end
 
 ---@return any, loop.comp.TreeBuffer.ItemData?
@@ -500,77 +606,6 @@ function TreeBuffer:toggle_expand(id)
             self:expand(id)
         else
             self:collapse(id)
-        end
-    end
-end
-
----Helper to surgically re-render a specific range in the buffer
----@private
-function TreeBuffer:_render_range(start_idx, old_size, new_flat)
-    local buf = self:get_buf()
-    if buf <= 0 or self._redering_suspended then return end
-
-    -- 1. SAVE: Identify which ID the cursor is currently on
-    local winid = self:_get_winid()
-    local saved_id = nil
-    local saved_cursor = nil
-    if winid and winid > 0 then
-        saved_cursor = vim.api.nvim_win_get_cursor(winid)
-        saved_id = saved_cursor and self._flat_ids[saved_cursor[1]] or nil
-    end
-
-    local new_lines, new_ids = {}, {}
-    local range_hls, range_exts = {}, {}
-    local start_row = start_idx - 1
-
-    -- Generate new content
-    for i, flatnode in ipairs(new_flat) do
-        local row = start_row + i - 1
-        local line, hls, exts = self:_render_node(flatnode, row)
-        table.insert(new_lines, line)
-        table.insert(new_ids, flatnode.id)
-        for _, h in ipairs(hls) do table.insert(range_hls, h) end
-        for _, e in ipairs(exts) do table.insert(range_exts, e) end
-    end
-
-    vim.bo[buf].modifiable = true
-    vim.api.nvim_buf_clear_namespace(buf, _ns_id, start_row, start_row + old_size)
-    vim.api.nvim_buf_set_lines(buf, start_row, start_row + old_size, false, new_lines)
-
-    -- --- Sync id_to_idx map ---
-
-    -- 1. Remove IDs that are being deleted
-    for i = 0, old_size - 1 do
-        local old_id = self._flat_ids[start_idx + i]
-        if old_id ~= nil then
-            self._id_to_idx[old_id] = nil
-        end
-    end
-
-    -- 2. Update the flat_ids array
-    for _ = 1, old_size do
-        table.remove(self._flat_ids, start_idx)
-    end
-    for i, id in ipairs(new_ids) do
-        table.insert(self._flat_ids, start_idx + i - 1, id)
-    end
-
-    -- 3. Re-index from the point of change to the end
-    -- This handles both the new items and the items shifted by the surgery
-    for i = start_idx, #self._flat_ids do
-        local id = self._flat_ids[i]
-        if id ~= nil then
-            self._id_to_idx[id] = i
-        end
-    end
-
-    self:_apply_metadata(buf, range_hls, range_exts)
-    vim.bo[buf].modifiable = false
-
-    -- 2. RESTORE: Put the cursor back on the item it was on
-    if winid and winid > 0 and saved_id then
-        if not self:set_cursor_by_id(saved_id) then
-            pcall(vim.api.nvim_win_set_cursor, winid, saved_cursor)
         end
     end
 end
@@ -705,17 +740,6 @@ function TreeBuffer:add_item(parent_id, item)
     self:_request_children(item.id, item_data)
 end
 
----Wipes all items from the tree and clears the buffer (preserving header if defined)
-function TreeBuffer:clear_items()
-    -- 1. Reset the underlying tree structure
-    self._tree = Tree:new()
-    -- 2. Clear the flattened ID tracker
-    self._flat_ids = {}
-    self._id_to_idx = {}
-    -- 3. Trigger a full render to clear the buffer lines and metadata
-    self:_full_render()
-end
-
 ---@return loop.comp.TreeBuffer.Item[]
 function TreeBuffer:get_children(parent_id)
     local items = {}
@@ -844,10 +868,6 @@ function TreeBuffer:update_item(item)
         self:_request_children(item.id, existing)
     else
         self:remove_children(item.id)
-    end
-
-    if item.expanded ~= nil then
-        existing.expanded = item.expanded
     end
 
     -- 2. Visual Update: Find the node and re-render its line
