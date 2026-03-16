@@ -247,6 +247,8 @@ function Picker:init(opts, callback)
         self.history_idx = #self.history + 1
     end
 
+    self.original_cword = vim.fn.expand("<cword>")
+
     self:setup_ui()
 end
 
@@ -366,6 +368,15 @@ function Picker:setup_ui()
             end)
         end
     })
+
+    -- keymap to paste original <cword>
+    assert(self.pbuf > 0 )
+    vim.keymap.set("i", "<C-r><C-w>", function()
+        vim.api.nvim_feedkeys(
+            vim.api.nvim_replace_termcodes(self.original_cword, true, false, true),
+            "i", false
+        )
+    end, { buffer = self.pbuf, desc =  "Page original <cword>"})
 end
 
 function Picker:on_resize()
@@ -638,7 +649,7 @@ function Picker:clear_list()
 end
 
 function Picker:add_new_lines(items, query)
-   --vim.notify("add new lines, count=" .. #items)
+    --vim.notify("add new lines, count=" .. #items)
     local prefix = "  "
 
     -- Track if the buffer was totally empty (one blank line)

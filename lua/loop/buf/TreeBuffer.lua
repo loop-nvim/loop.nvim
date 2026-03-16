@@ -91,6 +91,7 @@ function TreeBuffer:init(opts)
     self._collapse_char = opts.collapse_char or "▼"
     self._loading_char = opts.enable_loading_indicator and (opts.loading_char or "⧗") or nil
     self._indent_string = opts.indent_string or "  "
+    self._expand_padding = string.rep(" ", vim.fn.strdisplaywidth(self._expand_char)) .. " "
 
     -- Pre-allocate indent cache
     self._indent_cache = {}
@@ -188,17 +189,6 @@ function TreeBuffer:_setup_keymaps()
     end
 end
 
----@param ms number
-function TreeBuffer:delay_rendering(ms)
-    if not self._redering_suspended then
-        self._redering_suspended = true
-        vim.defer_fn(function()
-            self._redering_suspended = false
-            self:_full_render()
-        end, ms)
-    end
-end
-
 function TreeBuffer:_request_children(item_id, item_data)
     if not item_data.expanded or not item_data.children_callback or item_data.reload_children == false then
         return
@@ -229,6 +219,17 @@ function TreeBuffer:_request_children(item_id, item_data)
     end)
 end
 
+---@param ms number
+function TreeBuffer:delay_rendering(ms)
+    if not self._redering_suspended then
+        self._redering_suspended = true
+        vim.defer_fn(function()
+            self._redering_suspended = false
+            self:_full_render()
+        end, ms)
+    end
+end
+
 ---Renders a single node's text and collects its metadata
 ---@param flatnode loop.tools.Tree.FlatNode
 ---@param row number The buffer row this node will occupy
@@ -246,8 +247,7 @@ function TreeBuffer:_render_node(flatnode, row)
     end
 
     local indent = self._indent_cache[depth] or string.rep(self._indent_string, depth)
-    local expand_padding = string.rep(" ", vim.fn.strdisplaywidth(self._expand_char)) .. " "
-    local prefix = icon ~= "" and (indent .. icon .. " ") or (indent .. expand_padding)
+    local prefix = icon ~= "" and (indent .. icon .. " ") or (indent .. self._expand_padding)
 
     -- 2. Formatter / Cache Logic
     local text_chunks, virt = self._formatter(item_id, item.userdata, item.expanded)
@@ -274,16 +274,6 @@ function TreeBuffer:_render_node(flatnode, row)
     end
 
     return current_line, hl_calls, extmark_data
-end
-
----Applies collected metadata to a range of rows
-function TreeBuffer:_apply_metadata(buf, hl_calls, extmarks)
-    for _, h in ipairs(hl_calls) do
-        vim.hl.range(buf, _ns_id, h.hl, { h.row, h.s_col }, { h.row, h.e_col })
-    end
-    for _, d in ipairs(extmarks) do
-        vim.api.nvim_buf_set_extmark(buf, _ns_id, d[1], d[2], d[3])
-    end
 end
 
 function TreeBuffer:_full_render()
@@ -347,6 +337,9 @@ end
 
 ---Helper to surgically re-render a specific range in the buffer
 ---@private
+---@param start_idx number
+---@param old_size number
+---@param new_flat loop.tools.Tree.FlatNode[]
 function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     local buf = self:get_buf()
     if buf <= 0 or self._redering_suspended then return end
@@ -409,10 +402,39 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     vim.bo[buf].modifiable = false
 
     -- 2. RESTORE: Put the cursor back on the item it was on
-    if winid and winid > 0 and saved_id then
+    if winid and winid > 0 and saved_id and saved_cursor then
         if not self:set_cursor_by_id(saved_id) then
+            saved_cursor[1] = math.min(saved_cursor[1], vim.api.nvim_buf_line_count(buf))
             pcall(vim.api.nvim_win_set_cursor, winid, saved_cursor)
         end
+    end
+end
+
+---@param id number
+---@param data loop.comp.TreeBuffer.ItemData?
+function TreeBuffer:_render_line(id, data)
+    if not data then data = self:_get_data(id) end
+    assert(data, "failed to render line, invalid data")
+    -- Visual Update: Find the node and re-render its line
+    local idx = self._id_to_idx[id]
+    -- If the item is currently visible in the buffer, re-render its line
+    if idx then
+        local depth = self._tree:get_depth(id)
+        -- Replace exactly 1 line (the item itself) with its updated version
+        self:_render_range(idx, 1, { { id = id, data = data, depth = depth } })
+    end
+end
+
+---Applies collected metadata to a range of rows
+function TreeBuffer:_apply_metadata(buf, hl_calls, extmarks)
+    for _, h in ipairs(hl_calls) do
+        vim.api.nvim_buf_set_extmark(buf, _ns_id, h.row, h.s_col, {
+            end_col = h.e_col,
+            hl_group = h.hl,
+        })
+    end
+    for _, d in ipairs(extmarks) do
+        vim.api.nvim_buf_set_extmark(buf, _ns_id, d[1], d[2], d[3])
     end
 end
 
@@ -528,7 +550,7 @@ end
 function TreeBuffer:set_cursor_by_id(id)
     local winid = self:_get_winid()
     if not winid or winid <= 0 then return false end
-    local idx = self._id_to_idx[id] -- Instant lookup
+    local idx = self._id_to_idx[id]
     if idx then
         local ok, _ = pcall(vim.api.nvim_win_set_cursor, winid, { idx, 0 })
         return ok
@@ -564,39 +586,48 @@ function TreeBuffer:set_children(parent_id, children)
     end
 
     local buf = self:get_buf()
-    if buf <= 0 or self._redering_suspended then return end
+    if buf > 0 and not self._redering_suspended then
+        -- Handle the "New Root" Case (parent_id is nil)
+        if parent_id == nil then
+            -- When parent is nil, we replace/append the entire tree content
+            -- but we must preserve the header if it exists.
+            local header_offset = self._header and 1 or 0
+            local new_flat = self._tree:flatten(nil, _filter)
 
-    -- 2. Handle the "New Root" Case (parent_id is nil)
-    if parent_id == nil then
-        -- When parent is nil, we replace/append the entire tree content
-        -- but we must preserve the header if it exists.
-        local header_offset = self._header and 1 or 0
-        local new_flat = self._tree:flatten(nil, _filter)
+            -- We treat the entire buffer (minus header) as the range to replace
+            -- old_visible_size in this context is the current length of flat_ids
+            local current_tree_size = #self._flat_ids - header_offset
+            if current_tree_size < 0 then current_tree_size = 0 end
 
-        -- We treat the entire buffer (minus header) as the range to replace
-        -- old_visible_size in this context is the current length of flat_ids
-        local current_tree_size = #self._flat_ids - header_offset
-        if current_tree_size < 0 then current_tree_size = 0 end
-
-        self:_render_range(header_offset + 1, current_tree_size, new_flat)
-        return
+            self:_render_range(header_offset + 1, current_tree_size, new_flat)
+        else
+            -- ensure no more children callback in parent
+            local parent_data = self._tree:get_data(parent_id)
+            assert(parent_data)
+            parent_data.children_callback = nil
+            parent_data.reload_children = false
+            -- Find the parent index IMMEDIATELY before buffer surgery
+            local parent_idx = self._id_to_idx[parent_id]
+            if parent_idx then
+                -- Prepare the new subtree lines
+                local base_depth = self._tree:get_depth(parent_id)
+                local new_flat = self._tree:flatten(parent_id, _filter)
+                for _, node in ipairs(new_flat) do
+                    node.depth = base_depth + node.depth
+                end
+                -- Perform the surgery
+                -- Note: old_visible_size includes the parent.
+                -- flatten(parent_id) also includes the parent.
+                self:_render_range(parent_idx, old_visible_size, new_flat)
+            end
+        end
     end
+end
 
-    -- 2. Find the parent index IMMEDIATELY before buffer surgery
-    local parent_idx = self._id_to_idx[parent_id]
-    if not parent_idx then return end
-
-    -- 3. Prepare the new subtree lines
-    local base_depth = self._tree:get_depth(parent_id)
-    local new_flat = self._tree:flatten(parent_id, _filter)
-    for _, node in ipairs(new_flat) do
-        node.depth = base_depth + node.depth
-    end
-
-    -- 4. Perform the surgery
-    -- Note: old_visible_size includes the parent.
-    -- flatten(parent_id) also includes the parent.
-    self:_render_range(parent_idx, old_visible_size, new_flat)
+---Removes all children of a node from the tree and updates the buffer.
+---@param id any The ID of the parent node whose children should be removed.
+function TreeBuffer:remove_children(id)
+    self:set_children(id, {})
 end
 
 function TreeBuffer:toggle_expand(id)
@@ -614,7 +645,6 @@ function TreeBuffer:expand(id)
     local data = self:_get_data(id)
     if not data or data.expanded then return end
 
-    -- O(1) Lookup instead of loop
     local idx = self._id_to_idx[id]
     data.expanded = true
 
@@ -635,21 +665,20 @@ function TreeBuffer:collapse(id)
     local data = self:_get_data(id)
     if not data or not data.expanded then return end
 
-    local idx = self._id_to_idx[id]
-    if not idx then return end
-
-    -- 1. Get size while it is still expanded
+    -- Get size while it is still expanded
     local current_visible_size = self._tree:tree_size(id, _filter)
 
-    -- 2. NOW update the state
+    -- NOW update the state
     data.expanded = false
 
-    -- 3. Prepare the single line (the collapsed parent)
-    local depth = self._tree:get_depth(id)
-    local parent_flat = { id = id, data = data, depth = depth }
-
-    -- 4. Replace the old expanded range (current_visible_size) with the 1 new line
-    self:_render_range(idx, current_visible_size, { parent_flat })
+    -- Prepare the single line (the collapsed parent)
+    local idx = self._id_to_idx[id]
+    if idx then
+        local depth = self._tree:get_depth(id)
+        local parent_flat = { id = id, data = data, depth = depth }
+        -- Replace the old expanded range (current_visible_size) with the 1 new line
+        self:_render_range(idx, current_visible_size, { parent_flat })
+    end
 
     self._trackers:invoke("on_toggle", id, data.userdata, false)
 end
@@ -667,14 +696,14 @@ function TreeBuffer:expand_all(id)
 end
 
 function TreeBuffer:collapse_all(id)
-    local children = self._tree:get_children(id)
-    for _, child in ipairs(children) do
-        self:collapse_all(child.id)
-    end
     local data = self:_get_data(id)
     if not data then return end
     if data.expanded and self._tree:have_children(id) then
         self:collapse(id)
+    end
+    local children = self._tree:get_children(id)
+    for _, child in ipairs(children) do
+        self:collapse_all(child.id)
     end
 end
 
@@ -686,10 +715,9 @@ function TreeBuffer:add_item(parent_id, item)
     self._tree:add_item(parent_id, item.id, item_data)
 
     local buf = self:get_buf()
-
-    -- 2. Handle Root Addition (parent_id is nil)
-    if parent_id == nil then
-        if buf > 0 then
+    if buf > 0 then
+        -- Handle Root Addition (parent_id is nil)
+        if parent_id == nil then
             local insert_idx = #self._flat_ids + 1
             local node = {
                 id = item.id,
@@ -698,45 +726,34 @@ function TreeBuffer:add_item(parent_id, item)
             }
             -- Replacing 0 lines at the end of flat_ids performs an append
             self:_render_range(insert_idx, 0, { node })
-        end
-        self:_request_children(item.id, item_data)
-        return
-    end
-
-    -- 3. Handle Child Addition (parent_id exists)
-    local parent_idx = self._id_to_idx[parent_id]
-
-    -- If parent isn't in the flattened list, it's inside a collapsed branch
-    if not parent_idx then
-        self:_request_children(item.id, item_data)
-        return
-    end
-
-    if buf > 0 then
-        -- 4. Re-render Parent (updates icon to expand/collapse char if it was a leaf)
-        local parent_data = self._tree:get_data(parent_id)
-        local p_depth = self._tree:get_depth(parent_id)
-        self:_render_range(parent_idx, 1, { { id = parent_id, data = parent_data, depth = p_depth } })
-
-        -- 5. Render New Child if Parent is Expanded
-        if parent_data and parent_data.expanded ~= false then
-            -- tree_size(parent_id) now includes the parent + all visible children
-            -- (including the one we just logically added via self._tree:add_item)
-            local current_subtree_size = self._tree:tree_size(parent_id, _filter)
-
-            -- The new item is the last one in the parent's subtree.
-            -- Its position in flat_ids is (parent_start_index + subtree_size - 1)
-            local insert_idx = parent_idx + current_subtree_size - 1
-
-            local node = {
-                id = item.id,
-                data = item_data,
-                depth = self._tree:get_depth(item.id)
-            }
-            -- Replacing 0 lines at insert_idx performs a clean insertion
-            self:_render_range(insert_idx, 0, { node })
+        else
+            -- Handle Child Addition (parent_id exists)
+            local parent_idx = self._id_to_idx[parent_id]
+            -- If parent in the flattened list (not in a collpased branch)
+            if parent_idx then
+                -- Re-render Parent (updates icon to expand/collapse char if it was a leaf)
+                local parent_data = self._tree:get_data(parent_id)
+                self:_render_line(parent_id, parent_data)
+                -- 5. Render New Child if Parent is Expanded
+                if parent_data and parent_data.expanded ~= false then
+                    -- tree_size(parent_id) now includes the parent + all visible children
+                    -- (including the one we just logically added via self._tree:add_item)
+                    local current_subtree_size = self._tree:tree_size(parent_id, _filter)
+                    -- The new item is the last one in the parent's subtree.
+                    -- Its position in flat_ids is (parent_start_index + subtree_size - 1)
+                    local insert_idx = parent_idx + current_subtree_size - 1
+                    local node = {
+                        id = item.id,
+                        data = item_data,
+                        depth = self._tree:get_depth(item.id)
+                    }
+                    -- Replacing 0 lines at insert_idx performs a clean insertion
+                    self:_render_range(insert_idx, 0, { node })
+                end
+            end
         end
     end
+
     self:_request_children(item.id, item_data)
 end
 
@@ -771,66 +788,24 @@ end
 function TreeBuffer:remove_item(id)
     if not self._tree:have_item(id) then return false end
 
-    local buf = self:get_buf()
+    -- first get the parent id
     local parent_id = self._tree:get_parent_id(id)
+    -- Calculate how many lines this item AND its expanded children occupy
+    local visible_size = self._tree:tree_size(id, _filter)
 
-    -- 1. Determine visual impact
-    local idx = self._id_to_idx[id]
-
-    local visible_size = 0
-    if idx then
-        -- Calculate how many lines this item AND its expanded children occupy
-        visible_size = self._tree:tree_size(id, _filter)
-    end
-
-    -- 2. Update the logical tree
+    -- then remove it
     self._tree:remove_item(id)
 
-    -- 3. Update the Buffer
-    if idx and buf > 0 then
+    -- Determine visual impact and update the buffer
+    local idx = self._id_to_idx[id]
+    if idx then
         -- We pass an empty table to delete 'visible_size' lines starting at 'idx'
         self:_render_range(idx, visible_size, {})
 
-        -- 4. Re-render the parent to update its icon (it might now be a leaf node)
+        -- Re-render the parent to update its icon (it might now be a leaf node)
         if parent_id ~= nil then
-            local p_idx = self._id_to_idx[parent_id]
-            if p_idx then
-                local p_data = self:_get_data(parent_id)
-                local p_depth = self._tree:get_depth(parent_id)
-                -- Replace just the 1 parent line with its updated self
-                self:_render_range(p_idx, 1, { { id = parent_id, data = p_data, depth = p_depth } })
-            end
+            self:_render_line(parent_id)
         end
-    end
-
-    return true
-end
-
----Removes all children of a node from the tree and updates the buffer.
----@param id any The ID of the parent node whose children should be removed.
----@return boolean success
-function TreeBuffer:remove_children(id)
-    if not self._tree:have_item(id) then return false end
-
-    -- 1. Determine how many visible lines to remove
-    -- We calculate the size of the subtree (excluding the parent itself)
-    local visible_subtree_size = self._tree:tree_size(id, _filter) - 1
-
-    -- 2. Update the logical tree
-    self._tree:remove_children(id)
-
-    -- 3. Update the Buffer
-    local idx = self._id_to_idx[id]
-
-    -- If the node is visible in the buffer, we need to perform surgery
-    if idx then
-        local data = self:_get_data(id)
-        local depth = self._tree:get_depth(id)
-
-        -- We re-render the parent node (at idx) and replace
-        -- (1 + visible_subtree_size) lines with just the 1 parent line.
-        local node_flat = { id = id, data = data, depth = depth }
-        self:_render_range(idx, 1 + visible_subtree_size, { node_flat })
     end
 
     return true
@@ -840,45 +815,25 @@ end
 function TreeBuffer:set_children_callback(id, callback)
     ---@type loop.comp.TreeBuffer.ItemData?
     local base_data = self._tree:get_data(id)
-    assert(base_data, "it not found: " .. tostring(id))
+    assert(base_data, "id not found: " .. tostring(id))
     base_data.children_callback = callback
     if base_data.children_callback then
         base_data.reload_children = true
         base_data.load_sequence = base_data.load_sequence + 1
     end
-    self._tree:set_item_data(id, base_data)
+    self:_render_line(id, base_data)
     self:_request_children(id, base_data)
 end
 
----@param item loop.comp.TreeBuffer.ItemDef
+---@param id any
+---@param data any -- user data
 ---@return boolean
-function TreeBuffer:update_item(item)
+function TreeBuffer:set_item_data(id, data)
     ---@type loop.comp.TreeBuffer.ItemData
-    local existing = self._tree:get_data(item.id)
-    if not existing then return false end
-
-    -- 1. Update logical data
-    existing.userdata = item.data
-    existing.children_callback = item.children_callback
-
-    if existing.children_callback then
-        existing.reload_children = true
-        existing.load_sequence = existing.load_sequence + 1
-        -- Note: self:_request_children requires (id, data)
-        self:_request_children(item.id, existing)
-    else
-        self:remove_children(item.id)
-    end
-
-    -- 2. Visual Update: Find the node and re-render its line
-    local idx = self._id_to_idx[item.id]
-    -- If the item is currently visible in the buffer, re-render its line
-    if idx then
-        local depth = self._tree:get_depth(item.id)
-        -- Replace exactly 1 line (the item itself) with its updated version
-        self:_render_range(idx, 1, { { id = item.id, data = existing, depth = depth } })
-    end
-
+    local base_data = self._tree:get_data(id)
+    if not base_data then return false end
+    base_data.userdata = data
+    self:_render_line(id, base_data)
     return true
 end
 
