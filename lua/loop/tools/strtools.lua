@@ -362,33 +362,42 @@ function M.fuzzy_match(text, query)
 	local last = 0
 	local positions = {}
 
+	-- 1. Standard fuzzy matching loop
 	while ti <= tlen and qi <= qlen do
 		local tc = text:byte(ti)
 		local qc = query:byte(qi)
 
-		-- lowercase ASCII fast path
+		-- Case-insensitive comparison
 		if tc >= 65 and tc <= 90 then tc = tc + 32 end
 		if qc >= 65 and qc <= 90 then qc = qc + 32 end
 
 		if tc == qc then
-			-- score consecutive matches higher
-			if last + 1 == ti then
-				score = score + 5
+			-- Bonus for consecutive matches
+			if last > 0 and last + 1 == ti then
+				score = score + 10 -- Higher weight for flow
 			else
-				score = score + 1
+				score = score + 2
 			end
 
 			last = ti
-			positions[#positions + 1] = ti -- store match position
+			positions[#positions + 1] = ti
 			qi = qi + 1
 		end
-
 		ti = ti + 1
 	end
 
+	-- If we didn't match the whole query, it's a fail
 	if qi <= qlen then
 		return false, 0, {}
 	end
+
+	--- 2. Scope Closeness Calculation
+	-- Calculate ratio: 1.0 is a perfect length match, lower is more "noise"
+	local coverage = qlen / tlen
+
+	-- Apply the coverage as a multiplier to the base score
+	-- This ensures that shorter strings with the same match pattern rank higher
+	score = score * (1 + coverage)
 
 	return true, score, positions
 end
