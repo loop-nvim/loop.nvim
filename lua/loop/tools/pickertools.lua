@@ -12,7 +12,7 @@ function M.fuzzy_chunk_builder(display_string, positions, hl_group)
         return { { display_string } }
     end
 
-    local hl = hl_group or "Special"
+    local hl = hl_group or "Todo"
     local chunks = {}
     local pos_map = {}
     for _, p in ipairs(positions) do pos_map[p] = true end
@@ -41,6 +41,7 @@ end
 ---@param query string User input
 ---@param display_string string What the user sees
 ---@param opts { list_width: number, is_path: boolean, offset: number? }
+---@return {score:number,chunks:string[][]}?
 function M.make_picker_item(match_target, query, display_string, opts)
     local is_match, score, positions = strtools.fuzzy_match(match_target, query)
     if not is_match and query ~= "" then return nil end

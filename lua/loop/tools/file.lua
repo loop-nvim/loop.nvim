@@ -255,14 +255,24 @@ function M.async_walk_dir(dir, exclude_globs, on_file, on_done)
         return false
     end
 
+    local on_done_called = false
+    local call_on_done = function()
+        if not on_done_called then
+            vim.schedule(function()
+                on_done()
+            end)
+            on_done_called = true
+        end
+    end
     local function process_next_dir()
         -- 1. Check cancellation or completion immediately
-        if is_cancelled then return end
+        if is_cancelled then
+            call_on_done()
+            return
+        end
 
         if #pending_dirs == 0 then
-            vim.schedule(function()
-                if not is_cancelled then on_done() end
-            end)
+            call_on_done()
             return
         end
 

@@ -21,7 +21,7 @@ local pickertools = require("loop.tools.pickertools")
 local function async_lua_search(query, fd_opts, fetch_opts, callback)
     assert(query ~= "")
     local count = 0
-    local max_results = fd_opts.max_results or 1000
+    local max_results = fd_opts.max_results or 10000
     local items = {}
 
     local cancel_fn
@@ -46,6 +46,7 @@ local function async_lua_search(query, fd_opts, fetch_opts, callback)
                 return
             end
 
+            --table.insert(res.chunks, 1, {tostring(res.score) .. " - "})
             table.insert(items, {
                 label_chunks = res.chunks,
                 data = full_path,
@@ -76,7 +77,7 @@ end
 ---@param query string
 ---@param fd_opts loop.filepicker.fdopts
 ---@param fetch_opts loop.Picker.FetcherOpts
----@param callback fun(items:loop.SelectorItem[]?)
+---@param callback fun(items:loop.Picker.Item[]?)
 local function async_fd_search(query, fd_opts, fetch_opts, callback)
     local args = { "--type", "f", "--fixed-strings", "--color", "never" }
     if fd_opts.exclude_globs then
@@ -91,7 +92,7 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
     local process
     local read_stop = false
     local count = 0
-    local max_results = fd_opts.max_results or 1000
+    local max_results = fd_opts.max_results or 10000
 
     local buffered_feed = strtools.create_line_buffered_feed(function(lines)
         local items = {}

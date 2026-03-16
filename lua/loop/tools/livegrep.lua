@@ -48,7 +48,7 @@ local function async_grep_search(query, grep_opts, fetch_opts, callback)
     local cmd, args = get_grep_cmd(query, grep_opts)
     local count = 0
     local process
-    local max_results = grep_opts.max_results or 1000
+    local max_results = grep_opts.max_results or 10000
     local read_stop = false
     local lower_query = query:lower()
 

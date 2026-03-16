@@ -24,6 +24,7 @@ local NS_PREVIEW = vim.api.nvim_create_namespace("LoopPlugin_PickerPreview")
 ---@field label string?
 ---@field label_chunks {[1]:string,[2]:string?}[]?
 ---@field virt_lines? {[1]:string,[2]:string?}[][]
+---@field score number?
 ---@field data any
 
 ---@alias loop.Picker.Callback fun(data:any|nil)
@@ -166,6 +167,20 @@ local function _center_for_previwer(msg, width, height)
     end
     table.insert(lines, centered)
     return lines
+end
+
+--- Finds the index where the item should be inserted to maintain descending order
+local function _find_insert_index(items, new_score)
+    local low, high = 1, #items
+    while low <= high do
+        local mid = math.floor((low + high) / 2)
+        if (items[mid].score or 0) < (new_score or 0) then
+            high = mid - 1
+        else
+            low = mid + 1
+        end
+    end
+    return low
 end
 
 --------------------------------------------------------------------------------
@@ -491,7 +506,8 @@ function Picker:update_preview()
     end
 
     self:request_clear_preview()
-    local data = self.items_data[self:get_cursor()]
+    local item = self.items_data[self:get_cursor()]
+    local data = item and item.data
 
     self.async_preview_context = self.async_preview_context + 1
     local context = self.async_preview_context
@@ -622,52 +638,60 @@ function Picker:clear_list()
 end
 
 function Picker:add_new_lines(items, query)
+   --vim.notify("add new lines, count=" .. #items)
     local prefix = "  "
-    local lines = {}
-    local extmarks = {}
-    local virt_extmarks = {}
 
-    -- 1. Check if the buffer is currently "fresh" (one empty line)
-    local current_buf_count = vim.api.nvim_buf_line_count(self.lbuf)
-    local is_empty = current_buf_count == 1 and vim.api.nvim_buf_get_lines(self.lbuf, 0, 1, false)[1] == ""
-
-    -- 2. Determine where we start counting rows for highlights
-    local start_row = is_empty and 0 or current_buf_count
+    -- Track if the buffer was totally empty (one blank line)
+    local is_fresh = #self.items_data == 0 and
+        vim.api.nvim_buf_line_count(self.lbuf) == 1 and
+        vim.api.nvim_buf_get_lines(self.lbuf, 0, 1, false)[1] == ""
 
     for _, item in ipairs(items) do
+        item.score = item.score or 0
+
+        -- 1. Find where this item belongs
+        local idx = _find_insert_index(self.items_data, item.score)
+        table.insert(self.items_data, idx, item)
+
+        -- 2. Prepare the line string
         local label = item.label
-        local label_chunks = item.label_chunks
-        if label then
-            label = label:gsub("\n", "")
-        elseif label_chunks then
+        if not label and item.label_chunks then
             local parts = {}
             for _, chunk in ipairs(item.label_chunks) do
-                if chunk[1] then parts[#parts + 1] = chunk[1] end
+                table.insert(parts, chunk[1] or "")
             end
             label = table.concat(parts)
-            label = label:gsub("\n", "")
+        end
+        label = (label or ""):gsub("\n", "")
+        local line_text = prefix .. label
+
+        -- 3. Update the Buffer
+        local row = idx - 1
+        if is_fresh and idx == 1 then
+            vim.api.nvim_buf_set_lines(self.lbuf, 0, 1, false, { line_text })
+            is_fresh = false -- No longer fresh after first insertion
         else
-            label = ""
+            vim.api.nvim_buf_set_lines(self.lbuf, row, row, false, { line_text })
         end
 
-        table.insert(lines, prefix .. label)
-        table.insert(self.items_data, item.data)
-
-        local row = start_row + #lines - 1
-        local col = #prefix
-
-        if label_chunks then
-            for _, chunk in ipairs(label_chunks) do
+        -- 4. Apply Highlights (Extmarks)
+        if item.label_chunks then
+            local col = #prefix
+            for _, chunk in ipairs(item.label_chunks) do
                 local text, hl = chunk[1], chunk[2]
                 if text and #text > 0 then
                     if hl then
-                        table.insert(extmarks, { row = row, col_start = col, col_end = col + #text, hl_group = hl })
+                        vim.api.nvim_buf_set_extmark(self.lbuf, NS_VIRT, row, col, {
+                            end_col = col + #text,
+                            hl_group = hl,
+                        })
                     end
                     col = col + #text
                 end
             end
         end
 
+        -- 5. Apply Virtual Lines
         if item.virt_lines and #item.virt_lines > 0 then
             local vlines = {}
             for _, line in ipairs(item.virt_lines) do
@@ -675,38 +699,14 @@ function Picker:add_new_lines(items, query)
                 vim.list_extend(vl, line)
                 table.insert(vlines, vl)
             end
-            table.insert(virt_extmarks, { row = row, col = 0, opts = { virt_lines = vlines, hl_mode = "blend" } })
+            vim.api.nvim_buf_set_extmark(self.lbuf, NS_VIRT, row, 0, {
+                virt_lines = vlines,
+                hl_mode = "blend"
+            })
         end
     end
 
-    if #lines == 0 then return end
-
-    -- 3. Apply the changes to the buffer
-    if is_empty then
-        -- Replace the initial blank line entirely
-        vim.api.nvim_buf_set_lines(self.lbuf, 0, -1, false, lines)
-    else
-        -- Append to existing items
-        vim.api.nvim_buf_set_lines(self.lbuf, start_row, start_row, false, lines)
-    end
-
-    -- 4. Apply highlights and virtual lines
-    for _, mark in ipairs(extmarks) do
-        vim.api.nvim_buf_set_extmark(self.lbuf, NS_VIRT, mark.row, mark.col_start, {
-            end_col = mark.col_end,
-            hl_group = mark.hl_group,
-        })
-    end
-
-    for _, mark in ipairs(virt_extmarks) do
-        vim.api.nvim_buf_set_extmark(self.lbuf, NS_VIRT, mark.row, mark.col, mark.opts)
-    end
-
-    vim.wo[self.lwin].cursorline = true
-
-    -- 5. Final validation
-    local final_count = vim.api.nvim_buf_line_count(self.lbuf)
-    assert(#self.items_data == final_count, string.format("Data (%d) != Buf (%d)", #self.items_data, final_count))
+    vim.wo[self.lwin].cursorline = #self.items_data > 0
 end
 
 --------------------------------------------------------------------------------
@@ -871,7 +871,8 @@ function Picker:setup_input()
     local key_opts = { buffer = self.pbuf, nowait = true, silent = true }
 
     vim.keymap.set("i", "<CR>", function()
-        self:close(self.items_data[self:get_cursor()])
+        local item = self.items_data[self:get_cursor()]
+        self:close(item and item.data)
     end, key_opts)
 
     vim.keymap.set("i", "<Esc>", function() self:close(nil) end, key_opts)
