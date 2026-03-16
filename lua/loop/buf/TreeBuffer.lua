@@ -577,8 +577,9 @@ end
 function TreeBuffer:collapse(id)
     local data = self:_get_data(id)
     if not data or not data.expanded then return end
-
-    -- 1. Locate node
+    -- State change
+    data.expanded = false
+    -- Locate node
     local idx = -1
     for i, fid in ipairs(self._flat_ids) do
         if fid == id then
@@ -586,8 +587,7 @@ function TreeBuffer:collapse(id)
         end
     end
     if idx == -1 then return end
-
-    -- 2. Calculate current visible size of this branch
+    -- Calculate current visible size of this branch
     local current_visible_size = 0
     local depth = self._tree:get_depth(id)
     for i = idx + 1, #self._flat_ids do
@@ -597,13 +597,9 @@ function TreeBuffer:collapse(id)
         current_visible_size = current_visible_size + 1
     end
 
-    -- 3. State change
-    data.expanded = false
-
-    -- 4. Replace N lines with 1 line (just the collapsed parent)
+    -- Replace N lines with 1 line (just the collapsed parent)
     local parent_flat = { id = id, data = data, depth = depth }
     self:_render_range(idx, 1 + current_visible_size, { parent_flat })
-
     self._trackers:invoke("on_toggle", id, data.userdata, false)
 end
 
@@ -622,7 +618,7 @@ end
 function TreeBuffer:collapse_all(id)
     local data = self:_get_data(id)
     if not data then return end
-    if not data.expanded and (self._tree:have_children(id) or data.children_callback) then
+    if data.expanded and self._tree:have_children(id) then
         self:collapse(id)
     end
     local children = self._tree:get_children(id)
