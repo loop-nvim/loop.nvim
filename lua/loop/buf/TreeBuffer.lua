@@ -186,6 +186,17 @@ function TreeBuffer:_setup_keymaps()
     end
 end
 
+---@param ms number
+function TreeBuffer:delay_rendering(ms)
+    if not self._redering_suspended then
+        self._redering_suspended = true
+        vim.defer_fn(function()
+            self._redering_suspended = false
+            self:_full_render()
+        end, ms)
+    end
+end
+
 function TreeBuffer:_request_children(item_id, item_data)
     if not item_data.expanded or not item_data.children_callback or item_data.reload_children == false then
         return
@@ -275,7 +286,7 @@ end
 
 function TreeBuffer:_full_render()
     local buf = self:get_buf()
-    if buf <= 0 then return end
+    if buf <= 0 or self._redering_suspended then return end
 
     local buffer_lines = {}
     local extmarks_data = {}
@@ -382,7 +393,7 @@ end
 ---@return any, loop.comp.TreeBuffer.ItemData?
 function TreeBuffer:_get_cur_item()
     local buf = self:get_buf()
-    if buf <= 0 then return end
+    if buf <= 0 or self._redering_suspended then return end
     local winid = vim.fn.bufwinid(buf)
     if winid <= 0 then return end
     local cursor = vim.api.nvim_win_get_cursor(winid)
@@ -393,7 +404,7 @@ end
 
 function TreeBuffer:set_cursor_by_id(id)
     local buf = self:get_buf()
-    if buf <= 0 then return end
+    if buf <= 0 or self._redering_suspended then return end
     local winid = vim.fn.bufwinid(buf)
     if winid <= 0 then return end
     local idx = -1
@@ -436,7 +447,7 @@ function TreeBuffer:set_children(parent_id, children)
     end
 
     local buf = self:get_buf()
-    if buf <= 0 then return end
+    if buf <= 0 or self._redering_suspended then return end
 
     -- 2. Handle the "New Root" Case (parent_id is nil)
     if parent_id == nil then
@@ -494,7 +505,7 @@ end
 ---@private
 function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     local buf = self:get_buf()
-    if buf <= 0 then return end
+    if buf <= 0 or self._redering_suspended then return end
 
     local new_lines, new_ids = {}, {}
     local range_hls, range_exts = {}, {}
@@ -668,14 +679,14 @@ function TreeBuffer:add_item(parent_id, item)
 
         -- 5. Render New Child if Parent is Expanded
         if parent_data and parent_data.expanded ~= false then
-            -- tree_size(parent_id) now includes the parent + all visible children 
+            -- tree_size(parent_id) now includes the parent + all visible children
             -- (including the one we just logically added via self._tree:add_item)
             local current_subtree_size = self._tree:tree_size(parent_id, _filter)
-            
+
             -- The new item is the last one in the parent's subtree.
             -- Its position in flat_ids is (parent_start_index + subtree_size - 1)
             local insert_idx = parent_idx + current_subtree_size - 1
-            
+
             local node = {
                 id = item.id,
                 data = item_data,
