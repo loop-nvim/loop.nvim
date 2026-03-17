@@ -359,7 +359,7 @@ function JsonEditor:_setup()
 
     _open_editors[self._filepath] = self
     local function with_current_item(fn)
-        local item = self._tree:get_cur_item()
+        local item = self._tree:get_cursor_item()
         if item then fn(item) end
     end
 
@@ -447,13 +447,17 @@ function JsonEditor:_reload_tree()
     for _, e in ipairs(self._validation_errors) do
         errors[e.path] = e.err_msg:gsub("\n", " ")
     end
-    local cursor = self._tree:get_cursor()
+    local winid = self._tree:get_winid()
+    local cursor = winid > 0 and vim.api.nvim_win_get_cursor(winid)
+    local topline = winid > 0 and vim.fn.getwininfo(winid)[1].topline
     self:_upsert_tree_items(self._data, "", nil, self._schema, errors)
     if cursor then
-        if not self._tree:set_cursor(cursor) then
-            local ok, err = self._tree:set_cursor({ cursor[1], 0 })
-            assert(ok, err)
-        end
+        uitools.set_cursor_pos(winid, cursor[1], cursor[2])
+    end
+    if topline then
+        vim.api.nvim_win_call(winid, function()
+            vim.fn.winrestview({ topline = topline })
+        end)
     end
 end
 

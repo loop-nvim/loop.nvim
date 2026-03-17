@@ -4,11 +4,9 @@ local Page = require('loop.ui.Page')
 local throttle = require('loop.tools.throttle')
 local uitools = require('loop.tools.uitools')
 local strtools = require('loop.tools.strtools')
-local jsoncodec = require('loop.json.codec')
 local selector = require("loop.tools.selector")
 local BaseBuffer = require('loop.buf.BaseBuffer')
 local OutputBuffer = require('loop.buf.OutputBuffer')
-local CompBuffer = require('loop.buf.CompBuffer')
 local ReplBuffer = require('loop.buf.ReplBuffer')
 local logger = require('loop.logs')
 
@@ -641,14 +639,6 @@ local function _add_tab_page(tab, opts)
         local ctrl = output_buf:make_controller()
         ---@type loop.PageData
         return { page = page:make_controller(), base_buf = ctrl, output_buf = ctrl }
-    end
-    if opts.type == "comp" then
-        local comp_buf = CompBuffer:new({ filetype = "loop-comp", name = opts.label })
-        local page = Page:new(comp_buf)
-        _assign_tab_page(tab, page, opts.activate)
-        local ctrl = comp_buf:make_controller()
-        ---@type loop.PageData
-        return { page = page:make_controller(), base_buf = ctrl, comp_buf = ctrl }
     end
     if opts.type == "repl" then
         local repl_buf = ReplBuffer:new({ filetype = "loop-repl", name = opts.label, listed = false, wipe_when_hidden = false, })

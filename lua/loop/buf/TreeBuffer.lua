@@ -1,7 +1,6 @@
 local class = require('loop.tools.class')
 local BaseBuffer = require('loop.buf.BaseBuffer')
 local Tree = require("loop.tools.Tree")
-local strtools = require('loop.tools.strtools')
 
 ---@class loop.comp.TreeBuffer.Item
 ---@field id any
@@ -347,10 +346,9 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     -- 1. SAVE: Identify which ID the cursor is currently on
     local winid = self:_get_winid()
     local saved_id = nil
-    local saved_cursor = nil
-    if winid and winid > 0 then
-        saved_cursor = vim.api.nvim_win_get_cursor(winid)
-        saved_id = saved_cursor and self._flat_ids[saved_cursor[1]] or nil
+    if winid > 0 then
+        local cursor = vim.api.nvim_win_get_cursor(winid)
+        saved_id = cursor and self._flat_ids[cursor[1]] or nil
     end
 
     local new_lines, new_ids = {}, {}
@@ -373,7 +371,7 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
 
     -- --- Sync id_to_idx map ---
 
-    -- 1. Remove IDs that are being deleted
+    -- Remove IDs that are being deleted
     for i = 0, old_size - 1 do
         local old_id = self._flat_ids[start_idx + i]
         if old_id ~= nil then
@@ -381,7 +379,7 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
         end
     end
 
-    -- 2. Update the flat_ids array
+    -- Update the flat_ids array
     for _ = 1, old_size do
         table.remove(self._flat_ids, start_idx)
     end
@@ -389,7 +387,7 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
         table.insert(self._flat_ids, start_idx + i - 1, id)
     end
 
-    -- 3. Re-index from the point of change to the end
+    -- Re-index from the point of change to the end
     -- This handles both the new items and the items shifted by the surgery
     for i = start_idx, #self._flat_ids do
         local id = self._flat_ids[i]
@@ -401,12 +399,9 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     self:_apply_metadata(buf, range_hls, range_exts)
     vim.bo[buf].modifiable = false
 
-    -- 2. RESTORE: Put the cursor back on the item it was on
-    if winid and winid > 0 and saved_id and saved_cursor then
-        if not self:set_cursor_by_id(saved_id) then
-            saved_cursor[1] = math.min(saved_cursor[1], vim.api.nvim_buf_line_count(buf))
-            pcall(vim.api.nvim_win_set_cursor, winid, saved_cursor)
-        end
+    -- RESTORE: Put the cursor back on the item it was on
+    if winid > 0 and saved_id then
+        self:set_cursor_by_id(saved_id)
     end
 end
 
@@ -498,10 +493,10 @@ function TreeBuffer:get_parent_item(id)
 end
 
 ---@private
----@return number?
+---@return number
 function TreeBuffer:_get_winid()
     local buf = self:get_buf()
-    if buf <= 0 or self._redering_suspended then return end
+    if buf <= 0 or self._redering_suspended then return -1 end
     local winid
     if vim.api.nvim_get_current_buf() == buf then
         winid = vim.api.nvim_get_current_win()
@@ -511,34 +506,15 @@ function TreeBuffer:_get_winid()
     return winid
 end
 
----@return {[1]:number,[2]:number}?
-function TreeBuffer:get_cursor()
-    local winid = self:_get_winid()
-    if not winid or winid <= 0 then return end
-    return vim.api.nvim_win_get_cursor(winid)
-end
-
----@param cur {[1]:number,[2]:number}
----@param clamp_row boolean?
----@return boolean,string?
-function TreeBuffer:set_cursor(cur, clamp_row)
-    local winid = self:_get_winid()
-    if not winid or winid <= 0 then return false end
-    local buf = self:get_buf()
-    if buf <= 0 then return false end
-    local line_count = vim.api.nvim_buf_line_count(buf)
-    local line, col = cur[1], cur[2]
-    if clamp_row ~= false then
-        line = math.max(1, math.min(line, line_count))
-    end
-    local ok, err = pcall(vim.api.nvim_win_set_cursor, winid, { line, col })
-    return ok, err and tostring(err)
+---@return number window id, -1 if invalid
+function TreeBuffer:get_winid()
+    return self:_get_winid()
 end
 
 ---@return any, loop.comp.TreeBuffer.ItemData?
 function TreeBuffer:_get_cur_item()
     local winid = self:_get_winid()
-    if not winid or winid <= 0 then return end
+    if winid <= 0 then return end
     local cursor = vim.api.nvim_win_get_cursor(winid)
     if not cursor then return end
     local id = self._flat_ids[cursor[1]]
@@ -546,23 +522,23 @@ function TreeBuffer:_get_cur_item()
     return id, self:_get_data(id)
 end
 
+---@return loop.comp.TreeBuffer.Item?
+function TreeBuffer:get_cursor_item()
+    local id, itemdata = self:_get_cur_item()
+    if not id or not itemdata then return nil end
+    return { id = id, data = itemdata.userdata, expanded = itemdata.expanded }
+end
+
 ---@return boolean
 function TreeBuffer:set_cursor_by_id(id)
     local winid = self:_get_winid()
-    if not winid or winid <= 0 then return false end
+    if winid <= 0 then return false end
     local idx = self._id_to_idx[id]
     if idx then
         local ok, _ = pcall(vim.api.nvim_win_set_cursor, winid, { idx, 0 })
         return ok
     end
     return false
-end
-
----@return loop.comp.TreeBuffer.Item?
-function TreeBuffer:get_cur_item()
-    local id, itemdata = self:_get_cur_item()
-    if not id or not itemdata then return nil end
-    return { id = id, data = itemdata.userdata, expanded = itemdata.expanded }
 end
 
 ---@param parent_id any

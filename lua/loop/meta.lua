@@ -79,12 +79,6 @@ error('Cannot require a meta file')
 ---@field set_auto_scroll fun(enabled: boolean)
 ---@field set_max_lines fun(n:number)
 
----@class loop.CompBufferController : loop.BaseBufferController
----@field set_renderer fun(renderer:loop.CompRenderer)
----@field set_cursor fun(cur:number)?
----@field get_cursor fun():integer[]|nil
----@field request_refresh fun()
-
 ---@alias loop.ReplCompletionHandler fun(input:string, callback:fun(suggestions:string[]?,err:string?))
 
 ---@class loop.ReplController
@@ -96,7 +90,7 @@ error('Cannot require a meta file')
 ---@field set_ui_flags fun(flags:string)
 
 ---@class loop.PageOpts
----@field type "term"|"output"|"comp"|"repl"
+---@field type "term"|"output"|"repl"
 ---@field label string
 ---@field activate boolean?
 ---@field term_args loop.tools.TermProc.StartArgs?
@@ -105,7 +99,6 @@ error('Cannot require a meta file')
 ---@field page loop.PageController
 ---@field base_buf loop.BaseBufferController?
 ---@field output_buf loop.OutputBufferController?
----@field comp_buf loop.CompBufferController?
 ---@field repl_buf loop.ReplController?
 ---@field term_proc loop.tools.TermProc?
 

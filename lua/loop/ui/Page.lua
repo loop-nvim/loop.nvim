@@ -1,7 +1,6 @@
 local class = require('loop.tools.class')
 local throttle = require('loop.tools.throttle')
 local Trackers = require('loop.tools.Trackers')
-local CompBuffer = require('loop.buf.CompBuffer')
 
 ---@class loop.pages.Page
 ---@field new fun(self: loop.pages.Page, basebuf:loop.comp.BaseBuffer): loop.pages.Page
