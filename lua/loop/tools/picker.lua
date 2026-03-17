@@ -568,12 +568,11 @@ function Picker:update_preview()
                             hl_mode = "blend",
                         })
                     else
-                        vim.api.nvim_win_call(self.vwin, function()
-                            vim.cmd("normal! gg") -- center the target line
-                        end)
+                        vim.api.nvim_win_set_cursor(self.vwin, { 1, 0 })
                     end
                 else
                     vim.bo[self.vbuf].filetype = ""
+                    vim.api.nvim_win_set_cursor(self.vwin, { 1, 0 })
                 end
             end
         end
