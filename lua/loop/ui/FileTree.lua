@@ -10,7 +10,7 @@ local uv         = vim.loop
 ---@field is_dir boolean
 ---@field icon string
 ---@field icon_hl string
----@field _children_waiters fun(children:loop.comp.FileTree.ItemDef[])[]?
+---@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
 
@@ -68,8 +68,27 @@ function FileTree:init(opts)
 
     self._tree:add_tracker({
         on_create = function()
+            assert(not self.bufenter_autocmd_id)
+            self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
+                callback = function()
+                    if self._tree:get_buf() == -1 then
+                        return
+                    end
+                    local buf = vim.api.nvim_get_current_buf()
+                    if uitools.is_regular_buffer(buf) then
+                        local path = vim.api.nvim_buf_get_name(buf)
+                        if path ~= "" then
+                            self:reveal(path, true)
+                        end
+                    end
+                end
+            })
         end,
         on_delete = function()
+            if self.bufenter_autocmd_id then
+                vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
+                self.bufenter_autocmd_id = nil
+            end
         end,
         on_selection = function(id, data)
             uitools.smart_open_file(data.path)
@@ -172,13 +191,6 @@ function FileTree:_file_formatter(id, data)
     }, {}
 end
 
--- register listener for when a directory's children are loaded
-function FileTree:_on_children_loaded(item, fn)
-    local data = item.data
-    data._children_waiters = data._children_waiters or {}
-    table.insert(data._children_waiters, fn)
-end
-
 function FileTree:_read_dir(path, cb)
     ---@diagnostic disable-next-line: undefined-field
     local handle, err = uv.fs_scandir(path)
@@ -207,9 +219,7 @@ function FileTree:_read_dir(path, cb)
     end
 
     vim.schedule(function()
-        -- The rest of your logic remains the same
         local children = {}
-
         -- Optimization: Load devicons once per directory scan
         if not _dev_icons_attempt then
             _dev_icons_attempt = true
@@ -266,18 +276,35 @@ function FileTree:_read_dir(path, cb)
 
         -- Notify reveal waiters
         local parent = self._tree:get_item(path)
-        if parent and parent.data._children_waiters then
-            local waiters = parent.data._children_waiters
-            parent.data._children_waiters = nil
-            for _, fn in ipairs(waiters) do fn(children) end
+        if parent then
+            parent.data.children_loaded = true
+            if parent.data.on_children_loaded then
+                parent.data.on_children_loaded()
+                parent.data.on_children_loaded = nil
+            end
         end
     end)
 end
 
 -- async reveal
-function FileTree:reveal(path)
+---@param path string
+---@param collapse_others boolean?
+function FileTree:reveal(path, collapse_others)
     if not path or path == "" then
         return
+    end
+    if collapse_others then
+        -- Collapse everything that isn't a parent of the target path
+        local items = self._tree:get_items()
+        for _, item in ipairs(items) do
+            -- Don't collapse the root and don't collapse if the item is a parent of our target
+            -- We check if 'id' is a prefix of 'path'
+            if item.id ~= self.root and item.expanded then
+                if not vim.startswith(path, item.id) then
+                    self._tree:collapse(item.id)
+                end
+            end
+        end
     end
     path = vim.fs.normalize(path)
     local root = self.root
@@ -316,24 +343,7 @@ function FileTree:_reveal_step(parent, parts, idx, token)
         -- Verify the target child actually exists in this directory.
         -- If 'children' is nil, it means the item was already expanded,
         -- so we check the TreeBuffer directly.
-        local exists = false
-        if children then
-            for _, child in ipairs(children) do
-                if child.id == next_path then
-                    exists = true
-                    break
-                end
-            end
-        else
-            exists = self._tree:get_item(next_path) ~= nil
-        end
-
-        if exists then
-            self:_reveal_step(next_path, parts, idx + 1, token)
-        else
-            -- Target is likely hidden/filtered; stop and focus the last visible parent
-            self._tree:set_cursor_by_id(parent)
-        end
+        self:_reveal_step(next_path, parts, idx + 1, token)
     end
 
     -- If already expanded, we don't need to wait for a callback
@@ -342,10 +352,16 @@ function FileTree:_reveal_step(parent, parts, idx, token)
         return
     end
 
-    -- Register the waiter BEFORE triggering expansion to avoid race conditions
-    self:_on_children_loaded(parent_item, continue)
+    if parent_item.data.children_loaded then
+        self._tree:expand(parent)
+        continue()
+        return
+    end
 
-    -- This triggers _read_dir which eventually calls our 'continue' waiter
+    -- Register the waiter before expanding to get notified when children are loaded
+    parent_item.data.on_children_loaded = vim.schedule_wrap(function()
+        continue()
+    end)
     self._tree:expand(parent)
 end
 
@@ -361,20 +377,7 @@ function FileTree:reveal_current_file(collapse_others)
     if uitools.is_regular_buffer(buf) then
         local path = vim.api.nvim_buf_get_name(buf)
         if path ~= "" then
-            if collapse_others then
-                -- Collapse everything that isn't a parent of the target path
-                local items = self._tree:get_items()
-                for _, item in ipairs(items) do
-                    -- Don't collapse the root and don't collapse if the item is a parent of our target
-                    -- We check if 'id' is a prefix of 'path'
-                    if item.id ~= self.root and item.expanded then
-                        if not vim.startswith(path, item.id) then
-                            self._tree:collapse(item.id)
-                        end
-                    end
-                end
-            end
-            self:reveal(path)
+            self:reveal(path, collapse_others)
         end
     end
 end

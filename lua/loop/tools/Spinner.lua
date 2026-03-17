@@ -6,6 +6,7 @@ local fntools = require('loop.tools.fntools')
 ---@class loop.tools.Spinner
 ---@field frames string[]
 ---@field interval integer
+---@diagnostic disable-next-line: undefined-doc-name
 ---@field timer uv_timer_t?
 ---@field frame integer
 ---@field running boolean
@@ -41,6 +42,7 @@ function Spinner:start()
     self.running = true
     ---@diagnostic disable-next-line: undefined-field
     self.timer = uv.new_timer()
+    ---@diagnostic disable-next-line: undefined-field
     self.timer:start(
         0,
         self.interval,
