@@ -370,13 +370,13 @@ function Picker:setup_ui()
     })
 
     -- keymap to paste original <cword>
-    assert(self.pbuf > 0 )
+    assert(self.pbuf > 0)
     vim.keymap.set("i", "<C-r><C-w>", function()
         vim.api.nvim_feedkeys(
             vim.api.nvim_replace_termcodes(self.original_cword, true, false, true),
             "i", false
         )
-    end, { buffer = self.pbuf, desc =  "Page original <cword>"})
+    end, { buffer = self.pbuf, desc = "Page original <cword>" })
 end
 
 function Picker:on_resize()
@@ -548,14 +548,11 @@ function Picker:update_preview()
                 vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, lines)
                 if preview and info then
                     -- Set the filetype for syntax highlighting
-                    if info.filetype then
-                        vim.bo[self.vbuf].filetype = info.filetype
-                    elseif info.filepath then
-                        local ft = vim.filetype.match({ filename = info.filepath })
-                        if ft then
-                            vim.bo[self.vbuf].filetype = ft
-                        end
+                    local filetype = info.filetype
+                    if not filetype and info.filepath then
+                        filetype = vim.filetype.match({ filename = info.filepath })
                     end
+                    vim.bo[self.vbuf].filetype = filetype or ""
                     if info.lnum then
                         local lnum = _clamp(info.lnum, 1, #lines)
                         vim.api.nvim_win_set_cursor(self.vwin, { lnum, 0 })
@@ -570,6 +567,10 @@ function Picker:update_preview()
                             hl_eol = true,
                             hl_mode = "blend",
                         })
+                    else
+                        vim.api.nvim_win_call(self.vwin, function()
+                            vim.cmd("normal! gg") -- center the target line
+                        end)
                     end
                 else
                     vim.bo[self.vbuf].filetype = ""
