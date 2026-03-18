@@ -247,8 +247,8 @@ end
 function M.on_workspace_close()
     M.hide()
     _presets = {}
-    _next_id = 1
     _active_preset_id = nil
+    -- don't reset _next_id so that old ids expire
 end
 
 function M.on_workspace_open()
