@@ -1,6 +1,8 @@
 local class      = require("loop.tools.class")
 local uitools    = require("loop.tools.uitools")
 local TreeBuffer = require("loop.buf.TreeBuffer")
+local wsmonitor  = require("loop.workspacemonitor")
+
 
 local uv         = vim.loop
 
@@ -11,13 +13,9 @@ local uv         = vim.loop
 ---@field icon string
 ---@field icon_hl string
 ---@field on_children_loaded fun()?
+---@field error_msg string?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
-
----@class loop.comp.FileTreeOpts
----@field root string
----@field include_globs string[]
----@field exclude_globs string[]
 
 -- at the top of your file
 local _dev_icons_attempt, devicons
@@ -45,15 +43,23 @@ local file_icons = {
     default  = "",
 }
 
+---@param globs string[]|nil
+---@return string[]|nil
+local function _compile_globs(globs)
+    if not globs or #globs == 0 then return nil end
+    local compiled = {}
+    for _, g in ipairs(globs) do
+        -- Compile into a vim.regex object
+        table.insert(compiled, vim.regex(vim.fn.glob2regpat(g)))
+    end
+    return compiled
+end
+
 ---@class loop.comp.FileTree
----@field new fun(self:loop.comp.FileTree,opts:loop.comp.FileTreeOpts):loop.comp.FileTree
-local FileTree   = class()
+---@field new fun(self:loop.comp.FileTree):loop.comp.FileTree
+local FileTree = class()
 
----@param opts loop.comp.FileTreeOpts
-function FileTree:init(opts)
-    vim.validate("opts", opts, "table")
-    vim.validate("opts.root", opts.root, "string")
-
+function FileTree:init()
     self._tree = TreeBuffer:new({
         formatter = function(id, data)
             return self:_file_formatter(id, data)
@@ -66,58 +72,79 @@ function FileTree:init(opts)
         }
     })
 
-    self._tree:add_tracker({
-        on_create = function()
-            assert(not self.bufenter_autocmd_id)
-            self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
-                callback = function()
-                    if self._tree:get_buf() == -1 then
-                        return
-                    end
-                    local buf = vim.api.nvim_get_current_buf()
-                    if uitools.is_regular_buffer(buf) then
-                        local path = vim.api.nvim_buf_get_name(buf)
-                        if path ~= "" then
-                            self:reveal(path, true)
-                        end
+
+    ---@param wsdir string?
+    ---@param config loop.WorkspaceConfig?
+    local function reload(wsdir, config)
+        vim.schedule(function()
+            self:_reload(wsdir,
+                config and config.files.include,
+                config and config.files.exclude)
+        end)
+    end
+
+    local function on_buffer_create()
+        assert(not self.bufenter_autocmd_id)
+        assert(not self._workspace_tracker)
+        self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
+            callback = function()
+                if self._tree:get_buf() == -1 then
+                    return
+                end
+                local buf = vim.api.nvim_get_current_buf()
+                if uitools.is_regular_buffer(buf) then
+                    local path = vim.api.nvim_buf_get_name(buf)
+                    if path ~= "" then
+                        self:reveal(path, true)
                     end
                 end
-            })
+            end
+        })
+        --vim.notify("(loop.nvim) tracker init")
+        self._workspace_tracker = wsmonitor.add_tracker({
+            on_open = function(wsdir, config)
+                reload(wsdir, config)
+            end,
+            on_config_change = function(wsdir, config)
+                reload(wsdir, config)
+            end,
+            on_close = function()
+                reload(nil, nil)
+            end
+        })
+    end
+
+    local function on_buffer_delete()
+        if self.bufenter_autocmd_id then
+            vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
+            self.bufenter_autocmd_id = nil
+        end
+        if self._workspace_tracker then
+            self._workspace_tracker:cancel()
+            self._workspace_tracker = nil
+            --vim.notify("(loop.nvim) tracker cleanup")
+        end
+    end
+
+
+    self._tree:add_tracker({
+        on_create = function()
+            on_buffer_create()
         end,
         on_delete = function()
-            if self.bufenter_autocmd_id then
-                vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
-                self.bufenter_autocmd_id = nil
-            end
+            on_buffer_delete()
         end,
         on_selection = function(id, data)
             uitools.smart_open_file(data.path)
         end,
     })
 
-    self.root = vim.fs.normalize(opts.root)
-    self._include_patterns = self:_compile_globs(opts.include_globs)
-    self._exclude_patterns = self:_compile_globs(opts.exclude_globs)
-
-    self:_set_root(self.root)
     self._reveal_counter = 0
 end
 
 ---@return loop.comp.BaseBuffer
 function FileTree:get_compbuffer()
     return self._tree
-end
-
----@param globs string[]|nil
----@return string[]|nil
-function FileTree:_compile_globs(globs)
-    if not globs or #globs == 0 then return nil end
-    local compiled = {}
-    for _, g in ipairs(globs) do
-        -- Compile into a vim.regex object
-        table.insert(compiled, vim.regex(vim.fn.glob2regpat(g)))
-    end
-    return compiled
 end
 
 ---@param path string
@@ -157,8 +184,29 @@ function FileTree:_should_include(rel, is_dir)
     return true
 end
 
-function FileTree:_set_root(path)
+---@param root string?
+---@param include_globs string[]?
+---@param exclude_gobs string[]?
+function FileTree:_reload(root, include_globs, exclude_gobs)
     self._tree:clear_items()
+
+    if not root or not include_globs or not exclude_gobs then
+        ---@type loop.comp.TreeBuffer.ItemDef
+        local root_item = {
+            id = {},
+            data = {
+                error_msg = self._root and "Invalid workspace configuration" or "No open workspace"
+            }
+        }
+        self._tree:add_item(nil, root_item)
+        return
+    end
+
+    self._root = vim.fs.normalize(root)
+    self._include_patterns = _compile_globs(include_globs)
+    self._exclude_patterns = _compile_globs(exclude_gobs)
+
+    local path = self._root
 
     ---@type loop.comp.TreeBuffer.ItemDef
     local root_item = {
@@ -184,6 +232,9 @@ end
 ---@param data loop.comp.FileTree.ItemData
 function FileTree:_file_formatter(id, data)
     if not data then return {}, {} end
+    if data.error_msg then
+        return { { data.error_msg, "Comment" } }, {}
+    end
     return {
         { data.icon, data.icon_hl },
         { " " },
@@ -230,7 +281,7 @@ function FileTree:_read_dir(path, cb)
         for _, entry in ipairs(entries) do
             local full = vim.fs.joinpath(path, entry.name)
             local is_dir = entry.type == "directory"
-            local rel = vim.fs.relpath(self.root, full)
+            local rel = vim.fs.relpath(self._root, full)
 
             if rel and self:_should_include(rel, is_dir) then
                 local icon, icon_hl
@@ -290,25 +341,26 @@ end
 ---@param path string
 ---@param collapse_others boolean?
 function FileTree:reveal(path, collapse_others)
-    if not path or path == "" then
-        return
-    end
+    if not self._root then return end
+    if not path or path == "" then return end
+
     if collapse_others then
         -- Collapse everything that isn't a parent of the target path
         local items = self._tree:get_items()
         for _, item in ipairs(items) do
             -- Don't collapse the root and don't collapse if the item is a parent of our target
             -- We check if 'id' is a prefix of 'path'
-            if item.id ~= self.root and item.expanded then
+            if item.id ~= self._root and item.expanded then
                 if not vim.startswith(path, item.id) then
                     self._tree:collapse(item.id)
                 end
             end
         end
     end
+
     path = vim.fs.normalize(path)
-    local root = self.root
-    local rel = vim.fs.relpath(self.root, path)
+    local root = self._root
+    local rel = vim.fs.relpath(self._root, path)
     if not rel then
         return
     end
@@ -363,12 +415,6 @@ function FileTree:_reveal_step(parent, parts, idx, token)
         continue()
     end)
     self._tree:expand(parent)
-end
-
-function FileTree:open(path)
-    path = vim.fs.normalize(path)
-    self.root = path
-    self:_set_root(path)
 end
 
 ---@param collapse_others boolean?

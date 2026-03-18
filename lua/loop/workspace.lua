@@ -5,8 +5,6 @@ local logs          = require('loop.logs')
 local taskmgr       = require("loop.task.taskmgr")
 local variablesmgr  = require("loop.task.variablesmgr")
 local window        = require("loop.ui.window")
-local sidebar       = require("loop.ui.sidebar")
-local statusline    = require("loop.statusline")
 local runner        = require("loop.task.runner")
 local jsoncodec     = require('loop.json.codec')
 local jsonvalidator = require('loop.json.validator')
@@ -19,6 +17,7 @@ local selector      = require('loop.tools.selector')
 local extdata       = require("loop.extdata")
 local JsonEditor    = require('loop.json.JsonEditor')
 local views         = require('loop.ui.views')
+local sidebar       = require("loop.ui.sidebar")
 
 local _init_done    = false
 
@@ -34,6 +33,9 @@ local _init_done    = false
 
 ---@type loop.ws.WorkspaceData?
 local _ws_data      = nil
+
+---@type loop.workspace.Tracker
+local _monitor      = require("loop.workspacemonitor").init()
 
 -- New: recent workspaces persistence
 local MAX_RECENTS   = 50
@@ -132,7 +134,7 @@ local function _close_workspace(quiet)
     end
 
     _ws_data = nil
-    statusline.set_workspace_name(nil)
+    _monitor.on_close()
 end
 
 ---@param ws_dir string
@@ -198,8 +200,9 @@ local function _get_or_create_ws_config_file(ws_dir)
     return filepath, schema
 end
 
----@param ws_dir string
-local function _configure_workspace(ws_dir)
+local function _configure_workspace()
+    if not _ws_data then return end
+    local ws_dir = _ws_data.ws_dir
     local filepath, schema = _get_or_create_ws_config_file(ws_dir)
     local existing_editor = JsonEditor.get_existing(filepath)
     if existing_editor then
@@ -211,14 +214,14 @@ local function _configure_workspace(ws_dir)
         filepath = filepath,
         schema = schema,
     })
-    local update_statusline = function()
-        local config = _load_workspace_config(ws_dir)
-        if config and config.name then
-            statusline.set_workspace_name(config.name)
+    editor:set_on_save_handler(function()
+        -- ensure workspace was not changed/closed
+        if _ws_data and ws_dir == _ws_data.ws_dir then
+            local config = _load_workspace_config(ws_dir)
+            local configcopy = config and vim.fn.deepcopy(config) or nil
+            _monitor.on_config_change(ws_dir, configcopy)
         end
-    end
-    update_statusline()
-    editor:set_on_save_handler(update_statusline)
+    end)
     editor:open()
 end
 
@@ -260,11 +263,13 @@ local function _load_workspace(dir)
         config_dir = _ws_data.config_dir,
     }
 
+    -- resets must be before extentions are loaded
     taskmgr.reset_providers(dir)
-    views.reset_views(dir)
+    views.reset_views()
     sidebar.reset_preset_defs()
-
+    -- init task runner
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
+    -- load extensions
     extdata.on_workspace_load(ws_info, _ws_data.page_manager)
 
     assert(not _ws_data.save_timer)
@@ -280,11 +285,9 @@ local function _load_workspace(dir)
         )
     end
 
-    -- TODO: create a workspace configuration tracker module
+    -- notify trackers
     local ws_config = _load_workspace_config(dir)
-    if ws_config and ws_config.name then
-        statusline.set_workspace_name(ws_config.name)
-    end
+    _monitor.on_open(dir, ws_config)
 
     return "ok", nil
 end
@@ -395,7 +398,7 @@ function M.create_workspace(dir)
 
     -- open configuration
     vim.schedule(function()
-        _configure_workspace(dir)
+        _configure_workspace()
     end)
 end
 
@@ -486,7 +489,7 @@ function M.open_workspace(dir, at_startup)
             end
             vim.notify(ui_msg, vim.log.levels.ERROR)
             if status == "badconfig" then
-                _configure_workspace(dir)
+                _configure_workspace()
             end
         end
     end
@@ -503,7 +506,7 @@ function M.configure_workspace()
         _notify_no_ws()
         return
     end
-    _configure_workspace(_ws_data.ws_dir)
+    _configure_workspace()
 end
 
 ---@return string[]

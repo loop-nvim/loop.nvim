@@ -178,9 +178,7 @@ function BaseBuffer:_setup_buf()
         callback = function(ev)
             assert(ev.buf == buf)
             self._buf = -1
-            vim.schedule(function()
-                self._trackers:invoke("on_delete")
-            end)
+            self._trackers:invoke("on_delete") -- must be immediate to syncronise with on_create
         end,
     })
 

@@ -14,14 +14,9 @@ function M.clear_views()
     _registry = {}
 end
 
----@param ws_dir string
-function M.reset_views(ws_dir)
+function M.reset_views()
     local FileTree = require("loop.ui.FileTree")
-    local tree = FileTree:new({
-        root = ws_dir,
-        include_globs = {}, -- ws_config.files.include,
-        exclude_globs = {}, -- ws_config.files.exclude,
-    })
+    local tree = FileTree:new()
     ---@type loop.ViewProvider
     local provider = {
         create_buffer = function()

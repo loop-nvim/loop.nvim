@@ -165,13 +165,13 @@ function M.show(name)
         name = _active_preset
     end
     if not name then
-        vim.notify("No side panel available", vim.log.levels.ERROR)
+        vim.notify("[loop.nvim] No sidebar presets available", vim.log.levels.ERROR)
         return
     end
     local def = _presets[name]
 
     if not def then
-        vim.notify("Unknown view: " .. name, vim.log.levels.ERROR)
+        vim.notify("[loop.nvim] Unknown view: " .. name, vim.log.levels.ERROR)
         return
     end
 
@@ -288,6 +288,7 @@ function M.hide()
             vim.api.nvim_win_close(win, true)
         end
     end
+    _destroy_buffers()
 end
 
 function M.toggle(name)
