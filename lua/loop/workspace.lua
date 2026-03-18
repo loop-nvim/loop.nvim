@@ -5,7 +5,7 @@ local logs          = require('loop.logs')
 local taskmgr       = require("loop.task.taskmgr")
 local variablesmgr  = require("loop.task.variablesmgr")
 local window        = require("loop.ui.window")
-local sidepanel     = require("loop.ui.sidepanel")
+local sidebar       = require("loop.ui.sidebar")
 local statusline    = require("loop.statusline")
 local runner        = require("loop.task.runner")
 local jsoncodec     = require('loop.json.codec')
@@ -18,6 +18,7 @@ local floatwin      = require('loop.tools.floatwin')
 local selector      = require('loop.tools.selector')
 local extdata       = require("loop.extdata")
 local JsonEditor    = require('loop.json.JsonEditor')
+local views         = require('loop.ui.views')
 
 local _init_done    = false
 
@@ -113,7 +114,8 @@ local function _close_workspace(quiet)
         extdata.on_workspace_unload()
         runner.on_workspace_close()
         window.hide_window()
-        sidepanel.clear_view_defs()
+        views.clear_views()
+        sidebar.clear_presets_defs()
 
         if _ws_data.page_manager then
             _ws_data.page_manager.delete_groups()
@@ -220,33 +222,6 @@ local function _configure_workspace(ws_dir)
     editor:open()
 end
 
-local function _register_builtin_sideviews(wsdir)
-    local ws_config = _load_workspace_config(wsdir)
-    if not ws_config then
-        vim.notify("Invalid worspace configuration")
-        return {}
-    end
-    local FileTree = require("loop.ui.FileTree")
-    local tree = FileTree:new({
-        root = wsdir,
-        include_globs = ws_config.files.include,
-        exclude_globs = ws_config.files.exclude,
-    })
-    ---@type loop.SideViewDef
-    local filetree_def = {
-        get_comp_buffers = function()
-            return { tree:get_compbuffer() }
-        end,
-        get_ratio = function()
-            return {}
-        end,
-        on_hide = function ()
-            
-        end
-    }
-    sidepanel.register_new_view("files", filetree_def)
-end
-
 ---@param dir string
 ---@return "ok"|"no_ws"|"locked"|"unexpected"
 ---@return string? error_msg
@@ -286,8 +261,8 @@ local function _load_workspace(dir)
     }
 
     taskmgr.reset_providers(dir)
-    sidepanel.clear_view_defs()
-    _register_builtin_sideviews(dir)
+    views.reset_views(dir)
+    sidebar.reset_preset_defs()
 
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
     extdata.on_workspace_load(ws_info, _ws_data.page_manager)
@@ -305,6 +280,7 @@ local function _load_workspace(dir)
         )
     end
 
+    -- TODO: create a workspace configuration tracker module
     local ws_config = _load_workspace_config(dir)
     if ws_config and ws_config.name then
         statusline.set_workspace_name(ws_config.name)
@@ -534,8 +510,8 @@ end
 function M.get_commands()
     _ensure_init()
     local cmds = { "workspace", "log", "statuspanel", "page" }
-    if sidepanel.have_views() then
-        table.insert(cmds, "sidepanel")
+    if sidebar.have_views() then
+        table.insert(cmds, "sidebar")
     end
     if _ws_data then
         vim.list_extend(cmds, { "task", "var" })
@@ -553,8 +529,8 @@ function M.run_command(cmd, rest, opts)
         M.workspace_command(unpack(rest))
     elseif cmd == "statuspanel" then
         M.statuspanel_command(unpack(rest))
-    elseif cmd == "sidepanel" then
-        M.sidepanel_command(unpack(rest))
+    elseif cmd == "sidebar" then
+        M.sidebar_command(unpack(rest))
     elseif cmd == "page" then
         M.page_command(unpack(rest))
     elseif cmd == "task" then
@@ -587,8 +563,8 @@ function M.get_subcommands(cmd, rest, for_cmd_menu)
         return M.workspace_subcommands(rest)
     elseif cmd == "statuspanel" then
         return M.statuspanel_subcommands(rest)
-    elseif cmd == "sidepanel" then
-        return M.sidepanel_subcommands(rest)
+    elseif cmd == "sidebar" then
+        return M.sidebar_subcommands(rest)
     elseif cmd == "page" then
         return M.page_subcommands(rest, for_cmd_menu)
     elseif cmd == "var" then
@@ -760,13 +736,13 @@ function M.statuspanel_subcommands(args)
     return {}
 end
 
-function M.sidepanel_subcommands(args)
+function M.sidebar_subcommands(args)
     if #args == 0 then
         return { "show", "hide" }
     end
     if #args == 1 and args[1] == "show" then
-        local view_names = sidepanel.view_names()
-        return #view_names > 1 and view_names or {}
+        local preset_names = sidebar.preset_names()
+        return #preset_names > 1 and preset_names or {}
     end
     return {}
 end
@@ -818,25 +794,25 @@ function M.statuspanel_command(command)
     end
 end
 
-function M.sidepanel_command(command, name)
+function M.sidebar_command(command, name)
     if command == nil or command == "" then
-        sidepanel.toggle()
+        sidebar.toggle()
     elseif command == "show" then
-        sidepanel.show(name)
+        sidebar.show(name)
     elseif command == "hide" then
-        sidepanel.hide()
+        sidebar.hide()
     else
-        vim.notify("Invalid sidepanel command: " .. tostring(command))
+        vim.notify("Invalid sidebar command: " .. tostring(command))
     end
 end
 
 function M.show_window()
     _ensure_init()
     if not window.is_visible() then
-        if sidepanel.is_visible() then
-            sidepanel.hide()
+        if sidebar.is_visible() then
+            sidebar.hide()
             window.show_window()
-            sidepanel.show()
+            sidebar.show()
         else
             window.show_window()
         end

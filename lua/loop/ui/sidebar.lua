@@ -1,26 +1,25 @@
 local M = {}
 
+local views = require("loop.ui.views")
+
 local KEY_MARKER = "LoopPlugin_SideWin"
 local INDEX_MARKER = "LoopPlugin_SideWinlIdx"
 
-local _ui_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideView", { clear = true })
+local _resize_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideBarResize", { clear = true })
+local _buffers_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideBarBuffers", { clear = true })
 
 -- ======================================
 -- State
 -- ======================================
 
----@class loop.SideViewDef
----@field get_comp_buffers fun():loop.comp.BaseBuffer[]
----@field get_ratio fun():number[]
----@field on_hide fun()
----@field ratios? number[]
----@field width_ratio? number
-
----@type table<string, loop.SideViewDef>
-local _views = {}
+---@type table<string, loop.SidebarPreset>
+local _presets = {}
 
 ---@type string|nil
-local _active_view = nil
+local _active_preset = nil
+
+---@type {buffer:boolean}
+local _active_buffers = {}
 
 -- ======================================
 -- Window Helpers
@@ -100,41 +99,60 @@ local function apply_ratios(windows, ratios, width_ratio)
     end
 end
 
+---@param ratios number[]
+local function _on_vim_resize(ratios)
+    local wins = get_managed_windows()
+    local d = _presets[_active_preset]
+    if not d then
+        return
+    end
+    if #wins == #ratios then
+        apply_ratios(wins, ratios, d.width_ratio)
+    end
+end
+local function _destroy_buffers()
+    for bufnr, _ in pairs(_active_buffers) do
+        if vim.api.nvim_buf_is_valid(bufnr) then
+            vim.api.nvim_buf_delete(bufnr, { force = true })
+        end
+    end
+    _active_buffers = {}
+end
+
 -- ======================================
 -- Registration
 -- ======================================
 
-function M.clear_view_defs()
+function M.clear_presets_defs()
     M.hide()
-    _views = {}
-    _active_view = nil
+    _presets = {}
+    _active_preset = nil
+end
+
+function M.reset_preset_defs()
+    M.register_preset("files", {
+        views = { { name = "files", ratio = 1 } }
+    })
 end
 
 ---@param name string
----@param def loop.SideViewDef
----@return loop.SideViewCtrl
-function M.register_new_view(name, def)
-    assert(not _views[name], "View already registered: " .. name)
-    _views[name] = def
-    if not _active_view then
-        _active_view = name
+---@param def loop.SidebarPreset
+function M.register_preset(name, def)
+    assert(not _presets[name], "Preset already registered: " .. name)
+    _presets[name] = def
+    if not _active_preset then
+        _active_preset = name
     end
-    ---@type loop.SideViewCtrl
-    return {
-        show = function()
-            M.show(name)
-        end
-    }
 end
 
 ---@return boolean
 function M.have_views()
-    return next(_views) ~= nil
+    return next(_presets) ~= nil
 end
 
 ---@return string[]
-function M.view_names()
-    return vim.fn.sort(vim.tbl_keys(_views))
+function M.preset_names()
+    return vim.fn.sort(vim.tbl_keys(_presets))
 end
 
 -- ======================================
@@ -144,13 +162,13 @@ end
 ---@param name string?
 function M.show(name)
     if not name then
-        name = _active_view
+        name = _active_preset
     end
     if not name then
         vim.notify("No side panel available", vim.log.levels.ERROR)
         return
     end
-    local def = _views[name]
+    local def = _presets[name]
 
     if not def then
         vim.notify("Unknown view: " .. name, vim.log.levels.ERROR)
@@ -159,24 +177,50 @@ function M.show(name)
 
     local wins = get_managed_windows()
 
-    if not name or name == _active_view then
+    if not name or name == _active_preset then
         if #wins > 0 then
             return
         end
     end
 
-    _active_view = name
-
+    _destroy_buffers()
     if #wins > 0 then
         M.hide()
     end
 
-    local buffers = def.get_comp_buffers()
-    local ratios = def.ratios or def.get_ratio()
-    local width_ratio = def.width_ratio
+    _active_preset = name
 
+    local width_ratio = 0.20
+
+    local buffers = {}
+    local ratios = {}
+    local default_ratio = 1 / math.max(#def.views, 1)
+    for _, view in ipairs(def.views) do
+        local provider = views.get_view(view.name)
+        if provider then
+            local bufnr = provider.create_buffer()
+            if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+                table.insert(buffers, bufnr)
+                table.insert(ratios, view.ratio or default_ratio)
+            end
+        end
+    end
     if #buffers == 0 then
         return
+    end
+
+    vim.api.nvim_clear_autocmds({ group = _buffers_auto_group })
+    for i, buf in ipairs(buffers) do
+        _active_buffers[buf] = true
+        -- Detect if buffer is deleted externally
+        vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+            buffer = buf,
+            once = true,
+            group = _buffers_auto_group,
+            callback = function(args)
+                _active_buffers[args.buf] = nil
+            end,
+        })
     end
 
     local original = vim.api.nvim_get_current_win()
@@ -209,9 +253,8 @@ function M.show(name)
     -- Attach buffers
     for i, buf in ipairs(buffers) do
         local win = windows[i]
-
         vim.wo[win].winfixbuf = false
-        vim.api.nvim_win_set_buf(win, (buf:get_or_create_buf()))
+        vim.api.nvim_win_set_buf(win, buf)
         vim.wo[win].winfixbuf = true
     end
 
@@ -222,17 +265,11 @@ function M.show(name)
     end
 
     -- Resize handling
-    vim.api.nvim_clear_autocmds({ group = _ui_auto_group })
+    vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
     vim.api.nvim_create_autocmd("VimResized", {
-        group = _ui_auto_group,
+        group = _resize_auto_group,
         callback = function()
-            local wins = get_managed_windows()
-            local d = _views[_active_view]
-            if not d then
-                return
-            end
-            local r = d.ratios or d.get_ratio()
-            apply_ratios(wins, r, d.width_ratio)
+            _on_vim_resize(ratios)
         end,
     })
 end
@@ -244,18 +281,7 @@ end
 
 function M.hide()
     local wins = get_managed_windows()
-
-    if #wins > 0 then
-        -- Call on_hide for the active view
-        if _active_view then
-            local def = _views[_active_view]
-            if def and def.on_hide then
-                def.on_hide()
-            end
-        end
-    end
-
-    vim.api.nvim_clear_autocmds({ group = _ui_auto_group })
+    vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
     -- destroy_buffers()
     for _, win in ipairs(wins) do
         if vim.api.nvim_win_is_valid(win) then

@@ -4,7 +4,8 @@ local extensions = require('loop.extensions')
 local taskproviders = require('loop.task.providers')
 local filetools = require('loop.tools.file')
 local jsoncodec = require('loop.json.codec')
-local sidepanel = require('loop.ui.sidepanel')
+local views = require('loop.ui.views')
+local sidebar = require('loop.ui.sidebar')
 
 ---@class loop.ExtentionContext
 ---@field ext_name string
@@ -15,13 +16,13 @@ local sidepanel = require('loop.ui.sidepanel')
 ---@type table<string,loop.ExtentionContext>
 local _extension_contexts = {}
 
----@type table<string,loop.ExtensionData>
+---@type table<string,loop.ExtensionAPI>
 local _extension_data = {}
 
 local _reserved_cmd_providers = {
 	workspace = true,
 	statuspanel = true,
-	sidepanel = true,
+	sidebar = true,
 	page = true,
 	logs = true,
 	help = true,
@@ -45,15 +46,15 @@ end
 
 
 ---@param state table
----@return loop.ExtensionState
-local function _make_state_handler(state)
-	---@type loop.ExtensionState
-	local state_handler = {
+---@return loop.ExtensionStorage
+local function _make_storage_handler(state)
+	---@type loop.ExtensionStorage
+	local handler = {
 		set = function(fieldname, fieldvalue) state[fieldname] = fieldvalue end,
 		get = function(fieldname) return state[fieldname] end,
 		keys = function() return vim.tbl_keys(state) end
 	}
-	return state_handler
+	return handler
 end
 
 ---@param config_dir string
@@ -168,18 +169,27 @@ function M.on_workspace_load(wsinfo, page_manager)
 			cmd_providers = {}
 		}
 		_extension_contexts[name] = ext_context
-		---@type loop.ExtensionData
+		local storage_handler = _make_storage_handler(ext_context.state)
+		---@type loop.ExtensionAPI
 		local ext_data = {
 			ws_dir = wsinfo.ws_dir,
 			get_config_file_path = function(key, fileext)
 				return _get_config_file_path(wsinfo.config_dir, name, key, fileext)
 			end,
-			state = _make_state_handler(ext_context.state),
+			get_storage = function()
+				return storage_handler
+			end,
 			register_user_command = function(lead_cmd, provider)
 				return _register_cmd_provider(ext_context, lead_cmd, provider)
 			end,
-			register_side_view = function (viewname, viewdef)
-				return sidepanel.register_new_view(viewname, viewdef)
+			register_view = function(id, provider)
+				views.register_view(id, provider)
+			end,
+			register_sidebar_preset = function(id, preset)
+				return sidebar.register_preset(id, preset)
+			end,
+			show_sidebar_preset = function (id)
+				sidebar.show(id)
 			end,
 			register_task_type = _register_task_type_provider,
 			register_task_templates = _register_task_template_provider,

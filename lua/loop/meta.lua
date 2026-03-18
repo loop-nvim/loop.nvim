@@ -22,26 +22,27 @@ error('Cannot require a meta file')
 
 ---@alias loop.TaskExitHandler fun(success:boolean,reason:string|nil)
 
----@class loop.ExtensionState
+---@class loop.ExtensionStorage
 ---@field get fun(key:string):any
 ---@field set fun(key:string, value:any)
 ---@field keys fun():string[]
 
----@class loop.SideViewDef
----@field get_comp_buffers fun():loop.comp.BaseBuffer[]
----@field get_ratio fun():number[]
+---@class loop.ViewProvider
+---@field create_buffer fun():number
 
----@class loop.SideViewCtrl
----@field show fun()
+---@class loop.SidebarPreset
+---@field views {name:string, ratio:number?}[]
 
----@class loop.ExtensionData
+---@class loop.ExtensionAPI
 ---@field ws_dir string
----@field state loop.ExtensionState
+---@field get_storage fun():loop.ExtensionStorage
 ---@field get_config_file_path fun(key:string,fileext:string?):string
 ---@field register_task_type fun(task_type:string, provider:loop.TaskTypeProvider)
 ---@field register_task_templates fun(category:string, provider:loop.TaskTemplateProvider)
 ---@field register_user_command fun(lead_cmd:string, provider:loop.UserCommandProvider)
----@field register_side_view fun(name:string,def:loop.SideViewDef):loop.SideViewCtrl
+---@field register_view fun(name:string, provider:loop.ViewProvider)
+---@field register_sidebar_preset fun(name:string, preset:loop.SidebarPreset)
+---@field show_sidebar_preset fun(name:string)
 ---@field run_process fun(start_args:loop.tools.TermProc.StartArgs):loop.tools.TermProc?,string?
 
 ---@class loop.TaskTypeProvider
@@ -56,9 +57,9 @@ error('Cannot require a meta file')
 ---@field dispatch fun(args:string[],opts:vim.api.keyset.create_user_command.command_args)
 
 ---@class loop.Extension
----@field on_workspace_load fun(ext_data:loop.ExtensionData)
----@field on_workspace_unload fun(ext_data:loop.ExtensionData)
----@field on_state_will_save? fun(ext_data:loop.ExtensionData)
+---@field on_workspace_load fun(api:loop.ExtensionAPI)
+---@field on_workspace_unload fun(api:loop.ExtensionAPI)
+---@field on_state_will_save? fun(api:loop.ExtensionAPI)
 
 ---@class loop.KeyMap
 ---@field callback fun()
