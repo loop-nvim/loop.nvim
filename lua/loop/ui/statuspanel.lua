@@ -510,7 +510,7 @@ local function _create_term(page, args)
 
     args_cpy.on_exit_handler = function(code)
         args.on_exit_handler(code)
-        local symbols = loopconfig.window.symbols
+        local symbols = loopconfig.statuspanel.symbols
         page:set_ui_flags(code == 0 and symbols.success or symbols.failure)
         local buf = page:get_buf()
         if buf ~= -1 then

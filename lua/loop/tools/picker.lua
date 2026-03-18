@@ -248,7 +248,8 @@ function Picker:init(opts, callback)
         self.history_idx = #self.history + 1
     end
 
-    self.original_cword = vim.fn.expand("<cword>")
+    local cword_ok, cword = pcall(vim.fn.expand, "<cword>")
+    self.original_cword = cword_ok and cword or ""
 
     self:setup_ui()
 end
@@ -273,6 +274,9 @@ function Picker:setup_ui()
     self.pbuf = vim.api.nvim_create_buf(false, true)
     self.lbuf = vim.api.nvim_create_buf(false, true)
     self.vbuf = self.has_preview and vim.api.nvim_create_buf(false, true) or nil
+
+    vim.bo[self.lbuf].modifiable = false
+    if self.vbuf then vim.bo[self.vbuf].modifiable = false end
 
     for _, b in ipairs({ self.pbuf, self.lbuf, self.vbuf }) do
         if b then
@@ -343,13 +347,16 @@ function Picker:setup_ui()
         callback = function(args)
             local win = vim.api.nvim_get_current_win()
             if win ~= self.pwin and win ~= self.lwin and win ~= self.vwin then
-                vim.schedule(function()
-                    if focus_augroup then
-                        vim.api.nvim_del_augroup_by_id(focus_augroup)
-                        focus_augroup = nil
-                    end
-                    self:close(nil)
-                end)
+                local cfg = vim.api.nvim_win_get_config(win)
+                if cfg.relative == "" then -- skip popups
+                    vim.schedule(function()
+                        if focus_augroup then
+                            vim.api.nvim_del_augroup_by_id(focus_augroup)
+                            focus_augroup = nil
+                        end
+                        self:close(nil)
+                    end)
+                end
             end
         end
     })
@@ -546,7 +553,9 @@ function Picker:update_preview()
                 lines = {}
             end
             if vim.api.nvim_buf_is_valid(self.vbuf) then
+                vim.bo[self.vbuf].modifiable = true
                 vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, lines)
+                vim.bo[self.vbuf].modifiable = false
                 if preview and info then
                     -- Set the filetype for syntax highlighting
                     local filetype = info.filetype
@@ -628,7 +637,9 @@ function Picker:request_clear_preview()
         self.preview_timer = timer
         timer:start(self.antiflicker_delay, 0, vim.schedule_wrap(function()
             if self.closed then return end
+            vim.bo[self.vbuf].modifiable = true
             vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
+            vim.bo[self.vbuf].modifiable = false
             self.preview_timer = nil
         end))
         return
@@ -642,7 +653,10 @@ end
 function Picker:clear_list()
     self.items_data = {}
 
+    vim.bo[self.lbuf].modifiable = true
     vim.api.nvim_buf_set_lines(self.lbuf, 0, -1, false, {})
+    vim.bo[self.lbuf].modifiable = false
+
     vim.api.nvim_buf_clear_namespace(self.lbuf, NS_VIRT, 0, -1)
     self:request_clear_preview()
     vim.wo[self.lwin].cursorline = false
@@ -679,12 +693,14 @@ function Picker:add_new_lines(items, query)
 
         -- 3. Update the Buffer
         local row = idx - 1
+        vim.bo[self.lbuf].modifiable = true
         if is_fresh and idx == 1 then
             vim.api.nvim_buf_set_lines(self.lbuf, 0, 1, false, { line_text })
             is_fresh = false -- No longer fresh after first insertion
         else
             vim.api.nvim_buf_set_lines(self.lbuf, row, row, false, { line_text })
         end
+        vim.bo[self.lbuf].modifiable = false
 
         -- 4. Apply Highlights (Extmarks)
         if item.label_chunks then
@@ -887,7 +903,7 @@ function Picker:setup_input()
         self:close(item and item.data)
     end, key_opts)
 
-    vim.keymap.set("i", "<Esc>", function() self:close(nil) end, key_opts)
+    vim.keymap.set("n", "<Esc>", function() self:close(nil) end, key_opts)
     vim.keymap.set("i", "<C-c>", function() self:close(nil) end, key_opts)
 
     vim.keymap.set("i", "<Down>", function()

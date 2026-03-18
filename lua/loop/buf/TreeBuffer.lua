@@ -388,9 +388,20 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
         for _, e in ipairs(exts) do table.insert(range_exts, e) end
     end
 
-    vim.bo[buf].modifiable = true
     vim.api.nvim_buf_clear_namespace(buf, _ns_id, start_row, start_row + old_size)
-    vim.api.nvim_buf_set_lines(buf, start_row, start_row + old_size, false, new_lines)
+
+    local end_row = start_row + old_size
+
+    -- case when the buffer is empty
+    if old_size == 0 and vim.api.nvim_buf_line_count(buf) == 1 then
+        if vim.api.nvim_buf_get_lines(buf, 0, -1, false)[1] == "" then
+            end_row = -1
+        end
+    end
+
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, start_row, end_row, false, new_lines)
+    vim.bo[buf].modifiable = false
 
     -- --- Sync id_to_idx map ---
 
@@ -420,7 +431,24 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     end
 
     self:_apply_metadata(buf, range_hls, range_exts)
-    vim.bo[buf].modifiable = false
+
+    -- REFILL: Fix "unused space" at the bottom
+    if winid > 0 then
+        local line_count = vim.api.nvim_buf_line_count(buf)
+        local win_height = vim.api.nvim_win_get_height(winid)
+
+        -- Use nvim_win_call to get view context safely
+        vim.api.nvim_win_call(winid, function()
+            local view = vim.fn.winsaveview()
+            -- If the bottom of the buffer is higher than the bottom of the window
+            if (view.topline + win_height - 1) > line_count then
+                local new_topline = math.max(1, line_count - win_height + 1)
+                if new_topline ~= view.topline then
+                    vim.fn.winrestview({ topline = new_topline })
+                end
+            end
+        end)
+    end
 
     -- RESTORE: Put the cursor back on the item it was on
     if winid > 0 and saved_id then

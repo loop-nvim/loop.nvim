@@ -8,6 +8,7 @@ local views = require('loop.ui.views')
 local sidebar = require('loop.ui.sidebar')
 
 ---@class loop.ExtentionContext
+---@field expired boolean
 ---@field ext_name string
 ---@field page_groups table<string,loop.PageGroup>
 ---@field state table
@@ -17,7 +18,7 @@ local sidebar = require('loop.ui.sidebar')
 local _extension_contexts = {}
 
 ---@type table<string,loop.ExtensionAPI>
-local _extension_data = {}
+local _extension_api = {}
 
 local _reserved_cmd_providers = {
 	workspace = true,
@@ -85,41 +86,40 @@ local function _register_task_template_provider(category, provider)
 	taskproviders.register_template_provider(category, provider)
 end
 
+---@param start_args loop.tools.TermProc.StartArgs
 ---@param ext_context loop.ExtentionContext
 ---@param page_manager loop.PageManager
----@return fun(start_args:loop.tools.TermProc.StartArgs):loop.tools.TermProc?,string?
-local function _get_run_process_fn(ext_context, page_manager)
-	return function(start_args)
-		local name = start_args.name or ext_context.ext_name
-		local group = ext_context.page_groups[name] ---@type loop.PageGroup?
-		if group and group.is_expired() then
-			group.delete_group()
-			ext_context.page_groups[name] = nil
-			group = nil
-		end
-		if group then
-			return nil, "task already running"
-		end
-		group = page_manager.add_page_group(name)
-		if not group then
-			return nil, "Failed to create term page"
-		end
-		ext_context.page_groups[name] = group
-		local start_args_cpy = vim.fn.copy(start_args)
-		start_args_cpy.on_exit_handler = function(code)
-			if start_args then
-				group.expire()
-				start_args.on_exit_handler(code)
-			end
-		end
-		local page_data, err_str = group.add_page({
-			label = name,
-			type = "term",
-			term_args = start_args_cpy,
-			activate = true,
-		})
-		return page_data and page_data.term_proc, err_str
+---@return  loop.tools.TermProc?,string?
+local function _run_process_for_ext(start_args, ext_context, page_manager)
+	local name = start_args.name or ext_context.ext_name
+	local group = ext_context.page_groups[name] ---@type loop.PageGroup?
+	if group and group.is_expired() then
+		group.delete_group()
+		ext_context.page_groups[name] = nil
+		group = nil
 	end
+	if group then
+		return nil, "task already running"
+	end
+	group = page_manager.add_page_group(name)
+	if not group then
+		return nil, "Failed to create term page"
+	end
+	ext_context.page_groups[name] = group
+	local start_args_cpy = vim.fn.copy(start_args)
+	start_args_cpy.on_exit_handler = function(code)
+		if start_args then
+			group.expire()
+			start_args.on_exit_handler(code)
+		end
+	end
+	local page_data, err_str = group.add_page({
+		label = name,
+		type = "term",
+		term_args = start_args_cpy,
+		activate = true,
+	})
+	return page_data and page_data.term_proc, err_str
 end
 
 ---@param ext_context loop.ExtentionContext
@@ -163,44 +163,63 @@ function M.on_workspace_load(wsinfo, page_manager)
 	for _, name in ipairs(names) do
 		---@type loop.ExtentionContext
 		local ext_context = {
+			expired = false,
 			ext_name = name,
 			state = _load_state(wsinfo.config_dir, name),
 			page_groups = {},
 			cmd_providers = {}
 		}
+		local function assert_ws()
+			assert(not ext_context.expired, "using extension API but workspace is closed")
+		end
 		_extension_contexts[name] = ext_context
 		local storage_handler = _make_storage_handler(ext_context.state)
 		---@type loop.ExtensionAPI
-		local ext_data = {
+		local ext_api = {
 			ws_dir = wsinfo.ws_dir,
 			get_config_file_path = function(key, fileext)
+				assert_ws()
 				return _get_config_file_path(wsinfo.config_dir, name, key, fileext)
 			end,
 			get_storage = function()
+				assert_ws()
 				return storage_handler
 			end,
 			register_user_command = function(lead_cmd, provider)
+				assert_ws()
 				return _register_cmd_provider(ext_context, lead_cmd, provider)
 			end,
 			register_view = function(id, provider)
-				views.register_view(id, provider)
+				assert_ws()
+				return views.register_view(id, provider)
 			end,
-			register_sidebar_preset = function(id, preset)
-				return sidebar.register_preset(id, preset)
+			register_sidebar_preset = function(preset)
+				assert_ws()
+				return sidebar.register_preset(preset)
 			end,
-			show_sidebar_preset = function (id)
-				sidebar.show(id)
+			show_sidebar_preset = function(id)
+				assert_ws()
+				return sidebar.show_by_id(id)
 			end,
-			register_task_type = _register_task_type_provider,
-			register_task_templates = _register_task_template_provider,
-			run_process = _get_run_process_fn(ext_context, page_manager),
+			register_task_type = function(type, provider)
+				assert_ws()
+				return _register_task_type_provider(type, provider)
+			end,
+			register_task_templates = function(category, provider)
+				assert_ws()
+				return _register_task_template_provider(category, provider)
+			end,
+			run_process = function(start_args)
+				assert_ws()
+				return _run_process_for_ext(start_args, ext_context, page_manager)
+			end
 		}
-		_extension_data[name] = ext_data
+		_extension_api[name] = ext_api
 		local ext = extensions.get_extension(name)
 		if ext then
 			assert(ext.on_workspace_load and ext.on_workspace_unload,
 				"required function missing in extention: " .. name)
-			ext.on_workspace_load(ext_data)
+			ext.on_workspace_load(ext_api)
 		end
 	end
 end
@@ -208,28 +227,31 @@ end
 function M.on_workspace_unload()
 	local names = extensions.ext_names()
 	for _, name in ipairs(names) do
-		local ext_data = _extension_data[name]
-		assert(ext_data)
+		local ext_api = _extension_api[name]
+		assert(ext_api)
 		local ext = extensions.get_extension(name)
 		if ext then
-			ext.on_workspace_unload(ext_data)
+			ext.on_workspace_unload(ext_api)
 		end
 	end
-	_extension_data = {}
+	for _, ext in pairs(_extension_contexts) do
+		ext.expired = true
+	end
+	_extension_api = {}
 	_extension_contexts = {}
 end
 
 ---@param config_dir string
-function M.save(config_dir)
+function M.on_save(config_dir)
 	local names = extensions.ext_names()
 	for _, name in ipairs(names) do
-		local ext_data = _extension_data[name]
+		local ext_api = _extension_api[name]
 		local state = _extension_contexts[name].state
-		assert(ext_data)
+		assert(ext_api)
 		assert(state)
 		local ext = extensions.get_extension(name)
 		if ext and ext.on_state_will_save then
-			ext.on_state_will_save(ext_data)
+			ext.on_state_will_save(ext_api)
 		end
 		local filepath = vim.fs.joinpath(config_dir, "state." .. name .. ".json")
 		jsoncodec.save_to_file(filepath, state)

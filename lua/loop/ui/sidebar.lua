@@ -12,11 +12,12 @@ local _buffers_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideBarBuffe
 -- State
 -- ======================================
 
----@type table<string, loop.SidebarPreset>
+---@type table<number, loop.SidebarPreset>
 local _presets = {}
+local _next_id = 1
 
----@type string|nil
-local _active_preset = nil
+---@type number?
+local _active_preset_id = nil
 
 ---@type {buffer:boolean}
 local _active_buffers = {}
@@ -105,7 +106,7 @@ end
 ---@param ratios number[]
 local function _on_vim_resize(ratios)
     local wins = get_managed_windows()
-    local d = _presets[_active_preset]
+    local d = _presets[_active_preset_id]
     if not d then
         return
     end
@@ -122,27 +123,26 @@ local function _destroy_buffers()
     _active_buffers = {}
 end
 
----@param name string?
-local function _show(name)
-    if not name then
-        name = _active_preset
+---@param id number?
+---@return boolean
+local function _show(id)
+    if not id then
+        id = _active_preset_id
     end
-    if not name then
-        vim.notify("[loop.nvim] No sidebar presets available", vim.log.levels.ERROR)
-        return
+    if not id then
+        return false
     end
-    local def = _presets[name]
+    local def = _presets[id]
 
     if not def then
-        vim.notify("[loop.nvim] Unknown view: " .. name, vim.log.levels.ERROR)
-        return
+        return false
     end
 
     local wins = get_managed_windows()
 
-    if not name or name == _active_preset then
+    if not id or id == _active_preset_id then
         if #wins > 0 then
-            return
+            return true
         end
     end
 
@@ -151,7 +151,7 @@ local function _show(name)
         M.hide()
     end
 
-    _active_preset = name
+    _active_preset_id = id
 
     local width_ratio = 0.20
 
@@ -169,7 +169,7 @@ local function _show(name)
         end
     end
     if #buffers == 0 then
-        return
+        return false
     end
 
     vim.api.nvim_clear_autocmds({ group = _buffers_auto_group })
@@ -235,6 +235,8 @@ local function _show(name)
             _on_vim_resize(ratios)
         end,
     })
+
+    return true
 end
 
 
@@ -245,25 +247,55 @@ end
 function M.on_workspace_close()
     M.hide()
     _presets = {}
-    _active_preset = nil
-    _workspace_open = false
+    _next_id = 1
+    _active_preset_id = nil
 end
 
 function M.on_workspace_open()
-    M.register_preset("files", {
+    M.register_preset({
+        name = "files",
         views = { { name = "files", ratio = 1 } }
     })
     _workspace_open = true
     _show()
 end
 
----@param name string
 ---@param def loop.SidebarPreset
-function M.register_preset(name, def)
-    assert(not _presets[name], "Preset already registered: " .. name)
-    _presets[name] = def
-    if not _active_preset then
-        _active_preset = name
+---@return number -- id
+function M.register_preset(def)
+    local id = _next_id
+    _next_id = _next_id + 1
+
+    -- Resolve naming conflicts
+    local original_name = def.name
+    local counter = 1
+    local is_duplicate = true
+
+    while is_duplicate do
+        is_duplicate = false
+        for _, existing in pairs(_presets) do
+            if existing.name == def.name then
+                def.name = original_name .. "_" .. counter
+                counter = counter + 1
+                is_duplicate = true
+                break
+            end
+        end
+    end
+
+    _presets[id] = def
+
+    if not _active_preset_id then
+        _active_preset_id = id
+    end
+
+    return id
+end
+
+---@param id number
+function M.show_by_id(id)
+    if _presets[id] then
+        _show(id)
     end
 end
 
@@ -274,15 +306,27 @@ end
 
 ---@return string[]
 function M.preset_names()
-    return vim.fn.sort(vim.tbl_keys(_presets))
+    local names = {}
+    for _, p in pairs(_presets) do table.insert(names, p.name) end
+    table.sort(names)
+    return names
 end
 
+---@param name string?
 function M.show(name)
     if not _workspace_open then
         vim.notify("[loop.nvim] No active workspace", vim.log.levels.ERROR)
         return
     end
-    _show(name)
+    if not name then
+        return _show()
+    end
+    for id, info in pairs(_presets) do
+        if name == info.name then
+            return _show(id)
+        end
+    end
+    vim.notify("[loop.nvim] Invalid sidebar name: " .. tostring(name), vim.log.levels.WARN)
 end
 
 function M.is_visible()
@@ -296,7 +340,8 @@ function M.hide()
     -- destroy_buffers()
     for _, win in ipairs(wins) do
         if vim.api.nvim_win_is_valid(win) then
-            vim.api.nvim_win_close(win, true)
+            -- avoid error when closing last window on vim exit
+            pcall(vim.api.nvim_win_close, win)
         end
     end
     _destroy_buffers()

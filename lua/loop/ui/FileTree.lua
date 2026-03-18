@@ -63,7 +63,6 @@ function FileTree:init()
         formatter = function(id, data)
             return self:_file_formatter(id, data)
         end,
-        header_enabled = true,
         base_opts = {
             name = "Workspace Files",
             filetype = "loop-filetree",
@@ -192,12 +191,21 @@ end
 function FileTree:_reload(name, root, include_globs, exclude_gobs)
     self._tree:clear_items()
     if not name or not root or not include_globs or not exclude_gobs then
-        local error_msg = self._root and "Invalid workspace configuration" or "No open workspace"
-        self._tree:set_header({ { error_msg, "WarningMsg" } })
+        local error_msg = root and "Workspace configuration error" or "No open workspace"
+        ---@type loop.comp.TreeBuffer.ItemDef
+        local root_item = {
+            id = {},
+            data = {
+                path = "",
+                name = error_msg,
+                is_dir = false,
+                icon = "⚠",
+                icon_hl = "ErrorMsg"
+            }
+        }
+        self._tree:add_item(nil, root_item)
         return
     end
-
-    self._tree:set_header({ { tostring(name), "Title" } })
 
     self._root = vim.fs.normalize(root)
     self._include_patterns = _compile_globs(include_globs)
@@ -288,7 +296,7 @@ function FileTree:_read_dir(path, cb)
                         icon = d_icon or ""
                         icon_hl = d_hl or "Normal"
                     else
-                        icon = ""
+                        icon = file_icons[ext] or ""
                         icon_hl = "Normal"
                     end
                 end

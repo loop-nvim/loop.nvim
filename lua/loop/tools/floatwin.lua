@@ -415,7 +415,6 @@ function M.input_multiline(opts, on_confirm)
             else
                 vim.schedule(function()
                     vim.api.nvim_set_current_win(win)
-                    vim.cmd("startinsert!")
                 end)
             end
         else
@@ -429,7 +428,7 @@ function M.input_multiline(opts, on_confirm)
     -- ---------------- Keymaps ----------------
 
     local kopts = { buffer = buf, nowait = true, silent = true }
-    
+
     -- Normal mode ENTER submits (Standard "Dialog" behavior)
     vim.keymap.set("n", "<CR>", save_and_close, kopts)
     -- Normal mode Esc closes (with confimation)
@@ -441,12 +440,19 @@ function M.input_multiline(opts, on_confirm)
     -- Standard Interrupt
     vim.keymap.set({ "i", "n" }, "<C-c>", try_close, kopts)
 
+    ---@type number?
+    local augroup = vim.api.nvim_create_augroup("LoopPluginMultilineEditor" .. win, { clear = true })
     -- don't use once=true here, keep the group until the window is really closed
     vim.api.nvim_create_autocmd("WinLeave", {
-        once = true,
-        callback = function()
-            if not closed then
+        group = augroup,
+        callback = function(args)
+            local leaving_win = vim.api.nvim_get_current_win()
+            if not closed and leaving_win == win then
                 try_close()
+            end
+            if closed and augroup then
+                vim.api.nvim_del_augroup_by_id(augroup)
+                augroup = nil
             end
         end,
     })

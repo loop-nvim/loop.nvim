@@ -14,7 +14,7 @@ local fntools       = require('loop.tools.fntools')
 local wssaveutil    = require('loop.ws.saveutil')
 local floatwin      = require('loop.tools.floatwin')
 local selector      = require('loop.tools.selector')
-local extdata       = require("loop.extdata")
+local extensionsmgr = require("loop.extensionsmgr")
 local JsonEditor    = require('loop.json.JsonEditor')
 local views         = require('loop.ui.views')
 local sidebar       = require("loop.ui.sidebar")
@@ -91,7 +91,7 @@ local function _save_workspace()
     if not _ws_data then
         return false
     end
-    extdata.save(_ws_data.config_dir)
+    extensionsmgr.on_save(_ws_data.config_dir)
     return true
 end
 
@@ -113,7 +113,7 @@ local function _close_workspace(quiet)
 
         _save_workspace()
 
-        extdata.on_workspace_unload()
+        extensionsmgr.on_workspace_unload()
         runner.on_workspace_close()
         views.clear_views()
         sidebar.on_workspace_close()
@@ -271,7 +271,7 @@ local function _load_workspace(dir)
     -- init task runner
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
     -- load extensions
-    extdata.on_workspace_load(ws_info, _ws_data.page_manager)
+    extensionsmgr.on_workspace_load(ws_info, _ws_data.page_manager)
 
     assert(not _ws_data.save_timer)
     local save_interval = (loopconfig.state_autosave_interval or 5) * 60 * 1000
@@ -522,7 +522,7 @@ function M.get_commands()
     end
     if _ws_data then
         vim.list_extend(cmds, { "task", "var" })
-        vim.list_extend(cmds, extdata.lead_commands())
+        vim.list_extend(cmds, extensionsmgr.lead_commands())
     end
     table.insert(cmds, "log")
     return cmds
@@ -548,7 +548,7 @@ function M.run_command(cmd, rest, opts)
     elseif cmd == "log" then
         M.logs_command()
     else
-        local provider = extdata.get_cmd_provider(cmd)
+        local provider = extensionsmgr.get_cmd_provider(cmd)
         if provider then
             provider.dispatch(rest, opts)
         elseif not _ws_data then
@@ -578,7 +578,7 @@ function M.get_subcommands(cmd, rest, for_cmd_menu)
     elseif cmd == "var" then
         return M.var_subcommands(rest)
     else
-        local provider = extdata.get_cmd_provider(cmd)
+        local provider = extensionsmgr.get_cmd_provider(cmd)
         if provider then
             return provider.get_subcommands(rest)
         end
@@ -796,7 +796,7 @@ function M.statuspanel_command(command)
         M.hide_window()
     elseif command == "clean" then
         if _ws_data and _ws_data.page_manager then _ws_data.page_manager.delete_expired_groups() end
-        extdata.clean_page_groups()
+        extensionsmgr.clean_page_groups()
     else
         vim.notify("Invalid command: " .. command)
     end

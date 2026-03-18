@@ -31,6 +31,7 @@ error('Cannot require a meta file')
 ---@field create_buffer fun():number
 
 ---@class loop.SidebarPreset
+---@field name string
 ---@field views {name:string, ratio:number?}[]
 
 ---@class loop.ExtensionAPI
@@ -41,8 +42,8 @@ error('Cannot require a meta file')
 ---@field register_task_templates fun(category:string, provider:loop.TaskTemplateProvider)
 ---@field register_user_command fun(lead_cmd:string, provider:loop.UserCommandProvider)
 ---@field register_view fun(name:string, provider:loop.ViewProvider)
----@field register_sidebar_preset fun(name:string, preset:loop.SidebarPreset)
----@field show_sidebar_preset fun(name:string)
+---@field register_sidebar_preset fun(preset:loop.SidebarPreset):number -- id
+---@field show_sidebar_preset fun(id:number)
 ---@field run_process fun(start_args:loop.tools.TermProc.StartArgs):loop.tools.TermProc?,string?
 
 ---@class loop.TaskTypeProvider

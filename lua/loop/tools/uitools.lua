@@ -107,11 +107,12 @@ function M.set_cursor_pos(winid, line, col)
 end
 
 ---@param filepath string
----@return number winid
----@return number bufnr
 ---@param line? integer 1‑based line number (nil = just open)
 ---@param col? integer 1‑based line number (nil = just open)
+---@return number winid or -1
+---@return number bufnr or -1
 function M.smart_open_file(filepath, line, col)
+    if not filepath or filepath == "" then return -1, -1 end
     -- Normalize filepath to handle relative paths
     local full_path = vim.fn.fnamemodify(filepath, ':p')
     -- Check all windows for the file
