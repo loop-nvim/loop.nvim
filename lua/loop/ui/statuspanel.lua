@@ -84,7 +84,7 @@ end
 ---@param page_idx number
 ---@return string
 local function _build_winbar(width, active_tab, page_idx)
-    local symbols = loopconfig.window.symbols
+    local symbols = loopconfig.statuspanel.symbols
     local winbar_data = { { 3, "%#LoopPluginInactiveTab#" } }
     local tabidx = 0
 
@@ -747,12 +747,22 @@ function M.init()
     -- init only once
     _init_done = true
 
+    vim.api.nvim_set_hl(0, "LoopPluginActiveTab", {
+        bg = (function()
+            local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = "WinBar", link = false })
+            if not ok then return nil end
+            return hl.bg
+        end)(),
+        fg = (function()
+            local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = "Title", link = false })
+            if not ok then return nil end
+            return hl.fg
+        end)(),
+    })
+
     do
         vim.api.nvim_set_hl(0, "LoopPluginInactiveTab", { link = "WinBar" })
-        vim.api.nvim_set_hl(0, "LoopPluginActiveTab", { link = "Special" })
-        vim.api.nvim_set_hl(0, "LoopPluginEventWarn", { link = "WarningMsg" })
-        vim.api.nvim_set_hl(0, "LoopPluginEventsError", { link = "ErrorMsg" })
-        vim.api.nvim_set_hl(0, "LoopPluginStatusText", { link = "DiagnosticInfo" })
+        vim.api.nvim_set_hl(0, "LoopPluginStatusText", { link = "LoopPluginActiveTab" })
     end
 
     vim.api.nvim_create_autocmd("WinNew", {

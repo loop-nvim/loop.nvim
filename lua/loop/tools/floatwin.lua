@@ -86,7 +86,7 @@ function M.show_tooltip(text)
     vim.wo[winnr].wrap       = true
 
     -- Auto-close on cursor move (very common pattern)
-    local aug = vim.api.nvim_create_augroup("LoopPlugin_ToolHoverClose", { clear = true })
+    local aug                = vim.api.nvim_create_augroup("LoopPlugin_ToolHoverClose", { clear = true })
     vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
         group    = aug,
         once     = true,
@@ -176,9 +176,8 @@ function M.show_floatwin(text, opts)
 
     vim.api.nvim_create_autocmd("WinLeave", {
         group = debug_win_augroup,
-        buffer = buf,
-        callback = close_modal,
         once = true,
+        callback = close_modal,
     })
 
     if opts.move_to_bot then
@@ -351,7 +350,7 @@ function M.input_multiline(opts, on_confirm)
     local initial_lines = vim.split(initial_text, "\n", { plain = true })
     if #initial_lines == 0 then initial_lines = { "" } end
 
-    local title = opts.prompt and (" %s [Ctrl-G to confirm, Ctrl-C to cancel] "):format(opts.prompt) or nil
+    local title = opts.prompt
     local width = math.floor(vim.o.columns * 0.8)
     local height = math.floor(vim.o.lines * 0.8)
 
@@ -428,23 +427,21 @@ function M.input_multiline(opts, on_confirm)
         close(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
     end
     -- ---------------- Keymaps ----------------
-    local kopts = { buffer = buf, nowait = true }
 
-    -- Enter = newline
-    vim.keymap.set("i", "<CR>", "<CR>", kopts)
+    local kopts = { buffer = buf, nowait = true, silent = true }
+    
+    -- Normal mode ENTER submits (Standard "Dialog" behavior)
+    vim.keymap.set("n", "<CR>", save_and_close, kopts)
+    -- Normal mode Esc closes (with confimation)
+    vim.keymap.set("n", "<ESC>", try_close, kopts)
+    -- ZZ = Save/Close, ZQ = Force Quit (Vim Standards)
+    vim.keymap.set("n", "ZZ", save_and_close, kopts)
+    vim.keymap.set("n", "ZQ", function() close(nil) end, kopts)
 
-    -- Confirm = Ctrl-g
-    vim.keymap.set({ "i", "n" }, "<C-g>", save_and_close, kopts)
-    vim.keymap.set({ "n", "n" }, "<C-g>", save_and_close, kopts)
+    -- Standard Interrupt
+    vim.keymap.set({ "i", "n" }, "<C-c>", try_close, kopts)
 
-    -- Cancel = Ctrl-C
-    vim.keymap.set("i", "<C-c>", try_close, kopts)
-    vim.keymap.set("n", "<C-c>", try_close, kopts)
-
-    -- Esc just leaves insert mode
-    vim.keymap.set("i", "<Esc>", "<Esc>", kopts)
-
-    -- Window leave = try close with confirmation
+    -- don't use once=true here, keep the group until the window is really closed
     vim.api.nvim_create_autocmd("WinLeave", {
         once = true,
         callback = function()

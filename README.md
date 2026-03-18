@@ -75,7 +75,7 @@ Workspace config (`workspace.json`), tasks (`tasks.json`), and variables (`varia
 require("loop").setup({
     workspace_data_dir = ".loop", -- workspace data directory
     state_autosave_interval = 5,   -- minutes (0 to disable)
-    window = {
+    statuspanel = {
         symbols = {
             change  = "●",
             success = "✓",

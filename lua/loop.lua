@@ -20,7 +20,7 @@ local M = {}
 
 ---@class loop.Config
 ---@field workspace_data_dir string
----@field window loop.Config.Window
+---@field statuspanel loop.Config.Window
 ---@field files loop.Config.WorspaceFiles
 ---@field macros table<string,(fun(ctx:loop.TaskContext,...):any,string|nil)>
 ---@field debug boolean Enable debug/verbose mode for development
@@ -38,7 +38,7 @@ local function _get_default_config()
             always_excluded_globs = { ".git/", "node_modules/", ".cache/" },
             include_data_dir = false,
         },
-        window = {
+        statuspanel = {
             symbols = {
                 change  = "●",
                 success = "✓",

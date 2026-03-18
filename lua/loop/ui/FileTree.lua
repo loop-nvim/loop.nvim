@@ -13,7 +13,6 @@ local uv         = vim.loop
 ---@field icon string
 ---@field icon_hl string
 ---@field on_children_loaded fun()?
----@field error_msg string?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
 
@@ -64,6 +63,7 @@ function FileTree:init()
         formatter = function(id, data)
             return self:_file_formatter(id, data)
         end,
+        header_enabled = true,
         base_opts = {
             name = "Workspace Files",
             filetype = "loop-filetree",
@@ -77,7 +77,8 @@ function FileTree:init()
     ---@param config loop.WorkspaceConfig?
     local function reload(wsdir, config)
         vim.schedule(function()
-            self:_reload(wsdir,
+            self:_reload(config and config.name,
+                wsdir,
                 config and config.files.include,
                 config and config.files.exclude)
         end)
@@ -184,23 +185,19 @@ function FileTree:_should_include(rel, is_dir)
     return true
 end
 
+---@param name string?
 ---@param root string?
 ---@param include_globs string[]?
 ---@param exclude_gobs string[]?
-function FileTree:_reload(root, include_globs, exclude_gobs)
+function FileTree:_reload(name, root, include_globs, exclude_gobs)
     self._tree:clear_items()
-
-    if not root or not include_globs or not exclude_gobs then
-        ---@type loop.comp.TreeBuffer.ItemDef
-        local root_item = {
-            id = {},
-            data = {
-                error_msg = self._root and "Invalid workspace configuration" or "No open workspace"
-            }
-        }
-        self._tree:add_item(nil, root_item)
+    if not name or not root or not include_globs or not exclude_gobs then
+        local error_msg = self._root and "Invalid workspace configuration" or "No open workspace"
+        self._tree:set_header({ { error_msg, "WarningMsg" } })
         return
     end
+
+    self._tree:set_header({ { tostring(name), "Title" } })
 
     self._root = vim.fs.normalize(root)
     self._include_patterns = _compile_globs(include_globs)
@@ -232,9 +229,6 @@ end
 ---@param data loop.comp.FileTree.ItemData
 function FileTree:_file_formatter(id, data)
     if not data then return {}, {} end
-    if data.error_msg then
-        return { { data.error_msg, "Comment" } }, {}
-    end
     return {
         { data.icon, data.icon_hl },
         { " " },

@@ -43,6 +43,7 @@ local Tree = require("loop.tools.Tree")
 ---@field loading_char string?
 ---@field indent_string string?
 ---@field render_delay_ms number?
+---@field header_enabled boolean?
 ---@field header {[1]:string,[2]:string,[3]:boolean?}[]?
 ---@field transient_children_callbacks boolean?
 
@@ -52,7 +53,7 @@ local Tree = require("loop.tools.Tree")
 
 local _ns_id = vim.api.nvim_create_namespace('LoopPluginTreeBuffer')
 
-local _header_hl_group = "Winbar"
+local _header_hl_group = "LoopPluginTreeBufferHeader"
 vim.api.nvim_set_hl(0, _header_hl_group, {
     bg = (function()
         local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = "WinBar", link = false })
@@ -84,7 +85,8 @@ function TreeBuffer:init(opts)
     BaseBuffer.init(self, opts.base_opts)
     ---@type loop.comp.TreeBuffer.FormatterFn
     self._formatter = opts.formatter
-    self._header = opts.header ---@type string[][]?
+    self._header_enabled = opts.header_enabled == true or opts.header ~= nil
+    self._header = self._header_enabled and (opts.header or {}) or nil
 
     self._expand_char = opts.expand_char or "▶"
     self._collapse_char = opts.collapse_char or "▼"
@@ -257,6 +259,7 @@ function TreeBuffer:_render_node(flatnode, row)
     for i = 1, #text_chunks do
         local chunk = text_chunks[i]
         local txt, hl = chunk[1], chunk[2]
+        txt = txt:gsub("\n", "↵")
         local len = #txt
         if len > 0 then
             if hl then
@@ -287,29 +290,14 @@ function TreeBuffer:_full_render()
     local t_insert = table.insert
 
     -- Handle Header (if exists)
-    if self._header then
-        local row = 0
-        local left_text = ""
-        -- Apply the background highlight to the whole line
-        t_insert(extmarks_data, { row, 0, { line_hl_group = _header_hl_group } })
-        for _, part in ipairs(self._header) do
-            local text, hl, right_align = part[1], part[2], part[3]
-            if not right_align then
-                local start_col = #left_text
-                left_text = left_text .. text
-                if hl then
-                    t_insert(hl_calls, { hl = hl, row = row, s_col = start_col, e_col = #left_text })
-                end
-            else
-                t_insert(extmarks_data, { row, 0, {
-                    virt_text = { { text, hl } },
-                    virt_text_pos = "right_align",
-                    hl_mode = "combine",
-                } })
-            end
-        end
-        t_insert(buffer_lines, left_text)
-        t_insert(self._flat_ids, {}) -- Header placeholder
+    if self._header_enabled then
+        local line, hls, exts = self:_render_header()
+        table.insert(buffer_lines, line)
+        -- Reserve index 1 so tree items start at index 2
+        table.insert(self._flat_ids, {})
+        -- Merge metadata
+        for _, h in ipairs(hls) do table.insert(hl_calls, h) end
+        for _, e in ipairs(exts) do table.insert(extmarks_data, e) end
     end
 
     local flat = self._tree:flatten(nil, _filter)
@@ -332,6 +320,41 @@ function TreeBuffer:_full_render()
     vim.bo[buf].modifiable = false
 
     self:_apply_metadata(buf, hl_calls, extmarks_data)
+end
+
+---Generates the text and metadata for the header row.
+---@private
+---@return string line, table hl_calls, table extmark_data
+function TreeBuffer:_render_header()
+    local hl_calls = {}
+    local extmarks_data = {}
+    local left_text = ""
+    local row = 0
+
+    -- Apply the background highlight to the whole line
+    table.insert(extmarks_data, { row, 0, { line_hl_group = _header_hl_group } })
+
+    if self._header then
+        for _, part in ipairs(self._header) do
+            local text, hl, right_align = part[1], part[2], part[3]
+            text = text:gsub("\n", "↵")
+            if not right_align then
+                local start_col = #left_text
+                left_text = left_text .. text
+                if hl then
+                    table.insert(hl_calls, { hl = hl, row = row, s_col = start_col, e_col = #left_text })
+                end
+            else
+                table.insert(extmarks_data, { row, 0, {
+                    virt_text = { { text, hl } },
+                    virt_text_pos = "right_align",
+                    hl_mode = "combine",
+                } })
+            end
+        end
+    end
+
+    return left_text, hl_calls, extmarks_data
 end
 
 ---Helper to surgically re-render a specific range in the buffer
@@ -430,6 +453,29 @@ function TreeBuffer:_apply_metadata(buf, hl_calls, extmarks)
     end
     for _, d in ipairs(extmarks) do
         vim.api.nvim_buf_set_extmark(buf, _ns_id, d[1], d[2], d[3])
+    end
+end
+
+---Sets the header content
+---@param header {[1]:string,[2]:string,[3]:boolean?}[]?
+function TreeBuffer:set_header(header)
+    if not self._header_enabled then
+        return
+    end
+
+    self._header = header or {}
+    local buf = self:get_buf()
+
+    if buf > 0 and not self._redering_suspended then
+        local line, hls, exts = self:_render_header()
+
+        vim.bo[buf].modifiable = true
+        -- Clear only the first line's namespace
+        vim.api.nvim_buf_clear_namespace(buf, _ns_id, 0, 1)
+        -- Replace only the first line
+        vim.api.nvim_buf_set_lines(buf, 0, 1, false, { line })
+        self:_apply_metadata(buf, hls, exts)
+        vim.bo[buf].modifiable = false
     end
 end
 
@@ -567,7 +613,7 @@ function TreeBuffer:set_children(parent_id, children)
         if parent_id == nil then
             -- When parent is nil, we replace/append the entire tree content
             -- but we must preserve the header if it exists.
-            local header_offset = self._header and 1 or 0
+            local header_offset = self._header_enabled and 1 or 0
             local new_flat = self._tree:flatten(nil, _filter)
 
             -- We treat the entire buffer (minus header) as the range to replace

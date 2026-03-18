@@ -56,14 +56,14 @@ local function _show_help()
         "  o        Add element after",
         "  O        Add element before",
         "  c        Change value",
-        "  C        Change value (JSON)",
+        "  C        Edit multiline string",
         "  d        Delete element",
         "  u        Undo last change",
         "  C-r      Redo last change",
         "",
         "Other:",
         "  K        Show element help (hover window)",
-        "  !        Show validation errors",
+        "  ge       Show validation errors",
         "  g?       Show this help",
     }
 
@@ -278,7 +278,7 @@ local function _formatter(_, data, expanded)
         table.insert(text_chunks, { ": ", "Comment" })
 
         if vt == "string" then
-            table.insert(text_chunks, { tostring(value):gsub("\n", "↵"), "@string" })
+            table.insert(text_chunks, { value, "@string" })
         elseif vt == "null" then
             table.insert(text_chunks, { "null", "@constant" })
         elseif vt == "boolean" then
@@ -627,6 +627,10 @@ function JsonEditor:_edit_value(item, multiline_string)
         if value ~= nil then
             self:_set_value(path, value)
         end
+    end
+    if item.data.value_type == "string" and item.data.value then
+        local multiline = tostring(item.data.value):find("\n")
+        if multiline then multiline_string = true end
     end
     if multiline_string then
         if item.data.value_type == "string" then

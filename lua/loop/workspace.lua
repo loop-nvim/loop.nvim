@@ -4,7 +4,7 @@ local loopconfig    = require("loop").config
 local logs          = require('loop.logs')
 local taskmgr       = require("loop.task.taskmgr")
 local variablesmgr  = require("loop.task.variablesmgr")
-local window        = require("loop.ui.window")
+local statuspanel   = require("loop.ui.statuspanel")
 local runner        = require("loop.task.runner")
 local jsoncodec     = require('loop.json.codec')
 local jsonvalidator = require('loop.json.validator')
@@ -115,9 +115,9 @@ local function _close_workspace(quiet)
 
         extdata.on_workspace_unload()
         runner.on_workspace_close()
-        window.hide_window()
         views.clear_views()
         sidebar.on_workspace_close()
+        statuspanel.hide_window()
 
         if _ws_data.page_manager then
             _ws_data.page_manager.delete_groups()
@@ -131,10 +131,11 @@ local function _close_workspace(quiet)
             logs.user_log("Workspace closed", "workspace")
             vim.notify("Workspace closed")
         end
+
+        _monitor.on_close(_ws_data.ws_dir)
     end
 
     _ws_data = nil
-    _monitor.on_close()
 end
 
 ---@param ws_dir string
@@ -254,7 +255,7 @@ local function _load_workspace(dir)
     _ws_data = {
         ws_dir = dir,
         config_dir = config_dir,
-        page_manager = window.create_page_manager(),
+        page_manager = statuspanel.create_page_manager(),
     }
 
     ---@type loop.ws.WorkspaceInfo
@@ -320,7 +321,7 @@ local function _load_and_run_task(mode, task_name)
             return
         end
         taskmgr.save_last_task_name(root_name, config_dir)
-        window.show_window()
+        statuspanel.show_window()
         runner.run_task_with_deps(all_tasks, root_name)
     end)
 end
@@ -332,12 +333,12 @@ local function _ensure_init()
 
     assert(not _G._LoopPluginGlobalState)
     _G._LoopPluginGlobalState = {}
-    _G._LoopPluginGlobalState.wbc = window.winbar_click
+    _G._LoopPluginGlobalState.wbc = statuspanel.winbar_click
 
-    window.init()
+    statuspanel.init()
 
     runner.set_status_handler(function(nb_waiting, nb_running)
-        local symbols = loopconfig.window.symbols
+        local symbols = loopconfig.statuspanel.symbols
         local parts = {}
         if nb_waiting > 0 then
             table.insert(parts, ("%s %d"):format(symbols.waiting, nb_waiting))
@@ -346,7 +347,7 @@ local function _ensure_init()
         if nb_running > 0 then
             table.insert(parts, ("%s %d"):format(symbols.running, nb_running))
         end
-        window.set_status_text(table.concat(parts, " "))
+        statuspanel.set_status_text(table.concat(parts, " "))
     end)
 
     vim.api.nvim_create_autocmd("VimLeavePre", {
@@ -512,14 +513,18 @@ end
 ---@return string[]
 function M.get_commands()
     _ensure_init()
-    local cmds = { "workspace", "log", "statuspanel", "page" }
-    if sidebar.have_views() then
+    local cmds = { "workspace" }
+    if _ws_data and sidebar.have_views() then
         table.insert(cmds, "sidebar")
+    end
+    if _ws_data then
+        vim.list_extend(cmds, { "statuspanel", "page" })
     end
     if _ws_data then
         vim.list_extend(cmds, { "task", "var" })
         vim.list_extend(cmds, extdata.lead_commands())
     end
+    table.insert(cmds, "log")
     return cmds
 end
 
@@ -758,12 +763,12 @@ function M.page_subcommands(args, for_cmd_menu)
     end
     if not for_cmd_menu then
         if #args == 1 and (args[1] == "open" or args[1] == "switch") then
-            local names = window.get_pagegroup_names()
+            local names = statuspanel.get_pagegroup_names()
             return vim.tbl_map(vim.fn.fnameescape, names)
         end
         if #args == 2 and (args[1] == "open" or args[1] == "switch") then
             local group = args[2]
-            local names = window.get_page_names(group)
+            local names = statuspanel.get_page_names(group)
             return vim.tbl_map(vim.fn.fnameescape, names)
         end
     end
@@ -811,25 +816,29 @@ end
 
 function M.show_window()
     _ensure_init()
-    if not window.is_visible() then
+    if not _ws_data then
+        _notify_no_ws()
+        return
+    end
+    if not statuspanel.is_visible() then
         if sidebar.is_visible() then
             sidebar.hide()
-            window.show_window()
+            statuspanel.show_window()
             sidebar.show()
         else
-            window.show_window()
+            statuspanel.show_window()
         end
     end
 end
 
 function M.hide_window()
     _ensure_init()
-    window.hide_window()
+    statuspanel.hide_window()
 end
 
 function M.toggle_window()
     _ensure_init()
-    if window.is_visible() then
+    if statuspanel.is_visible() then
         M.hide_window()
     else
         M.show_window()
@@ -838,14 +847,14 @@ end
 
 function M.switch_page(group_label, page_label)
     _ensure_init()
-    window.open_page(nil, group_label, page_label)
+    statuspanel.open_page(nil, group_label, page_label)
 end
 
 ---@param group_label string|nil
 ---@param page_label string|nil
 function M.open_page(group_label, page_label)
     _ensure_init()
-    window.open_page(vim.api.nvim_get_current_win(), group_label, page_label)
+    statuspanel.open_page(vim.api.nvim_get_current_win(), group_label, page_label)
 end
 
 function M.logs_command()

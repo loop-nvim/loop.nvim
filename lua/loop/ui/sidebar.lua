@@ -122,54 +122,8 @@ local function _destroy_buffers()
     _active_buffers = {}
 end
 
--- ======================================
--- Registration
--- ======================================
-
-function M.on_workspace_close()
-    M.hide()
-    _presets = {}
-    _active_preset = nil
-    _workspace_open = false
-end
-
-function M.on_workspace_open()
-    M.register_preset("files", {
-        views = { { name = "files", ratio = 1 } }
-    })
-    _workspace_open = true
-end
-
----@param name string
----@param def loop.SidebarPreset
-function M.register_preset(name, def)
-    assert(not _presets[name], "Preset already registered: " .. name)
-    _presets[name] = def
-    if not _active_preset then
-        _active_preset = name
-    end
-end
-
----@return boolean
-function M.have_views()
-    return next(_presets) ~= nil
-end
-
----@return string[]
-function M.preset_names()
-    return vim.fn.sort(vim.tbl_keys(_presets))
-end
-
--- ======================================
--- Show
--- ======================================
-
 ---@param name string?
-function M.show(name)
-    if not _workspace_open then
-        vim.notify("[loop.nvim] No active workspace", vim.log.levels.ERROR)
-        return        
-    end
+local function _show(name)
     if not name then
         name = _active_preset
     end
@@ -281,6 +235,54 @@ function M.show(name)
             _on_vim_resize(ratios)
         end,
     })
+end
+
+
+-- ======================================
+-- Public API
+-- ======================================
+
+function M.on_workspace_close()
+    M.hide()
+    _presets = {}
+    _active_preset = nil
+    _workspace_open = false
+end
+
+function M.on_workspace_open()
+    M.register_preset("files", {
+        views = { { name = "files", ratio = 1 } }
+    })
+    _workspace_open = true
+    _show()
+end
+
+---@param name string
+---@param def loop.SidebarPreset
+function M.register_preset(name, def)
+    assert(not _presets[name], "Preset already registered: " .. name)
+    _presets[name] = def
+    if not _active_preset then
+        _active_preset = name
+    end
+end
+
+---@return boolean
+function M.have_views()
+    return next(_presets) ~= nil
+end
+
+---@return string[]
+function M.preset_names()
+    return vim.fn.sort(vim.tbl_keys(_presets))
+end
+
+function M.show(name)
+    if not _workspace_open then
+        vim.notify("[loop.nvim] No active workspace", vim.log.levels.ERROR)
+        return
+    end
+    _show(name)
 end
 
 function M.is_visible()

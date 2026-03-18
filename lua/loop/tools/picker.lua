@@ -116,11 +116,12 @@ local function _compute_layout(opts)
         list_width = list_width - half_spacing
         prev_width = _clamp(width - list_width - half_spacing, 1, width)
     else
-        local max_with = math.ceil(cols * (opts.width_ratio or 0.8))
+        local max_width = math.ceil(cols * (opts.width_ratio or 0.8))
         if opts.list_width then
-            list_width = _clamp(opts.list_width + 3, 30, max_with)
+            local min_width = math.floor(cols * 0.3)
+            list_width = _clamp(opts.list_width + 3, min_width, max_width)
         else
-            list_width = max_with
+            list_width = max_width
         end
         prev_width = 0
     end
