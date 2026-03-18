@@ -21,6 +21,9 @@ local _active_preset = nil
 ---@type {buffer:boolean}
 local _active_buffers = {}
 
+---@type boolean
+local _workspace_open = false
+
 -- ======================================
 -- Window Helpers
 -- ======================================
@@ -123,16 +126,18 @@ end
 -- Registration
 -- ======================================
 
-function M.clear_presets_defs()
+function M.on_workspace_close()
     M.hide()
     _presets = {}
     _active_preset = nil
+    _workspace_open = false
 end
 
-function M.reset_preset_defs()
+function M.on_workspace_open()
     M.register_preset("files", {
         views = { { name = "files", ratio = 1 } }
     })
+    _workspace_open = true
 end
 
 ---@param name string
@@ -161,6 +166,10 @@ end
 
 ---@param name string?
 function M.show(name)
+    if not _workspace_open then
+        vim.notify("[loop.nvim] No active workspace", vim.log.levels.ERROR)
+        return        
+    end
     if not name then
         name = _active_preset
     end

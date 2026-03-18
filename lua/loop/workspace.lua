@@ -117,7 +117,7 @@ local function _close_workspace(quiet)
         runner.on_workspace_close()
         window.hide_window()
         views.clear_views()
-        sidebar.clear_presets_defs()
+        sidebar.on_workspace_close()
 
         if _ws_data.page_manager then
             _ws_data.page_manager.delete_groups()
@@ -266,7 +266,7 @@ local function _load_workspace(dir)
     -- resets must be before extentions are loaded
     taskmgr.reset_providers(dir)
     views.reset_views()
-    sidebar.reset_preset_defs()
+    sidebar.on_workspace_open()
     -- init task runner
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
     -- load extensions
