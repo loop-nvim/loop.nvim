@@ -123,7 +123,6 @@ function TreeBuffer:_setup_buf()
     vim.api.nvim_create_autocmd('BufReadCmd', {
         buffer = buf,
         callback = function(ev)
-            vim.notify("full render")
             self:_full_render()
         end,
     })
