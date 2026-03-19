@@ -95,6 +95,7 @@ function FileTree:init()
     })
 
     self._reveal_counter = 0
+    self._reload_counter = 0
 
     self:_setup_tree()
     self:_setup_keymaps()
@@ -186,7 +187,19 @@ function FileTree:_setup_keymaps()
         desc = "Create Directory",
         callback = function() with_item(function(i) self:_create_node(i, true) end) end
     })
+    self._tree:add_keymap("i", {
+        desc = "Create File",
+        callback = function() with_item(function(i) self:_create_node(i, false) end) end
+    })
+    self._tree:add_keymap("I", {
+        desc = "Create Directory",
+        callback = function() with_item(function(i) self:_create_node(i, true) end) end
+    })
     self._tree:add_keymap("r", {
+        desc = "Rename",
+        callback = function() with_item(function(i) self:_rename_node(i) end) end
+    })
+    self._tree:add_keymap("c", {
         desc = "Rename",
         callback = function() with_item(function(i) self:_rename_node(i) end) end
     })
@@ -330,6 +343,7 @@ end
 ---@param include_globs string[]?
 ---@param exclude_gobs string[]?
 function FileTree:_reload(name, root, include_globs, exclude_gobs)
+    self._reload_counter = self._reload_counter + 1
     self._tree:clear_items()
     self:_clear_all_monitors()
 
@@ -607,10 +621,16 @@ end
 ---@param as_dir boolean
 function FileTree:_create_node(item, as_dir)
     -- Determine base directory: if item is file, use its parent. If dir, use it.
+    local path = item.data.path
     local base_dir = item.data.is_dir and item.data.path or vim.fn.fnamemodify(item.data.path, ":h")
     local type_label = as_dir and "Directory" or "File"
 
-    floatwin.input_at_cursor({ prompt = "New " .. type_label .. " name: " }, function(name)
+    local reload_counter = self._reload_counter
+    floatwin.input_at_cursor({ prompt = "New " .. type_label .. " name" }, function(name)
+        if not name or name == "" then return end
+        if reload_counter ~= self._reload_counter then return end
+        if not self._tree:get_item(path) then return end
+
         local new_path = vim.fs.joinpath(base_dir, name)
         if as_dir then
             ---@diagnostic disable-next-line: undefined-field
@@ -637,10 +657,15 @@ function FileTree:_rename_node(item)
     local old_name = item.data.name
     local parent_dir = vim.fn.fnamemodify(old_path, ":h")
 
+    local reload_counter = self._reload_counter
     floatwin.input_at_cursor({
-            prompt = "Rename to: ", old_name,
+            prompt = ("Rename `%s`"):format(old_name),
+            default_text = old_name
         },
         function(new_name)
+            if not new_name or new_name == "" then return end
+            if reload_counter ~= self._reload_counter then return end
+            if not self._tree:get_item(old_path) then return end
             local new_path = vim.fs.joinpath(parent_dir, new_name)
             ---@diagnostic disable-next-line: undefined-field
             local ok, err = uv.fs_rename(old_path, new_path)
@@ -665,30 +690,20 @@ function FileTree:_delete_node(item, wanted)
         return
     end
     local type_str = is_folder and "directory" or "file"
+    local reload_counter = self._reload_counter
     -- Confirmation dialog
-    local confirm = vim.fn.confirm("Delete " .. type_str .. ": " .. item.data.name .. "?", "&Yes\n&No", 2)
-    if confirm ~= 1 then return end
-    -- Attempt simple removal
-    local success, err = os.remove(path)
-    -- If os.remove fails (usually because it's a non-empty directory), use a shell command
-    if not success then
-        local cmd = vim.fn.has("win32") == 1
-            and { "cmd.exe", "/c", "rd", "/s", "/q", path }
-            or { "rm", "-rf", path }
-
-        vim.fn.jobstart(cmd, {
-            on_exit = function(_, code)
-                if code == 0 then
-                    vim.notify("Deleted: " .. path, vim.log.levels.INFO)
-                    -- Optional: Trigger a UI refresh here
-                else
-                    vim.notify("Failed to delete: " .. path, vim.log.levels.ERROR)
-                end
-            end
-        })
-    else
-        vim.notify("Deleted: " .. path, vim.log.levels.INFO)
-    end
+    local confirm = uitools.confirm_action(("Delete %s?\n%s"):format(type_str, path), false, function(confirmed)
+        if not confirmed then return end
+        if reload_counter ~= self._reload_counter then return end
+        if not self._tree:get_item(path) then return end
+        -- Attempt simple removal
+        local success, err_msg = os.remove(path)
+        if not success then
+            vim.notify(("Failed to delete %s?, %s"):format(type_str, err_msg), vim.log.levels.ERROR)
+        else
+            vim.notify("Deleted: " .. path, vim.log.levels.INFO)
+        end
+    end)
 end
 
 return FileTree

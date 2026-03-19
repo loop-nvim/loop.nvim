@@ -220,7 +220,7 @@ end
 
 ---@param msg string
 ---@param default_yes boolean
----@param callback fun(yes: boolean|nil)
+---@param callback fun(confirmed: boolean|nil)
 function M.confirm_action(msg, default_yes, callback)
     local choices = "&Yes\n&No"
     local default = default_yes and 1 or 2
