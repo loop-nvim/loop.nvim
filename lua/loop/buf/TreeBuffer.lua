@@ -684,7 +684,7 @@ end
 function TreeBuffer:expand_all(id)
     local data = self:_get_data(id)
     if not data then return end
-    if not data.expanded and self._tree:have_children(id) then
+    if not data.expanded and (data.expandable or self._tree:have_children(id)) then
         self:expand(id)
     end
     local children = self._tree:get_children(id)
@@ -696,7 +696,7 @@ end
 function TreeBuffer:collapse_all(id)
     local data = self:_get_data(id)
     if not data then return end
-    if data.expanded and self._tree:have_children(id) then
+    if data.expanded then
         self:collapse(id)
     end
     local children = self._tree:get_children(id)
