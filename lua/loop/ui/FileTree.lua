@@ -14,6 +14,7 @@ local uv         = vim.loop
 ---@field is_dir boolean
 ---@field icon string
 ---@field icon_hl string
+---@field is_current boolean?
 ---@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
@@ -74,7 +75,7 @@ local function _file_formatter(id, data)
     return {
         { data.icon, data.icon_hl },
         { " " },
-        { data.name }
+        { data.name, data.is_current and "Type" or "Normal" }
     }, {}
 end
 
@@ -471,6 +472,17 @@ function FileTree:reveal(path, collapse_others)
         end
     end
 
+    -- Unset the flag on the previous item
+    if self._last_revealed_id then
+        local id = self._last_revealed_id
+        self._last_revealed_id = nil
+        local old_item = self._tree:get_item(id)
+        if old_item then
+            old_item.data.is_current = false
+            self._tree:refresh_item(id)
+        end
+    end
+
     path = vim.fs.normalize(path)
     local root = self._root
     local rel = vim.fs.relpath(self._root, path)
@@ -492,6 +504,12 @@ function FileTree:_reveal_step(parent, parts, idx, token)
     -- Base Case: We've reached the end of the path parts
     if idx > #parts then
         self._tree:set_cursor_by_id(parent)
+        local data = self._tree:get_item(parent)
+        if data then
+            self._last_revealed_id = parent
+            data.data.is_current = true
+            self._tree:refresh_item(parent)
+        end
         return
     end
 
