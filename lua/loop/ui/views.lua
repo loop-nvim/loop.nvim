@@ -45,20 +45,6 @@ function M.get_view(name)
     return _registry[name]
 end
 
----Returns a list of view providers for a given list of IDs.
----Skips IDs that are not registered.
----@param ids string[]
----@return loop.ViewProvider[]
-function M.get_views_by_ids(ids)
-    local found = {}
-    for _, name in ipairs(ids) do
-        if _registry[name] then
-            table.insert(found, _registry[name])
-        end
-    end
-    return found
-end
-
 ---Returns all registered view IDs (useful for tab completion).
 ---@return string[]
 function M.get_all_ids()

@@ -235,13 +235,15 @@ function M.input_at_cursor(opts, on_confirm)
     vim.wo[win].winhighlight = "Normal:Normal,NormalNC:Normal,EndOfBuffer:Normal,FloatBorder:Normal"
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { initial_text })
 
-    if initial_text == "" then
-        vim.schedule(function()
-            if vim.api.nvim_get_current_win() == win then
+    local col = #initial_text
+    vim.api.nvim_win_set_cursor(win, { 1, col })
+    vim.schedule(function()
+        if vim.api.nvim_get_current_win() == win then
+            vim.api.nvim_win_call(win, function()
                 vim.cmd("startinsert!")
-            end
-        end)
-    end
+            end)
+        end
+    end)
 
     -- Setup completion if completions provided
     if opts.completions and #opts.completions > 0 then

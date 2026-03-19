@@ -46,20 +46,28 @@ local _open_editors = {}
 
 local _buf_filetype = "loop-jsoneditor"
 
+local _json_clipboard = nil
+
 local function _show_help()
     local help_text = {
         "Navigation:",
         "  <CR>     Toggle expand/collapse",
         "",
         "Editing:",
+        "  u        Undo last change",
+        "  C-r      Redo last change",
         "  i        Add element to object or array",
         "  o        Add element after",
         "  O        Add element before",
         "  c        Change value",
         "  C        Edit multiline string",
         "  d        Delete element",
-        "  u        Undo last change",
-        "  C-r      Redo last change",
+        "  gy       Yank (copy) node",
+        "  gp       Paste node after current",
+        "  gP       Paste node before current",
+        "  gi       Paste node under current (append to object/array)",
+        "  Alt-j    Move array item down",
+        "  Alt-k    Move array item up",
         "",
         "Other:",
         "  K        Show element help (hover window)",
@@ -392,12 +400,40 @@ function JsonEditor:_setup()
         desc = "Delete",
         callback = function() with_current_item(function(i) self:_delete(i) end) end,
     })
+    -- Yank
+    self._tree:add_keymap("gy", {
+        desc = "Yank node",
+        callback = function() with_current_item(function(i) self:_yank(i) end) end,
+    })
+    -- Paste After
+    self._tree:add_keymap("gp", {
+        desc = "Paste node after",
+        callback = function() with_current_item(function(i) self:_paste(i, "after") end) end,
+    })
 
+    -- Paste Before
+    self._tree:add_keymap("gP", {
+        desc = "Paste node before",
+        callback = function() with_current_item(function(i) self:_paste(i, "before") end) end,
+    })
+    -- Paste Under (Inside)
+    self._tree:add_keymap("gi", {
+        desc = "Paste node inside (append)",
+        callback = function() with_current_item(function(i) self:_paste(i, "under") end) end,
+    })
+    self._tree:add_keymap("<A-j>", {
+        desc = "Move item down",
+        callback = function() with_current_item(function(i) self:_move_item(i, "down") end) end,
+    })
+
+    self._tree:add_keymap("<A-k>", {
+        desc = "Move item up",
+        callback = function() with_current_item(function(i) self:_move_item(i, "up") end) end,
+    })
     self._tree:add_keymap("K", {
         desc = "Show schema/help for current node (K)",
         callback = function() with_current_item(function(i) _show_node_help(i) end) end,
     })
-
     self._tree:add_keymap("u", { desc = "Undo", callback = function() self:undo() end })
     self._tree:add_keymap("<C-r>", { desc = "Redo", callback = function() self:redo() end })
     self._tree:add_keymap("g?", { desc = "Help", callback = function() _show_help() end })
@@ -988,6 +1024,103 @@ function JsonEditor:_get_object_new_value(item, schema, callback)
                 end
             end
         )
+    end
+end
+
+---@param item loop.comp.TreeBuffer.Item
+---@param direction "up"|"down"
+function JsonEditor:_move_item(item, direction)
+    if not item or not item.data or item.data.path == "" then return end
+
+    local parent_item = self._tree:get_parent_item(item.data.path)
+    if not parent_item or parent_item.data.value_type ~= "array" then
+        return
+    end
+    local parent_value = parent_item.data.value
+    local path_parts = jsontools.split_path(item.data.path)
+    local current_idx = tonumber(path_parts[#path_parts])
+    if not current_idx then return end
+
+    local target_idx = (direction == "up") and (current_idx - 1) or (current_idx + 1)
+    if target_idx < 1 or target_idx > #parent_value then
+        return -- Boundary reached
+    end
+    self:_push_undo()
+    -- Swap the elements
+    parent_value[current_idx], parent_value[target_idx] = parent_value[target_idx], parent_value[current_idx]
+    -- Apply changes and move cursor to the new position of the item
+    local new_path = jsontools.join_path(parent_item.data.path, tostring(target_idx))
+    self:_apply_changes(new_path)
+end
+
+--- Yank the current node data
+---@param item loop.comp.TreeBuffer.Item
+function JsonEditor:_yank(item)
+    if not item or not item.data then return end
+    _json_clipboard = {
+        value = vim.deepcopy(item.data.value),
+        type = item.data.value_type,
+        original_key = item.data.key
+    }
+    vim.notify("Yanked: " .. tostring(item.data.path), vim.log.levels.INFO)
+end
+
+---@param item loop.comp.TreeBuffer.Item
+---@param where "under"|"before"|"after"
+function JsonEditor:_paste(item, where)
+    if not _json_clipboard then
+        vim.notify("Clipboard is empty", vim.log.levels.WARN)
+        return
+    end
+
+    local target_item = item ---@type loop.comp.TreeBuffer.Item?
+    local insert_pos = nil
+
+    -- Handle Siblings (Before/After)
+    if where == "before" or where == "after" then
+        local parts = jsontools.split_path(item.data.path)
+        if #parts == 0 then
+            vim.notify("Cannot paste sibling to root", vim.log.levels.WARN)
+            return
+        end
+        local item_key = table.remove(parts, #parts)
+        local parent_path = jsontools.join_path_parts(parts)
+        target_item = self._tree:get_item(parent_path)
+
+        if target_item and target_item.data.value_type == "array" then
+            insert_pos = (where == "before") and tonumber(item_key) or (tonumber(item_key) + 1)
+        end
+    end
+
+    if not target_item then return end
+    local vt = target_item.data.value_type
+
+    -- Validation for "Under"
+    if where == "under" and vt ~= "array" and vt ~= "object" then
+        vim.notify("Can only paste 'under' an Object or Array", vim.log.levels.WARN)
+        return
+    end
+
+    if vt == "array" then
+        -- If 'under', we append to the end. If sibling, use insert_pos.
+        local pos = insert_pos or (#target_item.data.value + 1)
+        self:_push_undo()
+        table.insert(target_item.data.value, pos, vim.fn.deepcopy(_json_clipboard.value))
+        self:_apply_changes(jsontools.join_path(target_item.data.path, tostring(pos)))
+    elseif vt == "object" then
+        floatwin.input_at_cursor({
+            prompt = "Paste key name",
+            -- Suggest original key, stripping array brackets if they exist
+            default_text = _json_clipboard.original_key:gsub("^%[(.*)%]$", "%1")
+        }, function(new_key)
+            if not new_key or new_key == "" or target_item.data.value[new_key] ~= nil then
+                vim.notify("Invalid or existing key", vim.log.levels.ERROR)
+                return
+            end
+            self:_push_undo()
+            target_item.data.value[new_key] = vim.fn.deepcopy(_json_clipboard.value)
+            self:_apply_changes(jsontools.join_path(target_item.data.path, new_key))
+        end)
     end
 end
 
