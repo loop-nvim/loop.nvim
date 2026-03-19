@@ -876,31 +876,16 @@ function TreeBuffer:set_children_callback(id, callback)
     self:_request_children(id, base_data)
 end
 
----Forces a re-scan of a node's children via its children_callback
+--- re-scan of a node's children via its children_callback (immedate if expanded)
 ---@param id any
-function TreeBuffer:refresh_item(id)
+function TreeBuffer:retrigger_children_callback(id)
     local data = self:_get_data(id)
     if not data or not data.children_callback then return end
-
     -- Increment sequence to invalidate any currently in-flight requests
     data.load_sequence = data.load_sequence + 1
     data.reload_children = true
-
-    -- Re-render the line (to show loading icon if applicable)
-    self:_render_line(id, data)
-
     -- Trigger the callback logic defined in FileTree
     self:_request_children(id, data)
-end
-
----Marks an item as needing a reload without triggering it immediately
----@param id any
-function TreeBuffer:invalidate_item(id)
-    local data = self:_get_data(id)
-    if data then
-        data.reload_children = true
-        data.load_sequence = data.load_sequence + 1
-    end
 end
 
 ---@param id any
@@ -914,5 +899,13 @@ function TreeBuffer:set_item_data(id, data)
     self:_render_line(id, base_data)
     return true
 end
+
+---@param id any
+function TreeBuffer:refresh_item(id)
+    local data = self:_get_data(id)
+    if not data then return end
+    self:_render_line(id, data)
+end
+
 
 return TreeBuffer

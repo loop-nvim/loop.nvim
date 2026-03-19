@@ -14,18 +14,28 @@ local M = {}
 ---@class loop.Config.Window
 ---@field symbols loop.Config.Window.Symbols
 
----@class loop.Config.WorspaceFiles
----@field always_excluded_globs string[]
----@field include_data_dir boolean
+---@class loop.Config.FileTree
+---@field track_current_file loop.Config.FileTree.Track
+---@field monitor_file_system boolean Watch for external OS file changes
+---@field max_monitored_folders integer limit to prevent handle exhaustion
+
+---@class loop.Config.FileTree.Track
+---@field enabled boolean Focus the active buffer in the tree automatically
+---@field auto_collapse_others boolean Collapse non-focused nodes when tracking
+
+---@class loop.Config.WorkspaceFiles
+---@field always_excluded_globs string[] List of patterns to ignore (e.g., .git/)
+---@field include_data_dir boolean Whether to index the .loop directory itself
 
 ---@class loop.Config
 ---@field workspace_data_dir string
 ---@field statuspanel loop.Config.Window
----@field files loop.Config.WorspaceFiles
----@field macros table<string,(fun(ctx:loop.TaskContext,...):any,string|nil)>
+---@field filetree loop.Config.FileTree
+---@field files loop.Config.WorkspaceFiles
+---@field macros table<string, (fun(ctx:loop.TaskContext, ...): any, string|nil)>
 ---@field debug boolean Enable debug/verbose mode for development
----@field state_autosave_interval integer Auto-save interval in minutes (default: 5 minutes).
----@field logs_count integer Number of recent logs to show with :Loop logs (default: 50).
+---@field state_autosave_interval integer Auto-save interval in minutes (default: 5)
+---@field logs_count integer Number of recent logs to show (default: 50)
 ---@field use_fd_find boolean
 
 -- IMPORTANT: keep this module light for lazy loading
@@ -46,6 +56,14 @@ local function _get_default_config()
                 waiting = "⧗",
                 running = "▶",
             },
+        },
+        filetree = {
+            track_current_file = {
+                enabled = true,
+                auto_collapse_others = false,
+            },
+            monitor_file_system = true,
+            max_monitored_folders = 100,
         },
         macros = {},
         debug = false,

@@ -1,3 +1,4 @@
+local loopconfig = require("loop").config
 local class      = require("loop.tools.class")
 local uitools    = require("loop.tools.uitools")
 local filetools  = require("loop.tools.file")
@@ -96,9 +97,9 @@ function FileTree:init()
 
     self._expanded_lru = LRU:new(1000)
 
-    self._monitor_lru = LRU:new(100, {
+    self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
-            vim.notify("removing monitor: " .. path)
+            --vim.notify("removing monitor: " .. path)
             cancel_fn()
         end
     })
@@ -117,20 +118,22 @@ function FileTree:init()
     local function on_buffer_create()
         assert(not self.bufenter_autocmd_id)
         assert(not self._workspace_tracker)
-        self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
-            callback = function()
-                if self._tree:get_buf() == -1 then
-                    return
-                end
-                local buf = vim.api.nvim_get_current_buf()
-                if uitools.is_regular_buffer(buf) then
-                    local path = vim.api.nvim_buf_get_name(buf)
-                    if path ~= "" then
-                        self:reveal(path, false)
+        if loopconfig.filetree.track_current_file.enabled then
+            self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
+                callback = function()
+                    if self._tree:get_buf() == -1 then
+                        return
+                    end
+                    local buf = vim.api.nvim_get_current_buf()
+                    if uitools.is_regular_buffer(buf) then
+                        local path = vim.api.nvim_buf_get_name(buf)
+                        if path ~= "" then
+                            self:reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others)
+                        end
                     end
                 end
-            end
-        })
+            })
+        end
         --vim.notify("(loop.nvim) tracker init")
         self._workspace_tracker = wsmonitor.add_tracker({
             on_open = function(wsdir, config)
@@ -271,7 +274,7 @@ function FileTree:_attach_monitor(path)
         end)
     end)
     if cancel_fn then
-        vim.notify("adding monitor: " .. path)
+        --vim.notify("adding monitor: " .. path)
         self._monitor_lru:put(path, cancel_fn)
     end
 end
@@ -333,8 +336,7 @@ end
 ---@param status table|nil optional status from uv.fs_event
 function FileTree:_handle_fs_change(path, status)
     path = vim.fs.normalize(path)
-
-    vim.notify(("fs_change (%s): %s"):format(vim.inspect(status), path))
+    --vim.notify(("fs_change (%s): %s"):format(vim.inspect(status), path))
     -- If the changed path is a directory, refresh it.
     -- If it's a file, refresh its parent to catch additions/deletions/renames.
     local is_dir = vim.fn.isdirectory(path) == 1
@@ -346,13 +348,9 @@ function FileTree:_handle_fs_change(path, status)
 
     self:_clear_branch_monitors(target_id, true)
 
-    if target_id == self._root or item.expanded then
-        -- Refresh immediately if visible
-        self._tree:refresh_item(target_id)
-    else
-        -- Just invalidate so it reloads on next expand
-        self._tree:invalidate_item(target_id)
-    end
+    -- Refresh immediately if visible
+    self._tree:refresh_item(target_id)
+    self._tree:retrigger_children_callback(target_id)
 end
 
 ---@param path string
