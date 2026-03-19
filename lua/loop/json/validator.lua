@@ -242,7 +242,7 @@ function M.validate(schema, data, opts)
         schema_map = {}
     end
     local errors = {}
-    _validate(schema, data, "", errors, schema_map)
+    _validate(schema, data, "/", errors, schema_map)
     return #errors == 0, errors, schema_map
 end
 
