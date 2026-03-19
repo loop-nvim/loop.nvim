@@ -249,7 +249,7 @@ function Picker:init(opts, callback)
     end
 
     local cword_ok, cword = pcall(vim.fn.expand, "<cword>")
-    self.original_cword = cword_ok and cword or ""
+    self.original_cword = tostring(cword_ok and (type(cword) == "table" and cword[1] or cword) or "")
 
     self:setup_ui()
 end

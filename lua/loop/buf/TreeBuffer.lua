@@ -518,6 +518,7 @@ function TreeBuffer:clear_items()
     self:_full_render()
 end
 
+---@private
 ---@return loop.comp.TreeBuffer.ItemData
 function TreeBuffer:_get_data(id)
     return self._tree:get_data(id)
@@ -585,6 +586,7 @@ function TreeBuffer:get_winid()
     return self:_get_winid()
 end
 
+---@private
 ---@return any, loop.comp.TreeBuffer.ItemData?
 function TreeBuffer:_get_cur_item()
     local winid = self:_get_winid()
@@ -654,7 +656,6 @@ function TreeBuffer:set_children(parent_id, children)
             -- ensure no more children callback in parent
             local parent_data = self._tree:get_data(parent_id)
             assert(parent_data)
-            parent_data.children_callback = nil
             parent_data.reload_children = false
             -- Find the parent index IMMEDIATELY before buffer surgery
             local parent_idx = self._id_to_idx[parent_id]
@@ -873,6 +874,33 @@ function TreeBuffer:set_children_callback(id, callback)
     end
     self:_render_line(id, base_data)
     self:_request_children(id, base_data)
+end
+
+---Forces a re-scan of a node's children via its children_callback
+---@param id any
+function TreeBuffer:refresh_item(id)
+    local data = self:_get_data(id)
+    if not data or not data.children_callback then return end
+
+    -- Increment sequence to invalidate any currently in-flight requests
+    data.load_sequence = data.load_sequence + 1
+    data.reload_children = true
+
+    -- Re-render the line (to show loading icon if applicable)
+    self:_render_line(id, data)
+
+    -- Trigger the callback logic defined in FileTree
+    self:_request_children(id, data)
+end
+
+---Marks an item as needing a reload without triggering it immediately
+---@param id any
+function TreeBuffer:invalidate_item(id)
+    local data = self:_get_data(id)
+    if data then
+        data.reload_children = true
+        data.load_sequence = data.load_sequence + 1
+    end
 end
 
 ---@param id any
