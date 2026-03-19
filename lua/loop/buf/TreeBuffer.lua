@@ -7,22 +7,16 @@ local Tree = require("loop.tools.Tree")
 ---@field data any
 ---@field expanded boolean
 
----@alias loop.comp.TreeBuffer.ChildrenCallback fun(cb:fun(items:loop.comp.TreeBuffer.ItemDef[]))
-
 ---@class loop.comp.TreeBuffer.ItemDef
 ---@field id any
 ---@field data any
----@field children_callback loop.comp.TreeBuffer.ChildrenCallback?
+---@field expandable boolean?
 ---@field expanded boolean|nil
 
 ---@class loop.comp.TreeBuffer.ItemData
 ---@field userdata any
----@field children_callback loop.comp.TreeBuffer.ChildrenCallback?
+---@field expandable boolean?
 ---@field expanded boolean|nil
----@field reload_children boolean|nil
----@field children_loading boolean|nil
----@field load_sequence number
----@field is_loading boolean|nil
 
 ---@class loop.comp.TreeBuffer.Tracker
 ---@field on_selection? fun(id:any,data:any)
@@ -39,13 +33,9 @@ local Tree = require("loop.tools.Tree")
 ---@field formatter loop.comp.TreeBuffer.FormatterFn
 ---@field expand_char string?
 ---@field collapse_char string?
----@field enable_loading_indicator boolean?
----@field loading_char string?
 ---@field indent_string string?
----@field render_delay_ms number?
 ---@field header_enabled boolean?
 ---@field header {[1]:string,[2]:string,[3]:boolean?}[]?
----@field transient_children_callbacks boolean?
 
 ---@class loop.comp.TreeBuffer.Tracker : loop.comp.Tracker
 ---@field on_selection? fun(id:any,data:any)
@@ -71,10 +61,8 @@ local TreeBuffer = class(BaseBuffer)
 local function _itemdef_to_itemdata(item)
     return {
         userdata = item.data,
-        children_callback = item.children_callback,
+        expandable = item.expandable,
         expanded = item.expanded,
-        reload_children = true,
-        load_sequence = 1,
     }
 end
 
@@ -90,7 +78,6 @@ function TreeBuffer:init(opts)
 
     self._expand_char = opts.expand_char or "▶"
     self._collapse_char = opts.collapse_char or "▼"
-    self._loading_char = opts.enable_loading_indicator and (opts.loading_char or "⧗") or nil
     self._indent_string = opts.indent_string or "  "
     self._expand_padding = string.rep(" ", vim.fn.strdisplaywidth(self._expand_char)) .. " "
 
@@ -142,7 +129,7 @@ function TreeBuffer:_setup_keymaps()
             ---@type any,loop.comp.TreeBuffer.ItemData?
             local id, data = self:_get_cur_item()
             if id and data then
-                if (self._tree:have_children(id) or data.children_callback) then
+                if data.expandable or self._tree:have_children(id) then
                     self:toggle_expand(id)
                 else
                     self._trackers:invoke("on_selection", id, data.userdata)
@@ -151,20 +138,20 @@ function TreeBuffer:_setup_keymaps()
         end,
         toggle = function()
             local id, data = self:_get_cur_item()
-            if id and data and (self._tree:have_children(id) or data.children_callback) then
+            if id and data and self._tree:have_children(id) then
                 self:toggle_expand(id)
             end
         end,
         expand = function()
             local id, data = self:_get_cur_item()
-            if id and data and (self._tree:have_children(id) or data.children_callback) then
+            if id and data and self._tree:have_children(id) then
                 self:expand(id)
             end
         end,
 
         collapse = function()
             local id, data = self:_get_cur_item()
-            if id and data and (self._tree:have_children(id) or data.children_callback) then
+            if id and data and self._tree:have_children(id) then
                 self:collapse(id)
             end
         end,
@@ -199,61 +186,20 @@ function TreeBuffer:_setup_keymaps()
     end
 end
 
-function TreeBuffer:_request_children(item_id, item_data)
-    if not item_data.expanded or not item_data.children_callback or item_data.reload_children == false then
-        return
-    end
-    item_data.reload_children = false
-    item_data.children_loading = true
-    local sequence = item_data.load_sequence
-    -- Use a closure to capture the specific data object instance
-    local target_data = item_data
-    vim.schedule(function()
-        -- 1. Check if the sequence changed
-        -- 2. Check if the node still exists in the tree
-        -- 3. Check if the data object in the tree is still the one we started with
-        local current_data = self._tree:get_data(item_id)
-        if sequence ~= target_data.load_sequence or current_data ~= target_data then
-            return
-        end
-        target_data.children_callback(function(loaded_children)
-            vim.schedule(function() -- Ensure buffer operations happen on main thread
-                local latest_data = self._tree:get_data(item_id)
-                if sequence ~= target_data.load_sequence or latest_data ~= target_data then
-                    return
-                end
-                target_data.children_loading = false
-                self:set_children(item_id, loaded_children)
-            end)
-        end)
-    end)
-end
-
----@param ms number
-function TreeBuffer:delay_rendering(ms)
-    if not self._redering_suspended then
-        self._redering_suspended = true
-        vim.defer_fn(function()
-            self._redering_suspended = false
-            self:_full_render()
-        end, ms)
-    end
-end
-
 ---Renders a single node's text and collects its metadata
 ---@param flatnode loop.tools.Tree.FlatNode
 ---@param row number The buffer row this node will occupy
 ---@return string line, table hl_calls, table extmark_data
 function TreeBuffer:_render_node(flatnode, row)
+    ---@type any,loop.comp.TreeBuffer.ItemData, number
     local item_id, item, depth = flatnode.id, flatnode.data, flatnode.depth
     local hl_calls = {}
     local extmark_data = {}
 
     -- 1. Prefix Construction
     local icon = ""
-    if item_id and (self._tree:have_children(item_id) or item.children_callback) then
-        icon = (item.children_loading and self._loading_char) or (item.expanded and self._collapse_char) or
-            self._expand_char
+    if item_id and (item.expandable or self._tree:have_children(item_id)) then
+        icon = item.expanded and self._collapse_char or self._expand_char
     end
 
     local indent = self._indent_cache[depth] or string.rep(self._indent_string, depth)
@@ -289,7 +235,7 @@ end
 
 function TreeBuffer:_full_render()
     local buf = self:get_buf()
-    if buf <= 0 or self._redering_suspended then return end
+    if buf <= 0 then return end
 
     local buffer_lines = {}
     local extmarks_data = {}
@@ -373,7 +319,7 @@ end
 ---@param new_flat loop.tools.Tree.FlatNode[]
 function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     local buf = self:get_buf()
-    if buf <= 0 or self._redering_suspended then return end
+    if buf <= 0 then return end
 
     -- 1. SAVE: Identify which ID the cursor is currently on
     local winid = self:_get_winid()
@@ -503,7 +449,7 @@ function TreeBuffer:set_header(header)
     self._header = header or {}
     local buf = self:get_buf()
 
-    if buf > 0 and not self._redering_suspended then
+    if buf > 0 then
         local line, hls, exts = self:_render_header()
 
         vim.bo[buf].modifiable = true
@@ -580,7 +526,7 @@ end
 ---@return number
 function TreeBuffer:_get_winid()
     local buf = self:get_buf()
-    if buf <= 0 or self._redering_suspended then return -1 end
+    if buf <= 0 then return -1 end
     local winid
     if vim.api.nvim_get_current_buf() == buf then
         winid = vim.api.nvim_get_current_win()
@@ -639,15 +585,8 @@ function TreeBuffer:set_children(parent_id, children)
     local old_visible_size = self._tree:tree_size(parent_id, _filter)
     self._tree:set_children(parent_id, baseitems)
 
-    -- need to trigger their own data loading (if they were added as expanded)
-    for _, item in ipairs(baseitems) do
-        if item.data.expanded then
-            self:_request_children(item.id, item.data)
-        end
-    end
-
     local buf = self:get_buf()
-    if buf > 0 and not self._redering_suspended then
+    if buf > 0 then
         -- Handle the "New Root" Case (parent_id is nil)
         if parent_id == nil then
             -- When parent is nil, we replace/append the entire tree content
@@ -717,7 +656,6 @@ function TreeBuffer:expand(id)
         self:_render_range(idx, 1, new_subtree_flat)
     end
 
-    self:_request_children(id, data)
     self._trackers:invoke("on_toggle", id, data.userdata, true)
 end
 
@@ -746,7 +684,7 @@ end
 function TreeBuffer:expand_all(id)
     local data = self:_get_data(id)
     if not data then return end
-    if not data.expanded and (self._tree:have_children(id) or data.children_callback) then
+    if not data.expanded and self._tree:have_children(id) then
         self:expand(id)
     end
     local children = self._tree:get_children(id)
@@ -813,8 +751,6 @@ function TreeBuffer:add_item(parent_id, item)
             end
         end
     end
-
-    self:_request_children(item.id, item_data)
 end
 
 ---@return loop.comp.TreeBuffer.Item[]
@@ -871,32 +807,6 @@ function TreeBuffer:remove_item(id)
     return true
 end
 
----@param callback loop.comp.TreeBuffer.ChildrenCallback?
-function TreeBuffer:set_children_callback(id, callback)
-    ---@type loop.comp.TreeBuffer.ItemData?
-    local base_data = self._tree:get_data(id)
-    assert(base_data, "id not found: " .. tostring(id))
-    base_data.children_callback = callback
-    if base_data.children_callback then
-        base_data.reload_children = true
-        base_data.load_sequence = base_data.load_sequence + 1
-    end
-    self:_render_line(id, base_data)
-    self:_request_children(id, base_data)
-end
-
---- re-scan of a node's children via its children_callback (immedate if expanded)
----@param id any
-function TreeBuffer:retrigger_children_callback(id)
-    local data = self:_get_data(id)
-    if not data or not data.children_callback then return end
-    -- Increment sequence to invalidate any currently in-flight requests
-    data.load_sequence = data.load_sequence + 1
-    data.reload_children = true
-    -- Trigger the callback logic defined in FileTree
-    self:_request_children(id, data)
-end
-
 ---@param id any
 ---@param data any -- user data
 ---@return boolean
@@ -906,6 +816,20 @@ function TreeBuffer:set_item_data(id, data)
     if not base_data then return false end
     base_data.userdata = data
     self:_render_line(id, base_data)
+    return true
+end
+
+---@param id any
+---@param expandable boolean
+---@return boolean
+function TreeBuffer:set_item_expandable(id, expandable)
+    ---@type loop.comp.TreeBuffer.ItemData
+    local base_data = self._tree:get_data(id)
+    if not base_data then return false end
+    if expandable ~= base_data.expandable then
+        base_data.expandable = expandable
+        self:_render_line(id, base_data)
+    end
     return true
 end
 
