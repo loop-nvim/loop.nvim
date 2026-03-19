@@ -11,11 +11,9 @@ vim.opt.rtp:append(plenary_dir)
 local loop = require('loop')
 loop.setup()
 
-local loopconfig = require('loop').config
-assert(loopconfig.window)
-
 vim.cmd("runtime plugin/plenary.vim")
 
+require("tests.lru")
 require("tests.resolver")
 require("tests.strtools")
 require("tests.tree")

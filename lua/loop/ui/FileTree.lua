@@ -3,7 +3,7 @@ local uitools    = require("loop.tools.uitools")
 local filetools  = require("loop.tools.file")
 local TreeBuffer = require("loop.buf.TreeBuffer")
 local wsmonitor  = require("loop.workspacemonitor")
-
+local LRU        = require("loop.tools.LRU")
 
 local uv         = vim.loop
 
@@ -94,10 +94,14 @@ function FileTree:init()
         }
     })
 
-    -- Track monitors: { [path] = cancel_fn }
-    self._monitors = {}
-    -- Keep an ordered list to enforce the 100 limit (LRU)
-    self._monitor_queue = {}
+    self._expanded_lru = LRU:new(1000)
+
+    self._monitor_lru = LRU:new(100, {
+        on_removed = function(path, cancel_fn)
+            vim.notify("removing monitor: " .. path)
+            cancel_fn()
+        end
+    })
 
     ---@param wsdir string?
     ---@param config loop.WorkspaceConfig?
@@ -122,7 +126,7 @@ function FileTree:init()
                 if uitools.is_regular_buffer(buf) then
                     local path = vim.api.nvim_buf_get_name(buf)
                     if path ~= "" then
-                        self:reveal(path, true)
+                        self:reveal(path, false)
                     end
                 end
             end
@@ -167,8 +171,10 @@ function FileTree:init()
         on_toggle = function(id, data, expanded)
             if data.is_dir then
                 if expanded then
+                    self._expanded_lru:put(data.path, true)
                     self:_attach_monitor(data.path)
                 else
+                    self._expanded_lru:delete(data.path)
                     self:_stop_monitor(data.path)
                 end
             end
@@ -223,19 +229,7 @@ end
 --- Internal helper to stop a specific monitor
 ---@param path string
 function FileTree:_stop_monitor(path)
-    vim.notify("removing monitor: " .. path)
-    if self._monitors[path] then
-        self._monitors[path]() -- Execute cancel_fn
-        self._monitors[path] = nil
-
-        -- Remove from queue
-        for i, p in ipairs(self._monitor_queue) do
-            if p == path then
-                table.remove(self._monitor_queue, i)
-                break
-            end
-        end
-    end
+    self._monitor_lru:delete(path)
 end
 
 --- Internal helper to stop all monitors under a specific path
@@ -244,7 +238,7 @@ end
 function FileTree:_clear_branch_monitors(root, root_exclusive)
     local to_stop = {}
     -- Identify which active monitors are children of 'root'
-    for monitored_path, _ in pairs(self._monitors) do
+    for monitored_path, _ in self._monitor_lru:items() do
         local is_match = _is_subpath(monitored_path, root)
         if root_exclusive and monitored_path == root then
             is_match = false
@@ -261,28 +255,12 @@ end
 
 --- Internal helper to stop everything
 function FileTree:_clear_all_monitors()
-        vim.notify("removing all monitors")
-    for path, cancel_fn in pairs(self._monitors) do
-        cancel_fn()
-    end
-    self._monitors = {}
-    self._monitor_queue = {}
+    self._monitor_lru:clear()
 end
 
 ---@param path string
 function FileTree:_attach_monitor(path)
-    if self._monitors[path] then return end
-    vim.notify("adding monitor: " .. path)
-    -- Enforce 100 limit: If we are at capacity, stop the oldest monitor
-    if #self._monitor_queue >= 100 then
-        local oldest_path = table.remove(self._monitor_queue, 1)
-        if self._monitors[oldest_path] then
-            self._monitors[oldest_path]()
-            self._monitors[oldest_path] = nil
-            -- Note: We don't necessarily collapse it, but it won't live-update anymore
-        end
-    end
-
+    if self._monitor_lru:has(path) then return end
     -- Start the monitor
     local cancel_fn = filetools.monitor_dir(path, function(fname, status)
         local full_path = vim.fs.joinpath(path, fname)
@@ -292,10 +270,9 @@ function FileTree:_attach_monitor(path)
             end
         end)
     end)
-
     if cancel_fn then
-        self._monitors[path] = cancel_fn
-        table.insert(self._monitor_queue, path)
+        vim.notify("adding monitor: " .. path)
+        self._monitor_lru:put(path, cancel_fn)
     end
 end
 
@@ -362,7 +339,6 @@ function FileTree:_handle_fs_change(path, status)
     -- If it's a file, refresh its parent to catch additions/deletions/renames.
     local is_dir = vim.fn.isdirectory(path) == 1
     local target_id = is_dir and path or vim.fn.fnamemodify(path, ":h")
-    vim.notify("target_id: " .. target_id)
 
     -- Check if the directory is actually in our tree
     local item = self._tree:get_item(target_id)
@@ -441,7 +417,7 @@ function FileTree:_read_dir(path, cb)
                 local item = {
                     id = full,
                     parent_id = path,
-                    expanded = false,
+                    expanded = self._expanded_lru:has(full),
                     data = {
                         path = full,
                         name = entry.name,
@@ -452,6 +428,9 @@ function FileTree:_read_dir(path, cb)
                 }
                 if is_dir then
                     item.children_callback = function(c) self:_read_dir(full, c) end
+                    if item.expanded then
+                        self:_attach_monitor(path)
+                    end
                 end
                 table.insert(children, item)
             end

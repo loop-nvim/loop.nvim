@@ -229,7 +229,7 @@ describe("loop.tools.Tree (new API)", function()
         tree:add_item("A", "B", {})
         tree:add_item("B", "C", {})
 
-        local flat = tree:flatten(function(id)
+        local flat = tree:flatten(nil, function(id)
             if id == "B" then
                 return false
             end
