@@ -1,12 +1,13 @@
-local loopconfig = require("loop").config
-local class      = require("loop.tools.class")
-local uitools    = require("loop.tools.uitools")
-local filetools  = require("loop.tools.file")
-local TreeBuffer = require("loop.buf.TreeBuffer")
-local wsmonitor  = require("loop.workspacemonitor")
-local LRU        = require("loop.tools.LRU")
+local loopconfig  = require("loop").config
+local class       = require("loop.tools.class")
+local uitools     = require("loop.tools.uitools")
+local filetools   = require("loop.tools.file")
+local TreeBuffer  = require("loop.buf.TreeBuffer")
+local wsmonitor   = require("loop.workspacemonitor")
+local LRU         = require("loop.tools.LRU")
+local floatwin    = require("loop.tools.floatwin")
 
-local uv         = vim.loop
+local uv          = vim.loop
 
 ---@class loop.comp.FileTree.ItemData
 ---@field path string
@@ -21,7 +22,7 @@ local uv         = vim.loop
 
 -- at the top of your file
 local _dev_icons_attempt, devicons
-local file_icons = {
+local _file_icons = {
     txt      = "",
     md       = "",
     markdown = "",
@@ -84,6 +85,24 @@ end
 local FileTree = class()
 
 function FileTree:init()
+    self._expanded_lru = LRU:new(1000)
+
+    self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
+        on_removed = function(path, cancel_fn)
+            --vim.notify("removing monitor: " .. path)
+            cancel_fn()
+        end
+    })
+
+    self._reveal_counter = 0
+
+    self:_setup_tree()
+    self:_setup_keymaps()
+end
+
+function FileTree:_setup_tree()
+    assert(not self._tree)
+
     self._tree = TreeBuffer:new({
         formatter = function(id, data)
             return _file_formatter(id, data)
@@ -96,78 +115,12 @@ function FileTree:init()
         }
     })
 
-    self._expanded_lru = LRU:new(1000)
-
-    self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
-        on_removed = function(path, cancel_fn)
-            --vim.notify("removing monitor: " .. path)
-            cancel_fn()
-        end
-    })
-
-    ---@param wsdir string?
-    ---@param config loop.WorkspaceConfig?
-    local function reload(wsdir, config)
-        vim.schedule(function()
-            self:_reload(config and config.name,
-                wsdir,
-                config and config.files.include,
-                config and config.files.exclude)
-        end)
-    end
-
-    local function on_buffer_create()
-        assert(not self.bufenter_autocmd_id)
-        assert(not self._workspace_tracker)
-        if loopconfig.filetree.track_current_file.enabled then
-            self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
-                callback = function()
-                    if self._tree:get_buf() == -1 then
-                        return
-                    end
-                    local buf = vim.api.nvim_get_current_buf()
-                    if uitools.is_regular_buffer(buf) then
-                        local path = vim.api.nvim_buf_get_name(buf)
-                        if path ~= "" then
-                            self:reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others)
-                        end
-                    end
-                end
-            })
-        end
-        --vim.notify("(loop.nvim) tracker init")
-        self._workspace_tracker = wsmonitor.add_tracker({
-            on_open = function(wsdir, config)
-                reload(wsdir, config)
-            end,
-            on_config_change = function(wsdir, config)
-                reload(wsdir, config)
-            end,
-            on_close = function()
-                reload(nil, nil)
-            end
-        })
-    end
-
-    local function on_buffer_delete()
-        self:_clear_all_monitors()
-        if self.bufenter_autocmd_id then
-            vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
-            self.bufenter_autocmd_id = nil
-        end
-        if self._workspace_tracker then
-            self._workspace_tracker:cancel()
-            self._workspace_tracker = nil
-        end
-    end
-
-
     self._tree:add_tracker({
         on_create = function()
-            on_buffer_create()
+            self:_on_buffer_create()
         end,
         on_delete = function()
-            on_buffer_delete()
+            self:_on_buffer_delete()
         end,
         on_selection = function(id, data)
             uitools.smart_open_file(data.path)
@@ -184,8 +137,100 @@ function FileTree:init()
             end
         end
     })
+end
 
-    self._reveal_counter = 0
+function FileTree:_on_buffer_create()
+    assert(not self.bufenter_autocmd_id)
+    assert(not self._workspace_tracker)
+    local on_buffer_enter = function()
+        if self._tree:get_buf() == -1 then
+            return
+        end
+        local buf = vim.api.nvim_get_current_buf()
+        if uitools.is_regular_buffer(buf) then
+            local path = vim.api.nvim_buf_get_name(buf)
+            if path ~= "" then
+                self:reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others)
+            end
+        end
+    end
+    if loopconfig.filetree.track_current_file.enabled then
+        self.bufenter_autocmd_id = vim.api.nvim_create_autocmd("BufEnter", {
+            callback = on_buffer_enter,
+        })
+    end
+    self:_init_workspace_tracker()
+end
+
+function FileTree:_on_buffer_delete()
+    self:_clear_all_monitors()
+    self:_stop_workspace_tracker()
+    if self.bufenter_autocmd_id then
+        vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
+        self.bufenter_autocmd_id = nil
+    end
+end
+
+---@private
+function FileTree:_setup_keymaps()
+    local function with_item(fn)
+        local item = self._tree:get_cursor_item()
+        if item then fn(item) end
+    end
+
+    self._tree:add_keymap("a", {
+        desc = "Create File",
+        callback = function() with_item(function(i) self:_create_node(i, false) end) end
+    })
+    self._tree:add_keymap("A", {
+        desc = "Create Directory",
+        callback = function() with_item(function(i) self:_create_node(i, true) end) end
+    })
+    self._tree:add_keymap("r", {
+        desc = "Rename",
+        callback = function() with_item(function(i) self:_rename_node(i) end) end
+    })
+    self._tree:add_keymap("d", {
+        desc = "Delete",
+        callback = function() with_item(function(i) self:_delete_node(i, "file") end) end
+    })
+    self._tree:add_keymap("D", {
+        desc = "Delete folder",
+        callback = function() with_item(function(i) self:_delete_node(i, "folder") end) end
+    })
+end
+
+function FileTree:_init_workspace_tracker()
+    ---@param wsdir string?
+    ---@param config loop.WorkspaceConfig?
+    local function reload(wsdir, config)
+        vim.schedule(function()
+            self:_reload(config and config.name,
+                wsdir,
+                config and config.files.include,
+                config and config.files.exclude)
+        end)
+    end
+    assert(not self._workspace_tracker)
+    --vim.notify("(loop.nvim) tracker init")
+    self._workspace_tracker = wsmonitor.add_tracker({
+        on_open = function(wsdir, config)
+            reload(wsdir, config)
+        end,
+        on_config_change = function(wsdir, config)
+            reload(wsdir, config)
+        end,
+        on_close = function()
+            reload(nil, nil)
+        end
+    })
+end
+
+function FileTree:_stop_workspace_tracker()
+    if self._workspace_tracker then
+        self._workspace_tracker:cancel()
+        self._workspace_tracker = nil
+    end
 end
 
 ---@return loop.comp.BaseBuffer
@@ -333,6 +378,20 @@ function FileTree:_reload(name, root, include_globs, exclude_gobs)
     self:_attach_monitor(path)
 end
 
+---@param dir string
+function FileTree:_reload_dir(dir)
+    dir = vim.fs.normalize(dir)
+    -- Check if the directory is actually in our tree
+    local item = self._tree:get_item(dir)
+    if not item then return end
+
+    self:_clear_branch_monitors(dir, true)
+
+    -- Refresh immediately if visible
+    self._tree:refresh_item(dir)
+    self._tree:retrigger_children_callback(dir)
+end
+
 ---@param path string Full path to the changed file/dir
 ---@param status table|nil optional status from uv.fs_event
 function FileTree:_handle_fs_change(path, status)
@@ -340,18 +399,8 @@ function FileTree:_handle_fs_change(path, status)
     --vim.notify(("fs_change (%s): %s"):format(vim.inspect(status), path))
     -- If the changed path is a directory, refresh it.
     -- If it's a file, refresh its parent to catch additions/deletions/renames.
-    local is_dir = vim.fn.isdirectory(path) == 1
-    local target_id = is_dir and path or vim.fn.fnamemodify(path, ":h")
-
-    -- Check if the directory is actually in our tree
-    local item = self._tree:get_item(target_id)
-    if not item then return end
-
-    self:_clear_branch_monitors(target_id, true)
-
-    -- Refresh immediately if visible
-    self._tree:refresh_item(target_id)
-    self._tree:retrigger_children_callback(target_id)
+    local parent = vim.fn.fnamemodify(path, ":h")
+    self:_reload_dir(parent)
 end
 
 ---@param path string
@@ -408,7 +457,7 @@ function FileTree:_read_dir(path, cb)
                         icon = d_icon or ""
                         icon_hl = d_hl or "Normal"
                     else
-                        icon = file_icons[ext] or ""
+                        icon = _file_icons[ext] or ""
                         icon_hl = "Normal"
                     end
                 end
@@ -550,6 +599,95 @@ function FileTree:reveal_current_file(collapse_others)
         if path ~= "" then
             self:reveal(path, collapse_others)
         end
+    end
+end
+
+--- Create a new file or directory
+---@param item table The parent or sibling item
+---@param as_dir boolean
+function FileTree:_create_node(item, as_dir)
+    -- Determine base directory: if item is file, use its parent. If dir, use it.
+    local base_dir = item.data.is_dir and item.data.path or vim.fn.fnamemodify(item.data.path, ":h")
+    local type_label = as_dir and "Directory" or "File"
+
+    floatwin.input_at_cursor({ prompt = "New " .. type_label .. " name: " }, function(name)
+        local new_path = vim.fs.joinpath(base_dir, name)
+        if as_dir then
+            ---@diagnostic disable-next-line: undefined-field
+            local ok, err = uv.fs_mkdir(new_path, 493) -- 493 is octal 0755
+            if not ok then vim.notify(err, vim.log.levels.ERROR) end
+        else
+            ---@diagnostic disable-next-line: undefined-field
+            local fd, err = uv.fs_open(new_path, "w", 420) -- 420 is octal 0644
+            if fd then
+                ---@diagnostic disable-next-line: undefined-field
+                uv.fs_close(fd)
+            else
+                vim.notify("Could not create file, " .. tostring(err), vim.log.levels.ERROR)
+            end
+        end
+        self:reveal(new_path)
+    end)
+end
+
+--- Rename a file or directory
+---@param item table
+function FileTree:_rename_node(item)
+    local old_path = item.data.path
+    local old_name = item.data.name
+    local parent_dir = vim.fn.fnamemodify(old_path, ":h")
+
+    floatwin.input_at_cursor({
+            prompt = "Rename to: ", old_name,
+        },
+        function(new_name)
+            local new_path = vim.fs.joinpath(parent_dir, new_name)
+            ---@diagnostic disable-next-line: undefined-field
+            local ok, err = uv.fs_rename(old_path, new_path)
+            if not ok then
+                vim.notify("Rename failed: " .. err, vim.log.levels.ERROR)
+            end
+        end)
+end
+
+--- Delete a file or directory only if it matches the wanted type
+---@param item table The TreeBuffer item
+---@param wanted "file"|"folder"
+function FileTree:_delete_node(item, wanted)
+    -- Check if the item type matches the 'wanted' type
+    local is_folder = item.data.is_dir
+    if (wanted == "folder" and not is_folder) or (wanted == "file" and is_folder) then
+        return
+    end
+    local path = item.data.path
+    if path == self._root then
+        vim.notify("Cannot delete workspace root")
+        return
+    end
+    local type_str = is_folder and "directory" or "file"
+    -- Confirmation dialog
+    local confirm = vim.fn.confirm("Delete " .. type_str .. ": " .. item.data.name .. "?", "&Yes\n&No", 2)
+    if confirm ~= 1 then return end
+    -- Attempt simple removal
+    local success, err = os.remove(path)
+    -- If os.remove fails (usually because it's a non-empty directory), use a shell command
+    if not success then
+        local cmd = vim.fn.has("win32") == 1
+            and { "cmd.exe", "/c", "rd", "/s", "/q", path }
+            or { "rm", "-rf", path }
+
+        vim.fn.jobstart(cmd, {
+            on_exit = function(_, code)
+                if code == 0 then
+                    vim.notify("Deleted: " .. path, vim.log.levels.INFO)
+                    -- Optional: Trigger a UI refresh here
+                else
+                    vim.notify("Failed to delete: " .. path, vim.log.levels.ERROR)
+                end
+            end
+        })
+    else
+        vim.notify("Deleted: " .. path, vim.log.levels.INFO)
     end
 end
 

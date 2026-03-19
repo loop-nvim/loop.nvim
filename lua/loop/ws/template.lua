@@ -2,7 +2,7 @@
 return {
     name = "",
     files = {
-        include = { "**/*" },
+        include = { "*" },
         exclude = { },
         follow_symlinks = false,
     },
