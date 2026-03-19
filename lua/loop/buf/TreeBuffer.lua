@@ -117,6 +117,16 @@ end
 function TreeBuffer:_setup_buf()
     BaseBuffer._setup_buf(self)
     self:_full_render()
+    local buf = self:get_buf()
+    assert(buf > 0)
+    -- protect against things such as typing ":e"
+    vim.api.nvim_create_autocmd('BufReadCmd', {
+        buffer = buf,
+        callback = function(ev)
+            vim.notify("full render")
+            self:_full_render()
+        end,
+    })
 end
 
 ---@param callbacks loop.comp.TreeBuffer.Tracker
@@ -906,6 +916,5 @@ function TreeBuffer:refresh_item(id)
     if not data then return end
     self:_render_line(id, data)
 end
-
 
 return TreeBuffer
