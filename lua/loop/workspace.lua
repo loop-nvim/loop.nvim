@@ -1,7 +1,7 @@
 local M             = {}
 
 local loopconfig    = require("loop").config
-local logs          = require('loop.logs')
+local log          = require('loop.log')
 local taskmgr       = require("loop.task.taskmgr")
 local variablesmgr  = require("loop.task.variablesmgr")
 local statuspanel   = require("loop.ui.statuspanel")
@@ -128,7 +128,7 @@ local function _close_workspace(quiet)
         flock.unlock(lockfile_path)
 
         if not quiet then
-            logs.user_log("Workspace closed", "workspace")
+            log.user_log("Workspace closed", "workspace")
             vim.notify("Workspace closed")
         end
 
@@ -395,7 +395,7 @@ function M.create_workspace(dir)
 
     _load_workspace(dir)
 
-    logs.user_log("Workspace created in " .. dir, "workspace")
+    log.user_log("Workspace created in " .. dir, "workspace")
 
     -- open configuration
     vim.schedule(function()
@@ -469,13 +469,13 @@ function M.open_workspace(dir, at_startup)
     if status == "ok" and _ws_data then
         -- add to recent list (MRU)
         _add_recent_workspace(dir)
-        logs.user_log("Workspace opened: " .. dir, "workspace")
+        log.user_log("Workspace opened: " .. dir, "workspace")
         if not at_startup then
             vim.notify("Workspace opened: " .. dir)
         end
     else
         if err_msg then
-            logs.user_log("Failed to load workspace - " .. tostring(err_msg), "workspace")
+            log.user_log("Failed to load workspace - " .. tostring(err_msg), "workspace")
         end
         if not at_startup then
             local ui_msg
@@ -859,7 +859,7 @@ end
 
 function M.logs_command()
     _ensure_init()
-    logs.show_logs()
+    log.show_logs()
 end
 
 ---@param quiet boolean?

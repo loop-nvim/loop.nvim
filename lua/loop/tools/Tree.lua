@@ -75,10 +75,10 @@ end
 
 ---Link a node immediately before or after a reference sibling.
 ---@private
----@param id any
 ---@param reference_id any
+---@param id any
 ---@param before boolean true to insert before, false to insert after
-function Tree:_link_sibling(id, reference_id, before)
+function Tree:_link_sibling(reference_id, id, before)
 	local ref_node = self._nodes[reference_id]
 	assert(ref_node, "reference_id does not exist")
 
@@ -338,16 +338,16 @@ end
 
 ---Insert or update a node before or after a reference sibling.
 ---@generic T
+---@param reference_id any
 ---@param id any
 ---@param data T
----@param sibling_id any
 ---@param before boolean true to insert before sibling, false to insert after
-function Tree:add_sibling(id, data, sibling_id, before)
+function Tree:add_sibling(reference_id, id, data, before)
 	assert(id ~= nil, "id is required")
-	assert(sibling_id ~= nil, "sibling_id is required")
+	assert(reference_id ~= nil, "reference_id is required")
 
-	local ref_node = self._nodes[sibling_id]
-	assert(ref_node, "sibling_id does not exist")
+	local ref_node = self._nodes[reference_id]
+	assert(ref_node, "reference_id does not exist")
 
 	local parent_id = ref_node.parent_id
 
@@ -366,7 +366,7 @@ function Tree:add_sibling(id, data, sibling_id, before)
 	self._nodes[id] = node
 
 	-- Link under parent or root at correct position
-	self:_link_sibling(id, sibling_id, before)
+	self:_link_sibling(reference_id, id, before)
 end
 
 ---@param id any

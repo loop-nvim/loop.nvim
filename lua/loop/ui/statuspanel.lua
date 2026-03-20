@@ -8,7 +8,7 @@ local selector = require("loop.tools.selector")
 local BaseBuffer = require('loop.buf.BaseBuffer')
 local OutputBuffer = require('loop.buf.OutputBuffer')
 local ReplBuffer = require('loop.buf.ReplBuffer')
-local logger = require('loop.logs')
+local logger = require('loop.log')
 
 ---@class loop.TabInfo
 ---@field label string

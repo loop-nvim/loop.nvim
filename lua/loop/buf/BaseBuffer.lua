@@ -108,9 +108,8 @@ end
 
 ---@return number -- buffer number
 function BaseBuffer:get_buf()
-    if self._destroyed then
-        return -1
-    end
+    if vim.v.exiting ~= vim.NIL then return -1 end
+    if self._destroyed then return -1 end
     return self._buf
 end
 

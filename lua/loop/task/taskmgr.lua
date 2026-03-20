@@ -8,7 +8,7 @@ local jsonvalidator = require('loop.json.validator')
 local filetools = require('loop.tools.file')
 local providers = require("loop.task.providers")
 local selector = require("loop.tools.selector")
-local logs = require("loop.logs")
+local log = require("loop.log")
 
 ---@return table
 local function _build_taskfile_schema()
@@ -315,7 +315,7 @@ function M.get_or_select_task(config_dir, mode, task_name, handler)
     local tasks, task_errors = _load_tasks(config_dir)
     if (not tasks) or task_errors then
         vim.notify("Failed to load tasks")
-        logs.log(task_errors or "Error while loading tasks", vim.log.levels.ERROR)
+        log.log(task_errors or "Error while loading tasks", vim.log.levels.ERROR)
         handler(nil)
         return
     end

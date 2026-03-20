@@ -1,6 +1,6 @@
 local M = {}
 
-local logs = require('loop.logs')
+local log = require('loop.log')
 local uitools = require('loop.tools.uitools')
 local strtools = require('loop.tools.strtools')
 
@@ -144,9 +144,9 @@ function M.save_workspace_buffers(ws_dir, ws_config)
 		local msg = string.format("Saved %d file%s", saved, saved == 1 and "" or "s")
 		if saved <= 5 then
 			local file_list = table.concat(saved_paths, ", ")
-			logs.user_log(msg .. ": " .. file_list, "save")
+			log.user_log(msg .. ": " .. file_list, "save")
 		else
-			logs.user_log(msg, "save")
+			log.user_log(msg, "save")
 		end
 	end
 

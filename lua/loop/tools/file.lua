@@ -191,12 +191,16 @@ end
 
 ---@param dir string Directory path to monitor
 ---@param change_callback fun(file:string, status:table|nil) Callback called with changed file name
----@return fun() cancel_fn Function that stops the monitoring
+---@return fun()? cancel_fn Function that stops the monitoring
+---@return string? error message
 function M.monitor_dir(dir, change_callback)
     local uv = vim.uv or vim.loop
 
     ---@diagnostic disable-next-line: undefined-field
-    local handle = uv.new_fs_event()
+    local handle, err_msg = uv.new_fs_event()
+    if not handle then
+        return nil, err_msg
+    end
 
     local terminated = false
 
@@ -227,7 +231,8 @@ function M.monitor_dir(dir, change_callback)
         terminated = true
         if handle then
             if handle:is_active() then
-                handle:stop()
+                ---@diagnostic disable-next-line: undefined-field
+                uv.fs_event_stop(handle)
             end
             handle:close()
             handle = nil

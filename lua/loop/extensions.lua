@@ -37,7 +37,7 @@ local function _get_extension(modname)
 
     local ok, res = pcall(require, modname)
     if not ok then
-        vim.notify(string.format("[loop] Failed to load extension: %s\n%s", modname, res), vim.log.levels.ERROR)
+        error(string.format("[loop.nvim] Failed to load extension: %s\n%s", modname, res), vim.log.levels.ERROR)
         return nil
     end
     return res

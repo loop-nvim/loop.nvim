@@ -169,7 +169,7 @@ describe("loop.tools.Tree (new API)", function()
             { id = "C", data = {} },
         })
 
-        tree:add_sibling("B", {}, "C", true)
+        tree:add_sibling("C","B", {},  true)
         tree:validate()
 
         local flat = tree:flatten()
@@ -188,7 +188,7 @@ describe("loop.tools.Tree (new API)", function()
             { id = "B", data = {} },
         })
 
-        tree:add_sibling("C", {}, "B", false)
+        tree:add_sibling("B", "C", {}, false)
         tree:validate()
 
         assert.equal("C", tree._root_last)

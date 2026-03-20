@@ -101,6 +101,7 @@ function TreeBuffer:destroy()
     BaseBuffer.destroy(self)
 end
 
+---@private
 function TreeBuffer:_setup_buf()
     BaseBuffer._setup_buf(self)
     self:_full_render()
@@ -121,6 +122,7 @@ function TreeBuffer:add_tracker(callbacks)
     return self._trackers:add_tracker(callbacks)
 end
 
+---@private
 function TreeBuffer:_setup_keymaps()
     ---@return loop.comp.TreeBuffer.ItemData?
     -- Callbacks
@@ -187,6 +189,7 @@ function TreeBuffer:_setup_keymaps()
 end
 
 ---Renders a single node's text and collects its metadata
+---@private
 ---@param flatnode loop.tools.Tree.FlatNode
 ---@param row number The buffer row this node will occupy
 ---@return string line, table hl_calls, table extmark_data
@@ -233,6 +236,7 @@ function TreeBuffer:_render_node(flatnode, row)
     return current_line, hl_calls, extmark_data
 end
 
+---@private
 function TreeBuffer:_full_render()
     local buf = self:get_buf()
     if buf <= 0 then return end
@@ -411,6 +415,7 @@ function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     end
 end
 
+---@private
 ---@param id number
 ---@param data loop.comp.TreeBuffer.ItemData?
 function TreeBuffer:_render_line(id, data)
@@ -427,6 +432,7 @@ function TreeBuffer:_render_line(id, data)
 end
 
 ---Applies collected metadata to a range of rows
+---@private
 function TreeBuffer:_apply_metadata(buf, hl_calls, extmarks)
     for _, h in ipairs(hl_calls) do
         vim.api.nvim_buf_set_extmark(buf, _ns_id, h.row, h.s_col, {
@@ -481,9 +487,15 @@ end
 
 ---@return loop.comp.TreeBuffer.Item?
 function TreeBuffer:get_item(id)
-    local itemdata = self:_get_data(id)
-    if not itemdata then return nil end
-    return { id = id, data = itemdata.userdata, expanded = itemdata.expanded }
+    local basedata = self:_get_data(id)
+    if not basedata then return nil end
+    return { id = id, data = basedata.userdata, expanded = basedata.expanded }
+end
+
+---@return any?
+function TreeBuffer:get_item_data(id)
+    local basedata = self:_get_data(id)
+    return basedata and basedata.userdata or nil
 end
 
 ---@return loop.comp.TreeBuffer.Item[]
@@ -572,9 +584,11 @@ function TreeBuffer:set_cursor_by_id(id)
     return false
 end
 
----@param parent_id any
+---@param parent_id any -- null for root
 ---@param children loop.comp.TreeBuffer.ItemDef[]
+---@return boolean
 function TreeBuffer:set_children(parent_id, children)
+    if parent_id and not self._tree:have_item(parent_id) then return false end
     -- 1. Update the logical tree state first
     local baseitems = {}
     for _, c in ipairs(children) do
@@ -621,6 +635,7 @@ function TreeBuffer:set_children(parent_id, children)
             end
         end
     end
+    return true
 end
 
 ---Removes all children of a node from the tree and updates the buffer.
@@ -705,9 +720,11 @@ function TreeBuffer:collapse_all(id)
     end
 end
 
----@param parent_id any
+---@param parent_id any -- null to add to root
 ---@param item loop.comp.TreeBuffer.ItemDef
+---@return boolean
 function TreeBuffer:add_item(parent_id, item)
+    if parent_id and not self._tree:have_item(parent_id) then return false end
     -- 1. Update the logical tree
     local item_data = _itemdef_to_itemdata(item)
     self._tree:add_item(parent_id, item.id, item_data)
@@ -751,6 +768,56 @@ function TreeBuffer:add_item(parent_id, item)
             end
         end
     end
+    return true
+end
+
+---Inserts a node before or after a reference sibling.
+---@param reference_id any The ID of the existing node to position relative to.
+---@param item loop.comp.TreeBuffer.ItemDef The new item to add.
+---@param before boolean true to insert before sibling, false to insert after.
+---@return boolean
+function TreeBuffer:add_sibling(reference_id, item, before)
+    if reference_id and not self._tree:have_item(reference_id) then return false end
+    -- 1. Logical update to the underlying Tree
+    local item_data = _itemdef_to_itemdata(item)
+    -- This assumes your Tree class has the add_sibling method you provided
+    self._tree:add_sibling(reference_id, item.id, item_data, before)
+
+    local buf = self:get_buf()
+    if buf <= 0 then return true end
+
+    -- 2. Visual Update
+    local ref_idx = self._id_to_idx[reference_id]
+
+    -- If the reference node isn't visible (e.g., its parent is collapsed),
+    -- we don't need to do any buffer surgery.
+    if ref_idx then
+        local insert_idx
+
+        if before then
+            -- If inserting before, the index is exactly the reference index
+            insert_idx = ref_idx
+        else
+            -- If inserting after, we must skip over the reference node
+            -- AND all of its currently visible children.
+            local ref_visible_size = self._tree:tree_size(reference_id, _filter)
+            insert_idx = ref_idx + ref_visible_size
+        end
+
+        local node = {
+            id = item.id,
+            data = item_data,
+            depth = self._tree:get_depth(item.id)
+        }
+
+        -- Perform surgery: replace 0 lines at insert_idx with the 1 new line
+        self:_render_range(insert_idx, 0, { node })
+
+        -- If we added a sibling, the parent's "expandable" state hasn't changed,
+        -- so we don't necessarily need to re-render the parent like we do in add_item.
+    end
+
+    return true
 end
 
 ---@return loop.comp.TreeBuffer.Item[]
@@ -834,10 +901,12 @@ function TreeBuffer:set_item_expandable(id, expandable)
 end
 
 ---@param id any
+---@return boolean
 function TreeBuffer:refresh_item(id)
     local data = self:_get_data(id)
-    if not data then return end
+    if not data then return false end
     self:_render_line(id, data)
+    return true
 end
 
 return TreeBuffer
