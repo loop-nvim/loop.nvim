@@ -77,10 +77,10 @@ end
 local FileTree = class()
 
 function FileTree:init()
-    self._expanded_lru = LRU:new(1000)
+    self._expanded_lru = LRU:new(10000)
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
-            vim.notify("removing monitor: " .. path)
+            print("removing monitor: " .. path)
             cancel_fn()
         end
     })
@@ -138,7 +138,7 @@ function FileTree:_on_buffer_create()
     assert(not self.bufenter_autocmd_id)
     assert(not self._workspace_tracker)
 
-    vim.notify("_on_buffer_create: " .. self._tree:get_buf())
+    print("_on_buffer_create: " .. self._tree:get_buf())
     local on_buffer_enter = function()
         if self._tree:get_buf() == -1 then
             return
@@ -216,7 +216,7 @@ function FileTree:_start_viewport_monitoring()
 end
 
 function FileTree:_on_buffer_delete()
-    vim.notify("_on_buffer_delete")
+    print("_on_buffer_delete")
 
     self:_stop_workspace_tracker()
 
@@ -286,7 +286,7 @@ function FileTree:_init_workspace_tracker()
         end)
     end
     assert(not self._workspace_tracker)
-    --vim.notify("(loop.nvim) tracker init")
+    print("(loop.nvim) tracker init")
     self._workspace_tracker = wsmonitor.add_tracker({
         on_open = function(wsdir, config)
             reload(wsdir, config)
@@ -364,7 +364,7 @@ function FileTree:_start_dir_monitor(path)
     end)
 
     if cancel_fn then
-        vim.notify("attach_monitor: " .. path)
+        print("attach_monitor: " .. path)
         self._monitor_lru:put(path, cancel_fn)
     elseif error_msg then
         log.log("FileTree monitor error: " .. tostring(error_msg), vim.log.levels.ERROR)
@@ -430,11 +430,112 @@ end
 ---@param status table|nil optional status from uv.fs_event
 function FileTree:_handle_fs_change(path, status)
     path = vim.fs.normalize(path)
-    --vim.notify(("fs_change (%s): %s"):format(vim.inspect(status), path))
-    -- If the changed path is a directory, refresh it.
-    -- If it's a file, refresh its parent to catch additions/deletions/renames.
-    local parent = vim.fn.fnamemodify(path, ":h")
-    self:_reload_dir(parent)
+    local parent_path = vim.fs.normalize(vim.fn.fnamemodify(path, ":h"))
+
+    -- Check if we even care about this parent
+    local parent_item = self._tree:get_item(parent_path)
+    if not parent_item then return end
+
+    -- Use libuv to check if the file still exists
+    ---@diagnostic disable-next-line: undefined-field
+    uv.fs_stat(path, function(err, stat)
+        vim.schedule(function()
+            if err then
+                -- File likely deleted or moved
+                if self._tree:get_item(path) then
+                    self._tree:remove_item(path)
+                end
+            else
+                -- File created or modified
+                local is_dir = stat.type == "directory"
+                self:_upsert_single_item(parent_path, path, is_dir)
+            end
+        end)
+    end)
+end
+
+---@param parent_path string
+---@param full_path string
+---@param is_dir boolean
+---@private
+function FileTree:_upsert_single_item(parent_path, full_path, is_dir)
+    if self._tree:get_item(full_path) then
+        -- If it exists, nothing to do
+        return
+    end
+    -- Logical check: should this file even be here?
+    local rel = vim.fs.relpath(self._root, full_path)
+    if not rel or not self:_should_include(rel, is_dir) then return end
+    -- Prepare the new item definition
+    local name = vim.fn.fnamemodify(full_path, ":t")
+    local icon, icon_hl = self:_get_icon_for_node(name, is_dir)
+    ---@type loop.comp.TreeBuffer.ItemDef
+    local new_item = {
+        id = full_path,
+        expandable = is_dir,
+        expanded = is_dir and self._expanded_lru:has(full_path),
+        data = {
+            path = full_path,
+            name = name,
+            is_dir = is_dir,
+            icon = icon,
+            icon_hl = icon_hl
+        }
+    }
+    -- Find the correct alphabetical position among siblings
+    local loname = name:lower()
+    local siblings = self._tree:get_children(parent_path)
+    local insert_target_id = nil
+    local insert_before = false
+
+    for _, sibling in ipairs(siblings) do
+        -- Sorting logic: Directories first, then alphabetical
+        local sibling_is_dir = sibling.data.is_dir
+        local sibling_name = sibling.data.name:lower()
+        local should_be_before = false
+        if is_dir ~= sibling_is_dir then
+            should_be_before = is_dir -- dirs come before files
+        else
+            should_be_before = loname < sibling_name
+        end
+        if should_be_before then
+            insert_target_id = sibling.id
+            insert_before = true
+            break
+        end
+    end
+    if insert_target_id then
+        -- Insert into the specific alphabetical slot
+        self._tree:add_sibling(insert_target_id, new_item, insert_before)
+    else
+        -- Either no siblings exist, or this belongs at the very end
+        self._tree:add_item(parent_path, new_item)
+    end
+end
+
+---@param name string The filename or directory name
+---@param is_dir boolean
+---@return string icon
+---@return string|nil hl_group
+function FileTree:_get_icon_for_node(name, is_dir)
+    if is_dir then
+        return "", "Directory"
+    end
+    if not _dev_icons_attempt then
+        _dev_icons_attempt = true
+        local loaded, res = pcall(require, "nvim-web-devicons")
+        if loaded then devicons = res end
+    end
+
+    local icon, icon_hl
+    local ext = name:match("%.([^.]+)$") or ""
+    if devicons then
+        icon, icon_hl = devicons.get_icon(name, ext, { default = false })
+    else
+        icon = _file_icons[ext] or ""
+    end
+
+    return icon, icon_hl
 end
 
 ---@param path string
@@ -465,17 +566,11 @@ function FileTree:_process_dir(path, entries, error_flag)
     local item = self._tree:get_item(path)
     if not item then return end -- could be deleted at this point
 
-    if true or error_flag then
+    if error_flag then
         if item then
             item.data.error_flag = true
             self._tree:set_item_data(item.id, item.data)
         end
-    end
-
-    if not _dev_icons_attempt then
-        _dev_icons_attempt = true
-        local loaded, res = pcall(require, "nvim-web-devicons")
-        if loaded then devicons = res end
     end
 
     local children = {}
@@ -485,18 +580,7 @@ function FileTree:_process_dir(path, entries, error_flag)
         local rel = vim.fs.relpath(self._root, full)
 
         if rel and self:_should_include(rel, is_dir) then
-            local icon, icon_hl
-            if is_dir then
-                icon, icon_hl = "", "Directory"
-            else
-                local ext = entry.name:match("%.([^.]+)$") or ""
-                if devicons then
-                    icon, icon_hl = devicons.get_icon(entry.name, ext, { default = false })
-                end
-                icon = icon or _file_icons[ext] or ""
-                icon_hl = icon_hl or nil
-            end
-
+            local icon, icon_hl = self:_get_icon_for_node(entry.name, is_dir)
             table.insert(children, {
                 id = full,
                 expandable = is_dir,
@@ -644,33 +728,50 @@ function FileTree:_create_node(item, as_dir)
     local type_label = as_dir and "Directory" or "File"
 
     local reload_counter = self._reload_counter
-    floatwin.input_at_cursor({ prompt = "New " .. type_label .. " name" }, function(name)
-        if not name or name == "" then return end
-        if reload_counter ~= self._reload_counter then return end
-        if not self._tree:get_item(path) then return end
-
-        local new_path = vim.fs.joinpath(base_dir, name)
-        if as_dir then
-            ---@diagnostic disable-next-line: undefined-field
-            local ok, err = uv.fs_mkdir(new_path, 493) -- 493 is octal 0755
-            if not ok then vim.notify(err, vim.log.levels.ERROR) end
-        else
-            ---@diagnostic disable-next-line: undefined-field
-            local fd, err = uv.fs_open(new_path, "w", 420) -- 420 is octal 0644
-            if fd then
-                ---@diagnostic disable-next-line: undefined-field
-                uv.fs_close(fd)
-            else
-                vim.notify("Could not create file, " .. tostring(err), vim.log.levels.ERROR)
+    floatwin.input_at_cursor({
+            prompt = "New " .. type_label .. " name",
+            validate = function(name)
+                if not name or name == "" then return false, "Name cannot be empty" end
+                local new_path = vim.fs.joinpath(base_dir, name)
+                local rel = vim.fs.relpath(self._root, new_path)
+                if not rel then return false, "Invalid name" end
+                vim.notify("validating " .. rel)
+                if not self:_should_include(rel, as_dir) then
+                    return false, "Name incompatible with worspace file patterns"
+                end
+                return true
             end
-        end
-        self:reveal(new_path)
-    end)
+        },
+        function(name)
+            if not name or name == "" then return end
+            if reload_counter ~= self._reload_counter then return end
+            if not self._tree:get_item(path) then return end
+
+            local new_path = vim.fs.joinpath(base_dir, name)
+            if as_dir then
+                ---@diagnostic disable-next-line: undefined-field
+                local ok, err = uv.fs_mkdir(new_path, 493) -- 493 is octal 0755
+                if ok then
+                    self:reveal(new_path, false)
+                else
+                    vim.notify(err, vim.log.levels.ERROR)
+                end
+            else
+                local created, err = filetools.create_file(new_path)
+                if created then
+                    self:reveal(new_path)
+                else
+                    vim.notify(err or "Failed to create file", vim.log.levels.ERROR)
+                end
+            end
+            self:reveal(new_path)
+        end)
 end
 
 --- Rename a file or directory
 ---@param item table
 function FileTree:_rename_node(item)
+    local is_dir = item.data.is_dir
     local old_path = item.data.path
     local old_name = item.data.name
     local parent_dir = vim.fn.fnamemodify(old_path, ":h")
@@ -678,7 +779,18 @@ function FileTree:_rename_node(item)
     local reload_counter = self._reload_counter
     floatwin.input_at_cursor({
             prompt = ("Rename `%s`"):format(old_name),
-            default_text = old_name
+            default_text = old_name,
+            validate = function(name)
+                if not name or name == "" then return false, "Name cannot be empty" end
+                local new_path = vim.fs.joinpath(parent_dir, name)
+                local rel = vim.fs.relpath(self._root, new_path)
+                vim.notify("validating " .. rel)
+                if not rel then return false, "Invalid name" end
+                if not self:_should_include(rel, is_dir) then
+                    return false, "Name incompatible with worspace file patterns"
+                end
+                return true
+            end
         },
         function(new_name)
             if not new_name or new_name == "" then return end
@@ -687,7 +799,9 @@ function FileTree:_rename_node(item)
             local new_path = vim.fs.joinpath(parent_dir, new_name)
             ---@diagnostic disable-next-line: undefined-field
             local ok, err = uv.fs_rename(old_path, new_path)
-            if not ok then
+            if ok then
+                self:reveal(new_path, false)
+            else
                 vim.notify("Rename failed: " .. err, vim.log.levels.ERROR)
             end
         end)

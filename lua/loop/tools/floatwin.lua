@@ -25,6 +25,7 @@ local _current_win = nil
 ---@field row_offset? number
 ---@field col_offset? number
 ---@field completions? string[]
+---@field validate? fun(content:string):boolean,string?
 
 ---@class loop.floatwin.MultilineInputOpts
 ---@field prompt? string
@@ -304,6 +305,13 @@ function M.input_at_cursor(opts, on_confirm)
     ---@param value string|nil
     local function close(value)
         if closed then return end
+        if value and opts.validate then
+            local validated, err_msg = opts.validate(value)
+            if not validated and err_msg then
+                vim.notify(err_msg)
+                return
+            end
+        end
         closed = true
         vim.cmd("stopinsert")
         if vim.api.nvim_win_is_valid(win) then
@@ -389,8 +397,8 @@ function M.input_multiline(opts, on_confirm)
     local function close(value)
         if value and opts.validate then
             local validated, err_msg = opts.validate(value)
-            if not validated then
-                vim.notify(err_msg or "Validation failed")
+            if not validated and err_msg then
+                vim.notify(err_msg)
                 return
             end
         end

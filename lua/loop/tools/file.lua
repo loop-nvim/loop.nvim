@@ -28,6 +28,26 @@ function M.make_dir(path)
     return true
 end
 
+---@param path string
+---@return boolean
+---@return string? -- error msg
+function M.create_file(path)
+    -- "wx" : Open for Writing, fail if file eXists (Atomic)
+    -- 420  : Octal 0644 (Read/Write for owner, Read for others)
+    ---@diagnostic disable-next-line: undefined-field
+    local fd, err, err_name = vim.uv.fs_open(path, "wx", 420)
+    if not fd then
+        if err_name == "EEXIST" then
+            return false, "File already exists"
+        end
+        return false, "Failed to create file: " .. tostring(err)
+    end
+    -- Always close the file descriptor if it was opened successfully
+    ---@diagnostic disable-next-line: undefined-field
+    vim.uv.fs_close(fd)
+    return true
+end
+
 ---@param filepath string
 ---@param data string
 ---@return boolean
