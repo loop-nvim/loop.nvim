@@ -1,15 +1,15 @@
-local loopconfig  = require("loop").config
-local class       = require("loop.tools.class")
-local log         = require("loop.log")
-local uitools     = require("loop.tools.uitools")
-local filetools   = require("loop.tools.file")
-local TreeBuffer  = require("loop.buf.TreeBuffer")
-local wsmonitor   = require("loop.workspacemonitor")
-local LRU         = require("loop.tools.LRU")
-local floatwin    = require("loop.tools.floatwin")
-local fntools     = require("loop.tools.fntools")
+local loopconfig     = require("loop").config
+local class          = require("loop.tools.class")
+local log            = require("loop.log")
+local uitools        = require("loop.tools.uitools")
+local filetools      = require("loop.tools.file")
+local TreeBuffer     = require("loop.buf.TreeBuffer")
+local wsmonitor      = require("loop.workspacemonitor")
+local LRU            = require("loop.tools.LRU")
+local floatwin       = require("loop.tools.floatwin")
+local fntools        = require("loop.tools.fntools")
 
-local uv          = vim.loop
+local uv             = vim.loop
 
 ---@class loop.comp.FileTree.ItemData
 ---@field path string
@@ -26,7 +26,7 @@ local uv          = vim.loop
 
 -- at the top of your file
 local _dev_icons_attempt, devicons
-local _file_icons = {
+local _file_icons    = {
     txt      = "",
     md       = "",
     markdown = "",
@@ -49,6 +49,8 @@ local _file_icons = {
     kt       = "𝙆",
     default  = "",
 }
+
+local _error_node_id = {} -- unique id for the error node
 
 ---@param globs string[]|nil
 ---@return string[]|nil
@@ -123,6 +125,7 @@ function FileTree:init()
         end
     })
 
+    self._viewport_monitor_fn = self:_get_viewport_monitor_fn()
     self._toggle_counter = 0
     self._reveal_counter = 0
     self._reload_counter = 0
@@ -163,7 +166,11 @@ function FileTree:_setup_tree()
             if data.is_dir then
                 if expanded then
                     self._expanded_lru:put(data.path, true)
-                    self:_read_dir(data.path)
+                    local old = data.loading_requests
+                    self._viewport_monitor_fn()
+                    if old == data.loading_requests then
+                        self:_read_dir(data.path, self._reload_counter, true)
+                    end
                 else
                     self._expanded_lru:delete(data.path)
                 end
@@ -175,6 +182,7 @@ end
 function FileTree:_on_buffer_create()
     assert(not self.bufenter_autocmd_id)
     assert(not self._workspace_tracker)
+    assert(not self._cancel_viewport_timer)
 
     print("_on_buffer_create: " .. self._tree:get_buf())
     local on_buffer_enter = function()
@@ -194,63 +202,10 @@ function FileTree:_on_buffer_create()
             callback = on_buffer_enter,
         })
     end
+
+    self._cancel_viewport_timer = fntools.start_timer(1000, self._viewport_monitor_fn)
+
     self:_init_workspace_tracker()
-    self:_start_viewport_monitoring()
-end
-
-function FileTree:_start_viewport_monitoring()
-    assert(not self._cancel_scrollpos_timer)
-
-    local lastwinid, topline, botline, toggle_counter
-    self._cancel_scrollpos_timer = fntools.start_timer(1000, function()
-        local buf = self._tree:get_buf()
-        if buf <= 0 then return end
-
-        local winid = vim.fn.bufwinid(buf)
-        if winid <= 0 then return end
-
-        local info = vim.fn.getwininfo(winid)[1]
-        if not info then return end
-
-        if winid ~= lastwinid or info.topline ~= topline or info.botline ~= botline or toggle_counter ~= self._toggle_counter then
-            lastwinid = winid
-            topline = info.topline
-            botline = info.botline
-            toggle_counter = self._toggle_counter
-
-            local visible_items = self._tree:get_visible_items(winid)
-            local active_folders = {}
-
-            for _, item in ipairs(visible_items) do
-                if item.data.is_dir then
-                    -- If it's a directory and expanded, we need to watch its contents
-                    if item.expanded then
-                        active_folders[item.data.path] = true
-                    end
-                    -- Also watch the directory's own parent to catch renames/deletions of the folder itself
-                    local parent = self._tree:get_parent_item(item.id)
-                    if parent then active_folders[parent.data.path] = true end
-                else
-                    -- If it's a file, we MUST watch its parent folder
-                    local parent = self._tree:get_parent_item(item.id)
-                    if parent then
-                        active_folders[parent.data.path] = true
-                    end
-                end
-            end
-            -- Cleanup: Remove folders from LRU that are no longer in the active set
-            for path in self._monitor_lru:items() do
-                if not active_folders[path] then
-                    -- This triggers the on_removed/cancel_fn
-                    self._monitor_lru:delete(path)
-                end
-            end
-            -- Apply monitors to the unique set of folders identified
-            for path, _ in pairs(active_folders) do
-                self:_start_dir_monitor(path)
-            end
-        end
-    end)
 end
 
 function FileTree:_on_buffer_delete()
@@ -263,12 +218,66 @@ function FileTree:_on_buffer_delete()
         self.bufenter_autocmd_id = nil
     end
 
-    if self._cancel_scrollpos_timer then
-        self._cancel_scrollpos_timer()
-        self._cancel_scrollpos_timer = nil
+    if self._cancel_viewport_timer then
+        self._cancel_viewport_timer()
+        self._cancel_viewport_timer = nil
     end
 
     self:_clear_all_monitors()
+end
+
+---@private
+---@return fun()
+function FileTree:_get_viewport_monitor_fn()
+    local lastwinid, topline, botline, toggle_counter
+    return function()
+        local buf = self._tree:get_buf()
+        if buf <= 0 then return end
+
+        local winid = vim.fn.bufwinid(buf)
+        if winid <= 0 then return end
+
+        local info = vim.fn.getwininfo(winid)[1]
+        if not info then return end
+
+        -- Detect if viewport or tree state changed
+        if winid ~= lastwinid or info.topline ~= topline or info.botline ~= botline or toggle_counter ~= self._toggle_counter then
+            lastwinid, topline, botline, toggle_counter = winid, info.topline, info.botline, self._toggle_counter
+
+            local visible_items = self._tree:get_visible_items(winid)
+            local active_folders = {}
+
+            -- Identify folders that need monitoring
+            for _, item in ipairs(visible_items) do
+                local parent = self._tree:get_parent_item(item.id)
+                if parent then
+                    active_folders[parent.data.path] = true
+                end
+                if item.data.is_dir and item.expanded then
+                    active_folders[item.data.path] = true
+                end
+            end
+
+            -- 1. Cleanup stale monitors
+            for path in self._monitor_lru:items() do
+                if not active_folders[path] then
+                    self._monitor_lru:delete(path)
+                end
+            end
+
+            -- 2. Attach new monitors and Sync
+            for path, _ in pairs(active_folders) do
+                -- Only act if this folder is NOT already monitored
+                if not self._monitor_lru:has(path) then
+                    -- A. Start monitor FIRST to catch tail-end changes
+                    self:_start_dir_monitor(path)
+
+                    -- B. Immediate Sync to catch anything missed before the monitor started
+                    self:_read_dir(path, self._reload_counter, false)
+                end
+            end
+        end
+    end
 end
 
 ---@private
@@ -402,6 +411,9 @@ end
 
 --- Starts a monitor for a single directory and manages its lifecycle via LRU
 function FileTree:_start_dir_monitor(path)
+    if not loopconfig.filetree.monitor_file_system then
+        return
+    end
     if self._monitor_lru:has(path) then
         return
     end
@@ -432,8 +444,6 @@ end
 ---@param include_globs string[]?
 ---@param exclude_globs string[]?
 function FileTree:_load_workspace(name, root, include_globs, exclude_globs)
-    self._tree:clear_items()
-    self:_clear_all_monitors()
     self._root = root and vim.fs.normalize(root) or nil -- normalize is important because we may use / to split path
     self._include_patterns = include_globs and _compile_globs(include_globs) or nil
     self._exclude_patterns = exclude_globs and _compile_globs(exclude_globs) or nil
@@ -441,50 +451,40 @@ function FileTree:_load_workspace(name, root, include_globs, exclude_globs)
 end
 
 function FileTree:_reload()
-    local old_item = self._tree:get_cursor_item()
-
     self._reload_counter = self._reload_counter + 1
-    self._tree:clear_items()
-    self:_clear_all_monitors()
-
     local path = self._root
     if not path or not self._include_patterns or not self._exclude_patterns then
         local error_msg = path and "Workspace configuration error" or "No workspace"
         local root_item = {
-            id = "error_node",
+            id = _error_node_id,
             data = { path = "", name = error_msg, is_dir = false, icon = "⚠", icon_hl = "WarningMsg" }
         }
+        self:_clear_all_monitors()
+        self._tree:clear_items()
         self._tree:add_item(nil, root_item)
         return
     end
 
-    local icon, iconhl = self:_get_icon_for_node(path, true)
-    local root_item = {
-        id = path,
-        expandable = true,
-        expanded = true,
-        data = {
-            path = path,
-            name = vim.fn.fnamemodify(path, ":t"),
-            is_dir = true,
-            icon = icon,
-            icon_hl = iconhl
+    self._tree:remove_item(_error_node_id)
+
+    if not self._tree:have_item(path) then
+        local icon, iconhl = self:_get_icon_for_node(path, true)
+        local root_item = {
+            id = path,
+            expandable = true,
+            expanded = true,
+            data = {
+                path = path,
+                name = vim.fn.fnamemodify(path, ":t"),
+                is_dir = true,
+                icon = icon,
+                icon_hl = iconhl
+            }
         }
-    }
-    self._tree:add_item(nil, root_item)
-    self:_read_dir(path)
-
-    if old_item then
-        self:_reveal(old_item.id)
+        self._tree:add_item(nil, root_item)
     end
-end
 
----@param dir string
-function FileTree:_reload_dir(dir)
-    dir = vim.fs.normalize(dir)
-    local item = self._tree:get_item(dir)
-    if not item then return end
-    self:_read_dir(dir)
+    self._viewport_monitor_fn() -- trigger Immediate viewport check
 end
 
 ---@param path string Full path to the changed file/dir
@@ -602,18 +602,21 @@ function FileTree:_get_icon_for_node(name, is_dir)
 end
 
 ---@param path string
-function FileTree:_read_dir(path)
-    local reload_counter = self._reload_counter
+---@param reload_counter number
+---@param recursive boolean
+function FileTree:_read_dir(path, reload_counter, recursive)
+    if reload_counter ~= self._reload_counter then return end
     local item = self._tree:get_item(path)
     if not item then return end
     item.data.loading_requests = item.data.loading_requests or 0
     item.data.loading_requests = item.data.loading_requests + 1
     self._tree:refresh_item(path)
+    print("Scanning dir: " .. path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
         if reload_counter ~= self._reload_counter then
-            item.data.loading_requests = item.data.loading_requests - 1
+            item.data.loading_requests = math.max(0, (item.data.loading_requests or 1) - 1)
             return
         end
         local entries = {}
@@ -627,71 +630,78 @@ function FileTree:_read_dir(path)
         end
         -- schedule because read_dir is called in a fast event context
         vim.schedule(function()
-            if reload_counter == self._reload_counter then
-                self:_process_dir(path, entries, err ~= nil)
-            end
-            item.data.loading_requests = item.data.loading_requests - 1
+            self:_process_dir(path, entries, err ~= nil, reload_counter, recursive)
+            item.data.loading_requests = math.max(0, (item.data.loading_requests or 1) - 1)
             self._tree:refresh_item(path)
         end)
     end)
 end
 
-function FileTree:_process_dir(path, entries, error_flag)
+---@param path string
+---@param entries table[]
+---@param error_flag boolean
+---@param reload_counter number
+---@param recursive boolean
+function FileTree:_process_dir(path, entries, error_flag, reload_counter, recursive)
     local root = self._root
     if not root then return end
-    local item = self._tree:get_item(path)
-    if not item then return end -- could be deleted at this point
+    local parent_item = self._tree:get_item(path)
+    if not parent_item then return end
 
     if error_flag then
-        if item then
-            item.data.error_flag = true
-            self._tree:set_item_data(item.id, item.data)
-        end
+        parent_item.data.error_flag = true
+        self._tree:refresh_item(path)
     end
 
-    local children = {}
+    -- Map new entries for quick lookup and filtering
+    local new_entries_map = {}
     for _, entry in ipairs(entries) do
-        local full = vim.fs.joinpath(path, entry.name)
+        local full_path = vim.fs.joinpath(path, entry.name)
         local is_dir = entry.type == "directory"
-        local rel = vim.fs.relpath(root, full)
+        local rel = vim.fs.relpath(root, full_path)
 
         if rel and self:_should_include(rel, is_dir) then
-            local icon, icon_hl = self:_get_icon_for_node(entry.name, is_dir)
-            table.insert(children, {
-                id = full,
-                expandable = is_dir,
-                expanded = self._expanded_lru:has(full),
-                data = {
-                    path = full,
-                    name = entry.name,
-                    is_dir = is_dir,
-                    icon = icon,
-                    icon_hl = icon_hl
-                }
-            })
+            new_entries_map[full_path] = entry
         end
     end
 
-    table.sort(children, function(a, b)
-        if a.data.is_dir ~= b.data.is_dir then return a.data.is_dir end
-        return a.data.name:lower() < b.data.name:lower()
+    -- Identify and remove children that are no longer present
+    local current_children = self._tree:get_children(path)
+    for _, child in ipairs(current_children) do
+        if not new_entries_map[child.id] then
+            self._tree:remove_item(child.id)
+        end
+    end
+
+    -- Create entries and reverse order them to improve the performance of _upsert_single_item
+    local sorted_entries = {}
+    for full_path, entry in pairs(new_entries_map) do
+        table.insert(sorted_entries, { path = full_path, name = entry.name, is_dir = (entry.type == "directory") })
+    end
+    table.sort(sorted_entries, function(a, b)
+        if a.is_dir ~= b.is_dir then return a.is_dir end
+        return a.name:lower() > b.name:lower() -- reverse order
     end)
-
-    -- push to tree
-    self._tree:set_children(path, children)
-
-    -- Handle nested expansion
-    for _, child in ipairs(children) do
-        if child.expanded and child.data.is_dir then
-            self:_read_dir(child.id)
+    -- upsert
+    for _, entry in ipairs(sorted_entries) do
+        self:_upsert_single_item(path, entry.path, entry.is_dir)
+    end
+    -- Handle nested expansion for existing expanded folders
+    -- This ensures that if a folder was already expanded, we refresh its view too
+    if recursive then
+        for _, entry in ipairs(sorted_entries) do
+            if entry.is_dir then
+                local item = self._tree:get_item(entry.path)
+                if item and item.expanded then
+                    self:_read_dir(entry.path, reload_counter, recursive)
+                end
+            end
         end
     end
-
     -- Notify reveal waiters
-    local parent = self._tree:get_item(path)
-    if parent and parent.data.on_children_loaded then
-        parent.data.on_children_loaded()
-        parent.data.on_children_loaded = nil
+    if parent_item.data.on_children_loaded then
+        parent_item.data.on_children_loaded()
+        parent_item.data.on_children_loaded = nil
     end
 end
 
@@ -855,7 +865,6 @@ function FileTree:_create_node(item, as_dir)
                     vim.notify(err or "Failed to create file", vim.log.levels.ERROR)
                 end
             end
-            self:_reveal(new_path)
         end)
 end
 
@@ -927,9 +936,28 @@ function FileTree:_delete_node(item)
     end)
 end
 
---- Delete a file or directory only if it matches the wanted type
+--- Delete a directory and all its contents
 ---@param item table The TreeBuffer item
 function FileTree:_delete_dir_recurive(item)
+    local path = item.data.path
+    if path == self._root then
+        vim.notify("Cannot delete workspace root", vim.log.levels.WARN)
+        return
+    end
+
+    local reload_counter = self._reload_counter
+    -- Pass 'true' to confirm_action if it supports a "danger" highlight
+    uitools.confirm_action("RECURSIVELY delete directory?\n" .. path, false, function(confirmed)
+        if not confirmed or reload_counter ~= self._reload_counter then return end
+        if not self._tree:get_item(path) then return end
+
+        -- 'rf' means recursive and force
+        local success = vim.fn.delete(path, "rf")
+        if success ~= 0 then
+            vim.notify("Failed to delete directory: " .. path, vim.log.levels.ERROR)
+        end
+        -- Note: The monitor will handle removing the item from the tree
+    end)
 end
 
 return FileTree

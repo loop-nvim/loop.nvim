@@ -225,16 +225,18 @@ function M.confirm_action(msg, default_yes, callback)
     local choices = "&Yes\n&No"
     local default = default_yes and 1 or 2
 
-    vim.schedule(function()
-        local choice = vim.fn.confirm(msg, choices, default)
-        if choice == 1 then
-            callback(true)
-        elseif choice == 2 then
-            callback(false)
-        else
-            callback(nil)
-        end
-    end)
+    local ok, choice = pcall(vim.fn.confirm, msg, choices, default)
+    if not ok then
+        callback(nil)
+        return
+    end
+    if choice == 1 then
+        callback(true)
+    elseif choice == 2 then
+        callback(false)
+    else
+        callback(nil)
+    end
 end
 
 ---@param c1 number
