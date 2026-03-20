@@ -72,9 +72,6 @@ local function _file_formatter(id, data)
     if data.error_flag then
         table.insert(virt_chunks, { "⚠", "ErrorMsg" })
     end
-    if data.loading_requests and data.loading_requests > 0 then
-        table.insert(virt_chunks, { "…", "Comment" })
-    end
     local chunks = {
         { data.icon, data.icon_hl },
         { " " },
@@ -90,9 +87,10 @@ local function _show_help()
         "  <CR>     Open file / Toggle directory",
         "",
         "Creation:",
-        "  i        Create new file inside the selected folder",
-        "  a, i     Create new file",
-        "  A, I     Create new directory",
+        "  a        Create new file (in parent directory)",
+        "  i        Create new file (inside directory / current folder)",
+        "  A        Create new directory (in parent directory)",
+        "  I        Create new directory (inside directory / current folder)",
         "",
         "Management:",
         "  r, c     Rename file/directory",
@@ -100,7 +98,7 @@ local function _show_help()
         "  D        Delete directory (recursive)",
         "",
         "Other:",
-        "  R        Full reload of workspace",
+        "  R        Rescan workspace",
         "  g?       Show this help",
     }
 
@@ -120,7 +118,7 @@ function FileTree:init()
     self._expanded_lru = LRU:new(10000)
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
-            print("removing monitor: " .. path)
+            --vim.notify("removing monitor: " .. path)
             cancel_fn()
         end
     })
@@ -184,7 +182,7 @@ function FileTree:_on_buffer_create()
     assert(not self._workspace_tracker)
     assert(not self._cancel_viewport_timer)
 
-    print("_on_buffer_create: " .. self._tree:get_buf())
+    --vim.notify("_on_buffer_create: " .. self._tree:get_buf())
     local on_buffer_enter = function()
         if self._tree:get_buf() == -1 then
             return
@@ -209,7 +207,7 @@ function FileTree:_on_buffer_create()
 end
 
 function FileTree:_on_buffer_delete()
-    print("_on_buffer_delete")
+    --vim.notify("_on_buffer_delete")
 
     self:_stop_workspace_tracker()
 
@@ -288,21 +286,36 @@ function FileTree:_setup_keymaps()
     end
 
     -- Creation
+    -- "a" → always sibling file
     self._tree:add_keymap("a", {
         desc = "Create File",
-        callback = function() with_item(function(i) self:_create_node(i, false) end) end
+        callback = function()
+            with_item(function(i) self:_create_node(i, false, true) end)
+        end
     })
+
+    -- "A" → always sibling dir
     self._tree:add_keymap("A", {
         desc = "Create Directory",
-        callback = function() with_item(function(i) self:_create_node(i, true) end) end
+        callback = function()
+            with_item(function(i) self:_create_node(i, true, true) end)
+        end
     })
+
+    -- "i" → context-aware (inside folder)
     self._tree:add_keymap("i", {
-        desc = "Create File",
-        callback = function() with_item(function(i) self:_create_node(i, false) end) end
+        desc = "Create File (inside)",
+        callback = function()
+            with_item(function(i) self:_create_node(i, false, false) end)
+        end
     })
+
+    -- "I" → context-aware dir
     self._tree:add_keymap("I", {
-        desc = "Create Directory",
-        callback = function() with_item(function(i) self:_create_node(i, true) end) end
+        desc = "Create Directory (inside)",
+        callback = function()
+            with_item(function(i) self:_create_node(i, true, false) end)
+        end
     })
 
     -- Refactoring
@@ -346,7 +359,7 @@ function FileTree:_init_workspace_tracker()
         end)
     end
     assert(not self._workspace_tracker)
-    print("(loop.nvim) tracker init")
+    --vim.notify("(loop.nvim) tracker init")
     self._workspace_tracker = wsmonitor.add_tracker({
         on_open = function(wsdir, config)
             reload(wsdir, config)
@@ -427,7 +440,7 @@ function FileTree:_start_dir_monitor(path)
     end)
 
     if cancel_fn then
-        print("attach_monitor: " .. path)
+        --vim.notify("attach_monitor: " .. path)
         self._monitor_lru:put(path, cancel_fn)
     elseif error_msg then
         log.log("FileTree monitor error: " .. tostring(error_msg), vim.log.levels.ERROR)
@@ -610,8 +623,7 @@ function FileTree:_read_dir(path, reload_counter, recursive)
     if not item then return end
     item.data.loading_requests = item.data.loading_requests or 0
     item.data.loading_requests = item.data.loading_requests + 1
-    self._tree:refresh_item(path)
-    print("Scanning dir: " .. path)
+    --vim.notify("Scanning dir: " .. path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
@@ -632,7 +644,6 @@ function FileTree:_read_dir(path, reload_counter, recursive)
         vim.schedule(function()
             self:_process_dir(path, entries, err ~= nil, reload_counter, recursive)
             item.data.loading_requests = math.max(0, (item.data.loading_requests or 1) - 1)
-            self._tree:refresh_item(path)
         end)
     end)
 end
@@ -818,10 +829,24 @@ end
 --- Create a new file or directory
 ---@param item table The parent or sibling item
 ---@param as_dir boolean
-function FileTree:_create_node(item, as_dir)
+---@param force_parent boolean?
+function FileTree:_create_node(item, as_dir, force_parent)
     -- Determine base directory: if item is file, use its parent. If dir, use it.
     local path = item.data.path
-    local base_dir = item.data.is_dir and item.data.path or vim.fn.fnamemodify(item.data.path, ":h")
+
+    local base_dir
+    if force_parent then
+        -- always behave like "a" (sibling creation)
+        base_dir = vim.fn.fnamemodify(item.data.path, ":h")
+    else
+        -- smart behavior (like "i")
+        if item.data.is_dir then
+            base_dir = item.data.path
+        else
+            base_dir = vim.fn.fnamemodify(item.data.path, ":h")
+        end
+    end
+
     local type_label = as_dir and "directory" or "file"
 
     local reload_counter = self._reload_counter
@@ -860,6 +885,7 @@ function FileTree:_create_node(item, as_dir)
             else
                 local created, err = filetools.create_file(new_path)
                 if created then
+                    self:_read_dir(base_dir, self._reload_counter, false)
                     self:_reveal(new_path)
                 else
                     vim.notify(err or "Failed to create file", vim.log.levels.ERROR)
@@ -904,6 +930,7 @@ function FileTree:_rename_node(item)
             ---@diagnostic disable-next-line: undefined-field
             local ok, err = uv.fs_rename(old_path, new_path)
             if ok then
+                self:_read_dir(parent_dir, self._reload_counter, false)
                 self:_reveal(new_path)
             else
                 vim.notify("Rename failed: " .. err, vim.log.levels.ERROR)
@@ -921,6 +948,7 @@ function FileTree:_delete_node(item)
         vim.notify("Cannot delete workspace root")
         return
     end
+    local parent_dir = vim.fn.fnamemodify(path, ":h")
     local type_str = is_folder and "directory" or "file"
     local reload_counter = self._reload_counter
     -- Confirmation dialog
@@ -930,6 +958,7 @@ function FileTree:_delete_node(item)
         if not self._tree:get_item(path) then return end
         -- Attempt simple removal
         local success, err_msg = os.remove(path)
+        self:_read_dir(parent_dir, self._reload_counter, false)
         if not success then
             vim.notify(("Failed to delete %s\n%s"):format(type_str, err_msg), vim.log.levels.ERROR)
         end
@@ -939,12 +968,16 @@ end
 --- Delete a directory and all its contents
 ---@param item table The TreeBuffer item
 function FileTree:_delete_dir_recurive(item)
+    if not item.data.is_dir then
+        vim.notify("Selected item is not a directory", vim.log.levels.WARN)
+        return
+    end
     local path = item.data.path
     if path == self._root then
         vim.notify("Cannot delete workspace root", vim.log.levels.WARN)
         return
     end
-
+    local parent_dir = vim.fn.fnamemodify(path, ":h")
     local reload_counter = self._reload_counter
     -- Pass 'true' to confirm_action if it supports a "danger" highlight
     uitools.confirm_action("RECURSIVELY delete directory?\n" .. path, false, function(confirmed)
@@ -953,7 +986,9 @@ function FileTree:_delete_dir_recurive(item)
 
         -- 'rf' means recursive and force
         local success = vim.fn.delete(path, "rf")
-        if success ~= 0 then
+        if success == 0 then
+            self:_read_dir(parent_dir, self._reload_counter, false)
+        else
             vim.notify("Failed to delete directory: " .. path, vim.log.levels.ERROR)
         end
         -- Note: The monitor will handle removing the item from the tree
