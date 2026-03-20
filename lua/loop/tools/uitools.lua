@@ -145,7 +145,7 @@ function M.read_file_or_buffer(filepath)
     local bufnr = vim.fn.bufnr(full_path, false) -- false = don't create
 
     if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-        return true, vim.fn.join(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
+        return true, table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
     end
     return filetools.read_content(full_path)
 end

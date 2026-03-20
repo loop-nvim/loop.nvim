@@ -445,6 +445,38 @@ function TreeBuffer:_apply_metadata(buf, hl_calls, extmarks)
     end
 end
 
+---Returns a list of items currently visible in the provided window's viewport.
+---@param winid number The window handle to check.
+---@return loop.comp.TreeBuffer.Item[]
+function TreeBuffer:get_visible_nodes(winid)
+    if not winid or not vim.api.nvim_win_is_valid(winid) then return {} end
+    if vim.api.nvim_win_get_buf(winid) ~= self:get_buf() then return {} end
+
+    -- Get the first and last visible line numbers in the window
+    local start_line = vim.fn.line("w0", winid)
+    local end_line = vim.fn.line("w$", winid)
+
+    local visible_items = {}
+
+    -- Iterate through the visible range
+    for i = start_line, end_line do
+        local id = self._flat_ids[i]
+        -- Check if ID exists (handles header rows or empty buffer cases)
+        if id and type(id) ~= "table" then
+            local base_data = self:_get_data(id)
+            if base_data then
+                table.insert(visible_items, {
+                    id = id,
+                    data = base_data.userdata,
+                    expanded = base_data.expanded
+                })
+            end
+        end
+    end
+
+    return visible_items
+end
+
 ---Sets the header content
 ---@param header {[1]:string,[2]:string,[3]:boolean?}[]?
 function TreeBuffer:set_header(header)

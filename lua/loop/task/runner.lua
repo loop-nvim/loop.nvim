@@ -304,7 +304,7 @@ end
 function M.get_active_tasks()
     local ret = {}
     local keys = vim.tbl_keys(_active_tasks)
-    vim.fn.sort(keys)
+    table.sort(keys)
     for _, key in ipairs(keys) do
         table.insert(ret, _active_tasks[key])
     end

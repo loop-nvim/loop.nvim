@@ -141,7 +141,9 @@ function M.lead_commands()
 			leads[lead] = true
 		end
 	end
-	return vim.fn.sort(vim.tbl_keys(leads))
+	local ret = vim.tbl_keys(leads)
+	table.sort(ret)
+	return ret
 end
 
 ---@param lead_cmd string
