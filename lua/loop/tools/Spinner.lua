@@ -7,7 +7,7 @@ local fntools = require('loop.tools.fntools')
 ---@field frames string[]
 ---@field interval integer
 ---@diagnostic disable-next-line: undefined-doc-name
----@field timer uv_timer_t?
+---@field cancel_timer fun()?
 ---@field frame integer
 ---@field running boolean
 ---@field on_update fun(frame:string, index:integer)?
@@ -29,7 +29,7 @@ function Spinner:init(opts)
     opts = opts or {}
     self.frames = opts.frames or default_frames
     self.interval = opts.interval or 80
-    self.timer = nil
+    self.cancel_timer = nil
     self.frame = 1
     self.running = false
     self.on_update = opts.on_update
@@ -40,26 +40,13 @@ function Spinner:start()
         return
     end
     self.running = true
-    ---@diagnostic disable-next-line: undefined-field
-    self.timer = uv.new_timer()
-    ---@diagnostic disable-next-line: undefined-field
-    self.timer:start(
-        0,
-        self.interval,
+    self.cancel_timer = fntools.start_timer(self.interval,
         vim.schedule_wrap(function()
-            if not self.running then
-                return
-            end
-
+            if not self.running then return end
             local frame = self.frames[self.frame]
-
-            if self.on_update then
-                self.on_update(frame, self.frame)
-            end
-
+            if self.on_update then self.on_update(frame, self.frame) end
             self.frame = (self.frame % #self.frames) + 1
-        end)
-    )
+        end))
 end
 
 function Spinner:stop()
@@ -67,7 +54,7 @@ function Spinner:stop()
         return
     end
     self.running = false
-    self.timer = fntools.stop_and_close_timer(self.timer)
+    if self.cancel_timer then self.cancel_timer() end
 end
 
 return Spinner

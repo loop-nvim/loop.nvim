@@ -7,6 +7,7 @@ local TreeBuffer  = require("loop.buf.TreeBuffer")
 local wsmonitor   = require("loop.workspacemonitor")
 local LRU         = require("loop.tools.LRU")
 local floatwin    = require("loop.tools.floatwin")
+local fntools     = require("loop.tools.fntools")
 
 local uv          = vim.loop
 
@@ -17,6 +18,7 @@ local uv          = vim.loop
 ---@field icon string
 ---@field icon_hl string
 ---@field is_current boolean?
+---@field error_flag boolean?
 ---@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
@@ -47,17 +49,6 @@ local _file_icons = {
     default  = "",
 }
 
---- Helper to check if a path is inside another directory
----@param path string The path to check
----@param root string The potential parent directory
----@return boolean
-local function _is_subpath(path, root)
-    if path == root then return true end
-    -- Ensure root ends with a separator for prefix matching
-    local prefix = root:sub(-1) == "/" and root or root .. "/"
-    return path:find(prefix, 1, true) == 1
-end
-
 ---@param globs string[]|nil
 ---@return string[]|nil
 local function _compile_globs(globs)
@@ -78,7 +69,7 @@ local function _file_formatter(id, data)
         { data.icon, data.icon_hl },
         { " " },
         { data.name, data.is_current and "Type" or nil }
-    }, {}
+    }, data.error_flag and { { "⚠", "ErrorMsg" } } or {}
 end
 
 ---@class loop.comp.FileTree
@@ -87,7 +78,6 @@ local FileTree = class()
 
 function FileTree:init()
     self._expanded_lru = LRU:new(1000)
-
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
             vim.notify("removing monitor: " .. path)
@@ -95,6 +85,7 @@ function FileTree:init()
         end
     })
 
+    self._toggle_counter = 0
     self._reveal_counter = 0
     self._reload_counter = 0
 
@@ -130,14 +121,13 @@ function FileTree:_setup_tree()
             end
         end,
         on_toggle = function(id, data, expanded)
+            self._toggle_counter = self._toggle_counter + 1
             if data.is_dir then
                 if expanded then
                     self._expanded_lru:put(data.path, true)
-                    self:_start_branch_monitors(data.path, true)
                     self:_read_dir(data.path)
                 else
                     self._expanded_lru:delete(data.path)
-                    self:_clear_branch_monitors(data.path, true)
                 end
             end
         end
@@ -145,9 +135,10 @@ function FileTree:_setup_tree()
 end
 
 function FileTree:_on_buffer_create()
-    vim.notify("_on_buffer_create")
     assert(not self.bufenter_autocmd_id)
     assert(not self._workspace_tracker)
+
+    vim.notify("_on_buffer_create: " .. self._tree:get_buf())
     local on_buffer_enter = function()
         if self._tree:get_buf() == -1 then
             return
@@ -166,16 +157,80 @@ function FileTree:_on_buffer_create()
         })
     end
     self:_init_workspace_tracker()
+    self:_start_viewport_monitoring()
+end
+
+function FileTree:_start_viewport_monitoring()
+    assert(not self._cancel_scrollpos_timer)
+
+    local lastwinid, topline, botline, toggle_counter
+    self._cancel_scrollpos_timer = fntools.start_timer(1000, function()
+        local buf = self._tree:get_buf()
+        if buf <= 0 then return end
+
+        local winid = vim.fn.bufwinid(buf)
+        if winid <= 0 then return end
+
+        local info = vim.fn.getwininfo(winid)[1]
+        if not info then return end
+
+        if winid ~= lastwinid or info.topline ~= topline or info.botline ~= botline or toggle_counter ~= self._toggle_counter then
+            lastwinid = winid
+            topline = info.topline
+            botline = info.botline
+            toggle_counter = self._toggle_counter
+
+            local visible_items = self._tree:get_visible_items(winid)
+            local active_folders = {}
+
+            for _, item in ipairs(visible_items) do
+                if item.data.is_dir then
+                    -- If it's a directory and expanded, we need to watch its contents
+                    if item.expanded then
+                        active_folders[item.data.path] = true
+                    end
+                    -- Also watch the directory's own parent to catch renames/deletions of the folder itself
+                    local parent = self._tree:get_parent_item(item.id)
+                    if parent then active_folders[parent.data.path] = true end
+                else
+                    -- If it's a file, we MUST watch its parent folder
+                    local parent = self._tree:get_parent_item(item.id)
+                    if parent then
+                        active_folders[parent.data.path] = true
+                    end
+                end
+            end
+            -- Cleanup: Remove folders from LRU that are no longer in the active set
+            for path in self._monitor_lru:items() do
+                if not active_folders[path] then
+                    -- This triggers the on_removed/cancel_fn
+                    self._monitor_lru:delete(path)
+                end
+            end
+            -- Apply monitors to the unique set of folders identified
+            for path, _ in pairs(active_folders) do
+                self:_start_dir_monitor(path)
+            end
+        end
+    end)
 end
 
 function FileTree:_on_buffer_delete()
     vim.notify("_on_buffer_delete")
-    self:_clear_all_monitors()
+
     self:_stop_workspace_tracker()
+
     if self.bufenter_autocmd_id then
         vim.api.nvim_del_autocmd(self.bufenter_autocmd_id)
         self.bufenter_autocmd_id = nil
     end
+
+    if self._cancel_scrollpos_timer then
+        self._cancel_scrollpos_timer()
+        self._cancel_scrollpos_timer = nil
+    end
+
+    self:_clear_all_monitors()
 end
 
 ---@private
@@ -294,62 +349,30 @@ function FileTree:_should_include(rel, is_dir)
     return true
 end
 
---- Internal helper to start all monitors under a specific path
----@param root string The directory path to clear sub-monitors for
----@param root_inclusive boolean If false, the 'root' monitor itself is kept; only children are cleared.
-function FileTree:_start_branch_monitors(root, root_inclusive)
-    if root_inclusive then
-        local path = root
-        local item = self._tree:get_item(path)
-        if item and item.expanded and item.data and item.data.is_dir and not self._monitor_lru:has(path) then
-            vim.notify("attach_monitor: " .. path)
-            -- Start the monitor
-            local cancel_fn, error_msg = filetools.monitor_dir(path, function(fname, status)
-                local full_path = vim.fs.joinpath(path, fname)
-                vim.schedule(function()
-                    if self._tree:get_buf() ~= -1 then
-                        self:_handle_fs_change(full_path, status)
-                    end
-                end)
-            end)
-            if cancel_fn then
-                --vim.notify("adding monitor: " .. path)
-                self._monitor_lru:put(path, cancel_fn)
-            elseif error_msg then
-                log.user_log("filetree dir_monitor error: " .. tostring(error_msg))
+--- Starts a monitor for a single directory and manages its lifecycle via LRU
+function FileTree:_start_dir_monitor(path)
+    if self._monitor_lru:has(path) then
+        return
+    end
+    local cancel_fn, error_msg = filetools.monitor_dir(path, function(fname, status)
+        local full_path = vim.fs.joinpath(path, fname)
+        vim.schedule(function()
+            if self._tree:get_buf() ~= -1 then
+                self:_handle_fs_change(full_path, status)
             end
-        end
-    end
-    local children = self._tree:get_children(root)
-    for _, child in ipairs(children) do
-        if child.data.is_dir then
-            self:_start_branch_monitors(child.data.path, true)
-        end
+        end)
+    end)
+
+    if cancel_fn then
+        vim.notify("attach_monitor: " .. path)
+        self._monitor_lru:put(path, cancel_fn)
+    elseif error_msg then
+        log.log("FileTree monitor error: " .. tostring(error_msg), vim.log.levels.ERROR)
     end
 end
 
---- Internal helper to stop all monitors under a specific path
----@param root string The directory path to clear sub-monitors for
----@param root_inclusive boolean If false, the 'root' monitor itself is kept; only children are cleared.
-function FileTree:_clear_branch_monitors(root, root_inclusive)
-    local to_stop = {}
-    -- Identify which active monitors are children of 'root'
-    for monitored_path, _ in self._monitor_lru:items() do
-        local is_match = _is_subpath(monitored_path, root)
-        if not root_inclusive and monitored_path == root then
-            is_match = false
-        end
-        if is_match then
-            table.insert(to_stop, monitored_path)
-        end
-    end
-    for _, path in ipairs(to_stop) do
-        self._monitor_lru:delete(path)
-    end
-end
-
---- Internal helper to stop everything
 function FileTree:_clear_all_monitors()
+    --- this will stop monitors automatically
     self._monitor_lru:clear()
 end
 
@@ -391,7 +414,6 @@ function FileTree:_reload(name, root, include_globs, exclude_gobs)
     }
 
     self._tree:add_item(nil, root_item)
-    self:_start_branch_monitors(path, true)
 
     self:_read_dir(path)
 end
@@ -421,84 +443,96 @@ function FileTree:_read_dir(path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
-        if err or not handle then return end
-        if reload_counter ~= reload_counter then return end
-
+        if reload_counter ~= self._reload_counter then return end
         local entries = {}
-        while true do
-            ---@diagnostic disable-next-line: undefined-field
-            local name, type = uv.fs_scandir_next(handle)
-            if not name then break end
-            table.insert(entries, { name = name, type = type })
+        if handle then
+            while true do
+                ---@diagnostic disable-next-line: undefined-field
+                local name, type = uv.fs_scandir_next(handle)
+                if not name then break end
+                table.insert(entries, { name = name, type = type })
+            end
         end
-
+        -- schedule because read_dir is called in a fast event context
         vim.schedule(function()
-            if reload_counter ~= reload_counter then return end
-            if not _dev_icons_attempt then
-                _dev_icons_attempt = true
-                local loaded, res = pcall(require, "nvim-web-devicons")
-                if loaded then devicons = res end
-            end
-
-            local children = {}
-            for _, entry in ipairs(entries) do
-                local full = vim.fs.joinpath(path, entry.name)
-                local is_dir = entry.type == "directory"
-                local rel = vim.fs.relpath(self._root, full)
-
-                if rel and self:_should_include(rel, is_dir) then
-                    local icon, icon_hl
-                    if is_dir then
-                        icon, icon_hl = "", "Directory"
-                    else
-                        local ext = entry.name:match("%.([^.]+)$") or ""
-                        if devicons then
-                            icon, icon_hl = devicons.get_icon(entry.name, ext, { default = false })
-                        end
-                        icon = icon or _file_icons[ext] or ""
-                        icon_hl = icon_hl or nil
-                    end
-
-                    table.insert(children, {
-                        id = full,
-                        expandable = is_dir,
-                        expanded = self._expanded_lru:has(full),
-                        data = {
-                            path = full,
-                            name = entry.name,
-                            is_dir = is_dir,
-                            icon = icon,
-                            icon_hl = icon_hl
-                        }
-                    })
-                end
-            end
-
-            table.sort(children, function(a, b)
-                if a.data.is_dir ~= b.data.is_dir then return a.data.is_dir end
-                return a.data.name:lower() < b.data.name:lower()
-            end)
-
-            -- PUSH TO TREE
-            self:_clear_branch_monitors(path, false)
-            self._tree:set_children(path, children)
-            self:_start_branch_monitors(path, false)
-
-            -- Handle nested expansion
-            for _, child in ipairs(children) do
-                if child.expanded and child.data.is_dir then
-                    self:_read_dir(child.id)
-                end
-            end
-
-            -- Notify reveal waiters
-            local parent = self._tree:get_item(path)
-            if parent and parent.data.on_children_loaded then
-                parent.data.on_children_loaded()
-                parent.data.on_children_loaded = nil
-            end
+            if reload_counter ~= self._reload_counter then return end
+            self:_process_dir(path, entries, err ~= nil)
         end)
     end)
+end
+
+function FileTree:_process_dir(path, entries, error_flag)
+    local item = self._tree:get_item(path)
+    if not item then return end -- could be deleted at this point
+
+    if true or error_flag then
+        if item then
+            item.data.error_flag = true
+            self._tree:set_item_data(item.id, item.data)
+        end
+    end
+
+    if not _dev_icons_attempt then
+        _dev_icons_attempt = true
+        local loaded, res = pcall(require, "nvim-web-devicons")
+        if loaded then devicons = res end
+    end
+
+    local children = {}
+    for _, entry in ipairs(entries) do
+        local full = vim.fs.joinpath(path, entry.name)
+        local is_dir = entry.type == "directory"
+        local rel = vim.fs.relpath(self._root, full)
+
+        if rel and self:_should_include(rel, is_dir) then
+            local icon, icon_hl
+            if is_dir then
+                icon, icon_hl = "", "Directory"
+            else
+                local ext = entry.name:match("%.([^.]+)$") or ""
+                if devicons then
+                    icon, icon_hl = devicons.get_icon(entry.name, ext, { default = false })
+                end
+                icon = icon or _file_icons[ext] or ""
+                icon_hl = icon_hl or nil
+            end
+
+            table.insert(children, {
+                id = full,
+                expandable = is_dir,
+                expanded = self._expanded_lru:has(full),
+                data = {
+                    path = full,
+                    name = entry.name,
+                    is_dir = is_dir,
+                    icon = icon,
+                    icon_hl = icon_hl
+                }
+            })
+        end
+    end
+
+    table.sort(children, function(a, b)
+        if a.data.is_dir ~= b.data.is_dir then return a.data.is_dir end
+        return a.data.name:lower() < b.data.name:lower()
+    end)
+
+    -- push to tree
+    self._tree:set_children(path, children)
+
+    -- Handle nested expansion
+    for _, child in ipairs(children) do
+        if child.expanded and child.data.is_dir then
+            self:_read_dir(child.id)
+        end
+    end
+
+    -- Notify reveal waiters
+    local parent = self._tree:get_item(path)
+    if parent and parent.data.on_children_loaded then
+        parent.data.on_children_loaded()
+        parent.data.on_children_loaded = nil
+    end
 end
 
 -- async reveal
@@ -582,7 +616,10 @@ function FileTree:_reveal_step(parent, parts, idx, token)
     end
 
     -- Hook into the read completion
-    parent_item.data.on_children_loaded = vim.schedule_wrap(continue)
+    parent_item.data.on_children_loaded = vim.schedule_wrap(function()
+        if token.reveal_counter ~= self._reveal_counter then return end
+        continue()
+    end)
     self._tree:expand(parent)
 end
 

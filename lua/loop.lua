@@ -63,7 +63,7 @@ local function _get_default_config()
                 auto_collapse_others = false,
             },
             monitor_file_system = true,
-            max_monitored_folders = 100,
+            max_monitored_folders = 200,
         },
         macros = {},
         debug = false,

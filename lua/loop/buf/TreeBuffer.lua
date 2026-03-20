@@ -448,7 +448,7 @@ end
 ---Returns a list of items currently visible in the provided window's viewport.
 ---@param winid number The window handle to check.
 ---@return loop.comp.TreeBuffer.Item[]
-function TreeBuffer:get_visible_nodes(winid)
+function TreeBuffer:get_visible_items(winid)
     if not winid or not vim.api.nvim_win_is_valid(winid) then return {} end
     if vim.api.nvim_win_get_buf(winid) ~= self:get_buf() then return {} end
 

@@ -29,7 +29,7 @@ local _init_done    = false
 ---@field ws_dir string
 ---@field config_dir string
 ---@field page_manager loop.PageManager
----@field save_timer any
+---@field cancel_save_timer fun()?
 
 ---@type loop.ws.WorkspaceData?
 local _ws_data      = nil
@@ -109,7 +109,7 @@ local function _close_workspace(quiet)
     taskmgr.clear_providers()
 
     if _ws_data then
-        _ws_data.save_timer = fntools.stop_and_close_timer(_ws_data.save_timer)
+        if _ws_data.cancel_save_timer then _ws_data.cancel_save_timer() end
 
         _save_workspace()
 
@@ -273,17 +273,10 @@ local function _load_workspace(dir)
     -- load extensions
     extensionsmgr.on_workspace_load(ws_info, _ws_data.page_manager)
 
-    assert(not _ws_data.save_timer)
+    assert(not _ws_data.cancel_save_timer)
     local save_interval = (loopconfig.state_autosave_interval or 5) * 60 * 1000
     if save_interval > 0 then
-        -- Create and start the repeating timer
-        ---@diagnostic disable-next-line: undefined-field
-        _ws_data.save_timer = vim.loop.new_timer()
-        _ws_data.save_timer:start(
-            save_interval, -- initial delay
-            save_interval, -- frequency
-            vim.schedule_wrap(_save_workspace)
-        )
+        _ws_data.cancel_save_timer = fntools.start_timer(save_interval, vim.schedule_wrap(_save_workspace))
     end
 
     -- notify trackers

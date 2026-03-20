@@ -113,9 +113,9 @@ function M.async_load_text_file(path, opts, callback)
     end
 
     -- Start timeout watchdog
-    timer:start(timeout_ms, 0, function()
+    local timeout_timer = vim.defer_fn(function()
         finish("Timeout", nil)
-    end)
+    end, timeout_ms)
 
     -- Open file
     ---@diagnostic disable-next-line: undefined-field
@@ -185,6 +185,7 @@ function M.async_load_text_file(path, opts, callback)
     return function()
         if finished or aborted then return end
         aborted = true
+        fntools.stop_and_close_timer(timeout_timer)
         finish("Aborted", nil)
     end
 end

@@ -633,15 +633,13 @@ function Picker:request_clear_preview()
     if self.vbuf and self.vbuf > 0. and not self.preview_timer then
         -- Defer clearing the preview window to avoid flicker during fast scrolls
         ---@diagnostic disable-next-line: undefined-field
-        local timer = vim.loop.new_timer()
-        self.preview_timer = timer
-        timer:start(self.antiflicker_delay, 0, vim.schedule_wrap(function()
+        self.preview_timer = vim.defer_fn(vim.schedule_wrap(function()
             if self.closed then return end
             vim.bo[self.vbuf].modifiable = true
             vim.api.nvim_buf_set_lines(self.vbuf, 0, -1, false, {})
             vim.bo[self.vbuf].modifiable = false
             self.preview_timer = nil
-        end))
+        end), self.antiflicker_delay)
         return
     end
 end
