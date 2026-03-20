@@ -57,6 +57,7 @@ local function _show_help()
         "  u        Undo last change",
         "  C-r      Redo last change",
         "  i        Add element to object or array",
+        "  a        Add element",
         "  o        Add element after",
         "  O        Add element before",
         "  c        Change value",
@@ -384,6 +385,11 @@ function JsonEditor:_setup()
     self._tree:add_keymap("i", {
         desc = "Add property/item",
         callback = function() with_current_item(function(i) self:_add_new(i, "under") end) end,
+    })
+
+    self._tree:add_keymap("a", {
+        desc = "add item (Add the parent node)",
+        callback = function() with_current_item(function(i) self:_add_new(i, "after") end) end,
     })
 
     self._tree:add_keymap("o", {

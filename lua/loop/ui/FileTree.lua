@@ -19,6 +19,7 @@ local uv          = vim.loop
 ---@field icon_hl string
 ---@field is_current boolean?
 ---@field error_flag boolean?
+---@field loading_requests number
 ---@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
@@ -65,12 +66,49 @@ end
 ---@param data loop.comp.FileTree.ItemData
 local function _file_formatter(id, data)
     if not data then return {}, {} end
-    return {
+    local virt_chunks = {}
+    if data.error_flag then
+        table.insert(virt_chunks, { "⚠", "ErrorMsg" })
+    end
+    if data.loading_requests and data.loading_requests > 0 then
+        table.insert(virt_chunks, { "…", "Comment" })
+    end
+    local chunks = {
         { data.icon, data.icon_hl },
         { " " },
         { data.name, data.is_current and "Type" or nil }
-    }, data.error_flag and { { "⚠", "ErrorMsg" } } or {}
+    }
+    return chunks, virt_chunks
 end
+
+
+local function _show_help()
+    local help_text = {
+        "Navigation:",
+        "  <CR>     Open file / Toggle directory",
+        "",
+        "Creation:",
+        "  i        Create new file inside the selected folder",
+        "  a, i     Create new file",
+        "  A, I     Create new directory",
+        "",
+        "Management:",
+        "  r, c     Rename file/directory",
+        "  d        Delete file or empty directory",
+        "  D        Delete directory (recursive)",
+        "",
+        "Other:",
+        "  R        Full reload of workspace",
+        "  g?       Show this help",
+    }
+
+    floatwin.show_floatwin(table.concat(help_text, "\n"), {
+        title = "File Tree Help",
+        relative = "editor",
+        border = "rounded"
+    })
+end
+
 
 ---@class loop.comp.FileTree
 ---@field new fun(self:loop.comp.FileTree):loop.comp.FileTree
@@ -147,7 +185,7 @@ function FileTree:_on_buffer_create()
         if uitools.is_regular_buffer(buf) then
             local path = vim.api.nvim_buf_get_name(buf)
             if path ~= "" then
-                self:reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others)
+                self:_reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others, true)
             end
         end
     end
@@ -240,6 +278,7 @@ function FileTree:_setup_keymaps()
         if item then fn(item) end
     end
 
+    -- Creation
     self._tree:add_keymap("a", {
         desc = "Create File",
         callback = function() with_item(function(i) self:_create_node(i, false) end) end
@@ -256,21 +295,33 @@ function FileTree:_setup_keymaps()
         desc = "Create Directory",
         callback = function() with_item(function(i) self:_create_node(i, true) end) end
     })
+
+    -- Refactoring
     self._tree:add_keymap("r", {
         desc = "Rename",
         callback = function() with_item(function(i) self:_rename_node(i) end) end
     })
     self._tree:add_keymap("c", {
-        desc = "Rename",
+        desc = "Change (Rename)",
         callback = function() with_item(function(i) self:_rename_node(i) end) end
     })
     self._tree:add_keymap("d", {
-        desc = "Delete",
-        callback = function() with_item(function(i) self:_delete_node(i, "file") end) end
+        desc = "Delete file or empty directory",
+        callback = function() with_item(function(i) self:_delete_node(i) end) end
     })
     self._tree:add_keymap("D", {
-        desc = "Delete folder",
-        callback = function() with_item(function(i) self:_delete_node(i, "folder") end) end
+        desc = "Delete Folder",
+        callback = function() with_item(function(i) self:_delete_dir_recurive(i) end) end
+    })
+
+    -- Utilities
+    self._tree:add_keymap("R", {
+        desc = "Reload Workspace",
+        callback = function() self:_reload() end
+    })
+    self._tree:add_keymap("g?", {
+        desc = "Show Help",
+        callback = function() _show_help() end
     })
 end
 
@@ -279,7 +330,7 @@ function FileTree:_init_workspace_tracker()
     ---@param config loop.WorkspaceConfig?
     local function reload(wsdir, config)
         vim.schedule(function()
-            self:_reload(config and config.name,
+            self:_load_workspace(config and config.name,
                 wsdir,
                 config and config.files.include,
                 config and config.files.exclude)
@@ -379,14 +430,26 @@ end
 ---@param name string?
 ---@param root string?
 ---@param include_globs string[]?
----@param exclude_gobs string[]?
-function FileTree:_reload(name, root, include_globs, exclude_gobs)
+---@param exclude_globs string[]?
+function FileTree:_load_workspace(name, root, include_globs, exclude_globs)
+    self._tree:clear_items()
+    self:_clear_all_monitors()
+    self._root = root and vim.fs.normalize(root) or nil -- normalize is important because we may use / to split path
+    self._include_patterns = include_globs and _compile_globs(include_globs) or nil
+    self._exclude_patterns = exclude_globs and _compile_globs(exclude_globs) or nil
+    self:_reload()
+end
+
+function FileTree:_reload()
+    local old_item = self._tree:get_cursor_item()
+
     self._reload_counter = self._reload_counter + 1
     self._tree:clear_items()
     self:_clear_all_monitors()
 
-    if not name or not root or not include_globs or not exclude_gobs then
-        local error_msg = root and "Workspace configuration error" or "No workspace"
+    local path = self._root
+    if not path or not self._include_patterns or not self._exclude_patterns then
+        local error_msg = path and "Workspace configuration error" or "No workspace"
         local root_item = {
             id = "error_node",
             data = { path = "", name = error_msg, is_dir = false, icon = "⚠", icon_hl = "WarningMsg" }
@@ -395,11 +458,7 @@ function FileTree:_reload(name, root, include_globs, exclude_gobs)
         return
     end
 
-    self._root = vim.fs.normalize(root) -- important because we use / to split path
-    self._include_patterns = _compile_globs(include_globs)
-    self._exclude_patterns = _compile_globs(exclude_gobs)
-
-    local path = self._root
+    local icon, iconhl = self:_get_icon_for_node(path, true)
     local root_item = {
         id = path,
         expandable = true,
@@ -408,14 +467,16 @@ function FileTree:_reload(name, root, include_globs, exclude_gobs)
             path = path,
             name = vim.fn.fnamemodify(path, ":t"),
             is_dir = true,
-            icon = "",
-            icon_hl = "Directory"
+            icon = icon,
+            icon_hl = iconhl
         }
     }
-
     self._tree:add_item(nil, root_item)
-
     self:_read_dir(path)
+
+    if old_item then
+        self:_reveal(old_item.id)
+    end
 end
 
 ---@param dir string
@@ -459,12 +520,14 @@ end
 ---@param is_dir boolean
 ---@private
 function FileTree:_upsert_single_item(parent_path, full_path, is_dir)
+    local root = self._root
+    if not root then return end
     if self._tree:get_item(full_path) then
         -- If it exists, nothing to do
         return
     end
     -- Logical check: should this file even be here?
-    local rel = vim.fs.relpath(self._root, full_path)
+    local rel = vim.fs.relpath(root, full_path)
     if not rel or not self:_should_include(rel, is_dir) then return end
     -- Prepare the new item definition
     local name = vim.fn.fnamemodify(full_path, ":t")
@@ -541,10 +604,18 @@ end
 ---@param path string
 function FileTree:_read_dir(path)
     local reload_counter = self._reload_counter
+    local item = self._tree:get_item(path)
+    if not item then return end
+    item.data.loading_requests = item.data.loading_requests or 0
+    item.data.loading_requests = item.data.loading_requests + 1
+    self._tree:refresh_item(path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
-        if reload_counter ~= self._reload_counter then return end
+        if reload_counter ~= self._reload_counter then
+            item.data.loading_requests = item.data.loading_requests - 1
+            return
+        end
         local entries = {}
         if handle then
             while true do
@@ -556,13 +627,18 @@ function FileTree:_read_dir(path)
         end
         -- schedule because read_dir is called in a fast event context
         vim.schedule(function()
-            if reload_counter ~= self._reload_counter then return end
-            self:_process_dir(path, entries, err ~= nil)
+            if reload_counter == self._reload_counter then
+                self:_process_dir(path, entries, err ~= nil)
+            end
+            item.data.loading_requests = item.data.loading_requests - 1
+            self._tree:refresh_item(path)
         end)
     end)
 end
 
 function FileTree:_process_dir(path, entries, error_flag)
+    local root = self._root
+    if not root then return end
     local item = self._tree:get_item(path)
     if not item then return end -- could be deleted at this point
 
@@ -577,7 +653,7 @@ function FileTree:_process_dir(path, entries, error_flag)
     for _, entry in ipairs(entries) do
         local full = vim.fs.joinpath(path, entry.name)
         local is_dir = entry.type == "directory"
-        local rel = vim.fs.relpath(self._root, full)
+        local rel = vim.fs.relpath(root, full)
 
         if rel and self:_should_include(rel, is_dir) then
             local icon, icon_hl = self:_get_icon_for_node(entry.name, is_dir)
@@ -622,8 +698,10 @@ end
 -- async reveal
 ---@param path string
 ---@param collapse_others boolean?
-function FileTree:reveal(path, collapse_others)
-    if not self._root then return end
+---@param set_current boolean?
+function FileTree:_reveal(path, collapse_others, set_current)
+    local root = self._root
+    if not root then return end
     if not path or path == "" then return end
 
     if collapse_others then
@@ -632,7 +710,7 @@ function FileTree:reveal(path, collapse_others)
         for _, item in ipairs(items) do
             -- Don't collapse the root and don't collapse if the item is a parent of our target
             -- We check if 'id' is a prefix of 'path'
-            if item.id ~= self._root and item.expanded then
+            if item.id ~= root and item.expanded then
                 if not vim.startswith(path, item.id) then
                     self._tree:collapse(item.id)
                 end
@@ -652,35 +730,38 @@ function FileTree:reveal(path, collapse_others)
     end
 
     path = vim.fs.normalize(path)
-    local root = self._root
-    local rel = vim.fs.relpath(self._root, path)
+    local rel = vim.fs.relpath(root, path)
     if not rel then
         return
     end
+
     local parts = rel ~= "" and vim.split(rel, "/", { plain = true }) or {}
     self._reveal_counter = self._reveal_counter + 1
     local token = {
         reload_counter = self._reload_counter,
         reveal_counter = self._reveal_counter
     }
-    self:_reveal_step(root, parts, 1, token)
+    self:_reveal_step(root, parts, 1, set_current or false, token)
 end
 
 ---@param parent string The current directory path we are looking inside
 ---@param parts string[] The split segments of the relative path to the target
 ---@param idx number The current index in parts we are looking for
+---@param set_current boolean
 ---@param token {reload_counter:number,reveal_counter:number}
-function FileTree:_reveal_step(parent, parts, idx, token)
+function FileTree:_reveal_step(parent, parts, idx, set_current, token)
     if token.reveal_counter ~= self._reveal_counter then return end
     if token.reload_counter ~= self._reload_counter then return end
 
     if idx > #parts then
         self._tree:set_cursor_by_id(parent)
-        local data = self._tree:get_item(parent)
-        if data then
-            self._last_revealed_id = parent
-            data.data.is_current = true
-            self._tree:refresh_item(parent)
+        if set_current then
+            local data = self._tree:get_item(parent)
+            if data then
+                self._last_revealed_id = parent
+                data.data.is_current = true
+                self._tree:refresh_item(parent)
+            end
         end
         return
     end
@@ -689,22 +770,28 @@ function FileTree:_reveal_step(parent, parts, idx, token)
     local parent_item = self._tree:get_item(parent)
     if not parent_item then return end
 
+
     local function continue()
-        self:_reveal_step(next_path, parts, idx + 1, token)
+        if self._tree:get_item(next_path) then
+            self:_reveal_step(next_path, parts, idx + 1, set_current, token)
+        else
+            log.log("Reveal failed: path not found in tree: " .. next_path, vim.log.levels.DEBUG)
+        end
     end
 
-    -- If already expanded, just go to next step
-    if parent_item.expanded then
-        continue()
-        return
+    -- If it's a directory, we MUST expand it to see children
+    if not parent_item.expanded then
+        self._tree:expand(parent) -- This triggers _read_dir
     end
-
-    -- Hook into the read completion
-    parent_item.data.on_children_loaded = vim.schedule_wrap(function()
-        if token.reveal_counter ~= self._reveal_counter then return end
+    -- Check if we are currently waiting on the disk I/O
+    if parent_item.data.loading_requests and parent_item.data.loading_requests > 0 then
+        parent_item.data.on_children_loaded = vim.schedule_wrap(function()
+            continue()
+        end)
+    else
+        -- Already loaded and expanded, proceed immediately
         continue()
-    end)
-    self._tree:expand(parent)
+    end
 end
 
 ---@param collapse_others boolean?
@@ -713,7 +800,7 @@ function FileTree:reveal_current_file(collapse_others)
     if uitools.is_regular_buffer(buf) then
         local path = vim.api.nvim_buf_get_name(buf)
         if path ~= "" then
-            self:reveal(path, collapse_others)
+            self:_reveal(path, collapse_others or false, true)
         end
     end
 end
@@ -725,15 +812,19 @@ function FileTree:_create_node(item, as_dir)
     -- Determine base directory: if item is file, use its parent. If dir, use it.
     local path = item.data.path
     local base_dir = item.data.is_dir and item.data.path or vim.fn.fnamemodify(item.data.path, ":h")
-    local type_label = as_dir and "Directory" or "File"
+    local type_label = as_dir and "directory" or "file"
 
     local reload_counter = self._reload_counter
     floatwin.input_at_cursor({
             prompt = "New " .. type_label .. " name",
             validate = function(name)
+                local root = self._root
+                if not root or reload_counter ~= self._reload_counter then
+                    return false, ("Cannot create %s, tree was reloaded"):format(type_label)
+                end
                 if not name or name == "" then return false, "Name cannot be empty" end
                 local new_path = vim.fs.joinpath(base_dir, name)
-                local rel = vim.fs.relpath(self._root, new_path)
+                local rel = vim.fs.relpath(root, new_path)
                 if not rel then return false, "Invalid name" end
                 vim.notify("validating " .. rel)
                 if not self:_should_include(rel, as_dir) then
@@ -752,19 +843,19 @@ function FileTree:_create_node(item, as_dir)
                 ---@diagnostic disable-next-line: undefined-field
                 local ok, err = uv.fs_mkdir(new_path, 493) -- 493 is octal 0755
                 if ok then
-                    self:reveal(new_path, false)
+                    self:_reveal(new_path)
                 else
                     vim.notify(err, vim.log.levels.ERROR)
                 end
             else
                 local created, err = filetools.create_file(new_path)
                 if created then
-                    self:reveal(new_path)
+                    self:_reveal(new_path)
                 else
                     vim.notify(err or "Failed to create file", vim.log.levels.ERROR)
                 end
             end
-            self:reveal(new_path)
+            self:_reveal(new_path)
         end)
 end
 
@@ -781,9 +872,13 @@ function FileTree:_rename_node(item)
             prompt = ("Rename `%s`"):format(old_name),
             default_text = old_name,
             validate = function(name)
+                local root = self._root
+                if not root or reload_counter ~= self._reload_counter then
+                    return false, "Cannot change name, tree was reloaded"
+                end
                 if not name or name == "" then return false, "Name cannot be empty" end
                 local new_path = vim.fs.joinpath(parent_dir, name)
-                local rel = vim.fs.relpath(self._root, new_path)
+                local rel = vim.fs.relpath(root, new_path)
                 vim.notify("validating " .. rel)
                 if not rel then return false, "Invalid name" end
                 if not self:_should_include(rel, is_dir) then
@@ -800,7 +895,7 @@ function FileTree:_rename_node(item)
             ---@diagnostic disable-next-line: undefined-field
             local ok, err = uv.fs_rename(old_path, new_path)
             if ok then
-                self:reveal(new_path, false)
+                self:_reveal(new_path)
             else
                 vim.notify("Rename failed: " .. err, vim.log.levels.ERROR)
             end
@@ -809,13 +904,9 @@ end
 
 --- Delete a file or directory only if it matches the wanted type
 ---@param item table The TreeBuffer item
----@param wanted "file"|"folder"
-function FileTree:_delete_node(item, wanted)
+function FileTree:_delete_node(item)
     -- Check if the item type matches the 'wanted' type
     local is_folder = item.data.is_dir
-    if (wanted == "folder" and not is_folder) or (wanted == "file" and is_folder) then
-        return
-    end
     local path = item.data.path
     if path == self._root then
         vim.notify("Cannot delete workspace root")
@@ -834,6 +925,11 @@ function FileTree:_delete_node(item, wanted)
             vim.notify(("Failed to delete %s\n%s"):format(type_str, err_msg), vim.log.levels.ERROR)
         end
     end)
+end
+
+--- Delete a file or directory only if it matches the wanted type
+---@param item table The TreeBuffer item
+function FileTree:_delete_dir_recurive(item)
 end
 
 return FileTree
