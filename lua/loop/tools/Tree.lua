@@ -4,6 +4,11 @@ local class = require("loop.tools.class")
 ---@field id any
 ---@field data any
 
+---@class loop.tools.Tree.ItemUpdate
+---@field id any
+---@field data any
+---@field keep_children boolean
+
 ---@class loop.tools.Tree.Node
 ---@field parent_id any|nil
 ---@field data any
@@ -290,6 +295,95 @@ function Tree:set_children(parent_id, items)
 
 	-- 3. Link to parent (or root)
 	if parent_node then
+		parent_node.first_child = first_new
+		parent_node.last_child  = last_new
+	else
+		self._root_first = first_new
+		self._root_last  = last_new
+	end
+end
+
+--- Update the children of parent_id to match the provided items.
+--- Existing children NOT in the items list are removed.
+--- Grandchildren from existing children are preserved.
+--- If an item's ID already exists elsewhere in the tree (under a different parent), it asserts.
+---@param parent_id any|nil
+---@param items loop.tools.Tree.ItemUpdate[]
+function Tree:update_children(parent_id, items)
+	assert(type(items) == "table", "items must be a table")
+	local parent_node = parent_id and self._nodes[parent_id]
+	assert(not parent_id or parent_node, "parent does not exist")
+
+	-- 1. Identify which IDs we are keeping for this specific parent
+	local keep_ids = {}
+	for _, item in ipairs(items) do
+		assert(not keep_ids[item.id], "duplicate item id in provided items: " .. tostring(item.id))
+		keep_ids[item.id] = true
+	end
+
+	-- 2. Clean up: Remove old children of this parent that are no longer in the list
+	-- We must use a while loop because _remove_subtree calls _unlink,
+	-- which modifies sibling pointers.
+	local current_id
+	if parent_id then
+		current_id = parent_node and parent_node.first_child or nil
+	else
+		current_id = self._root_first
+	end
+	while current_id do
+		-- Grab the next sibling BEFORE we potentially destroy the current node's pointers
+		local next_id = self._nodes[current_id].next_sibling
+		if not keep_ids[current_id] then
+			-- This will recursively remove grandchildren and call _unlink(current_id)
+			-- _unlink correctly updates the parent's first/last pointers if needed.
+			self:_remove_subtree(current_id)
+		end
+		current_id = next_id
+	end
+
+	-- 3. Re-link the children based on the new provided order
+	local first_new = nil
+	local last_new  = nil
+
+	for _, item in ipairs(items) do
+		local id = assert(item.id, "item must have .id")
+		local node = self._nodes[id]
+
+		if node then
+			-- ASSERTION: ID must not belong to another parent
+			assert(node.parent_id == parent_id,
+				string.format("ID conflict: node '%s' already exists under parent '%s'",
+					tostring(id), tostring(node.parent_id)))
+
+			-- Update metadata
+			node.data = item.data
+			-- Reset sibling pointers for the new order
+			node.prev_sibling = last_new
+			node.next_sibling = nil
+		else
+			-- Create brand new node
+			node = {
+				parent_id    = parent_id,
+				data         = item.data,
+				first_child  = nil,
+				last_child   = nil,
+				next_sibling = nil,
+				prev_sibling = last_new,
+			}
+			self._nodes[id] = node
+		end
+
+		-- Link the sibling chain forward
+		if last_new then
+			self._nodes[last_new].next_sibling = id
+		end
+
+		if not first_new then first_new = id end
+		last_new = id
+	end
+
+	-- 4. Finalize pointers for the parent or root list
+	if parent_id then
 		parent_node.first_child = first_new
 		parent_node.last_child  = last_new
 	else

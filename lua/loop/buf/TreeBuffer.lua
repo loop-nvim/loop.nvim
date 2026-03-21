@@ -5,6 +5,7 @@ local Tree = require("loop.tools.Tree")
 ---@class loop.comp.TreeBuffer.Item
 ---@field id any
 ---@field data any
+---@field expandable boolean
 ---@field expanded boolean
 
 ---@class loop.comp.TreeBuffer.ItemDef
@@ -217,7 +218,7 @@ function TreeBuffer:_render_node(flatnode, row)
     for i = 1, #text_chunks do
         local chunk = text_chunks[i]
         local txt, hl = chunk[1], chunk[2]
-        txt = txt:gsub("\n", "↵")
+        txt = (txt or ""):gsub("\n", "↵")
         local len = #txt
         if len > 0 then
             if hl then
@@ -468,6 +469,7 @@ function TreeBuffer:get_visible_items(winid)
                 table.insert(visible_items, {
                     id = id,
                     data = base_data.userdata,
+                    expandable = base_data.expandable,
                     expanded = base_data.expanded
                 })
             end
@@ -521,7 +523,7 @@ end
 function TreeBuffer:get_item(id)
     local basedata = self:_get_data(id)
     if not basedata then return nil end
-    return { id = id, data = basedata.userdata, expanded = basedata.expanded }
+    return { id = id, data = basedata.userdata, expandable = basedata.expandable, expanded = basedata.expanded }
 end
 
 ---@return any?
@@ -540,6 +542,7 @@ function TreeBuffer:get_items()
         local item = {
             id = treeitem.id,
             data = data.userdata,
+            expandable = data.expandable,
             expanded = data.expanded,
         }
         table.insert(items, item)
@@ -563,7 +566,7 @@ function TreeBuffer:get_parent_item(id)
     local itemdata = self._tree:get_data(par_id)
     if not itemdata then return nil end
 
-    return { id = par_id, data = itemdata.userdata, expanded = itemdata.expanded }
+    return { id = par_id, data = itemdata.userdata, expandable = itemdata.expandable, expanded = itemdata.expanded }
 end
 
 ---@private
@@ -601,7 +604,7 @@ end
 function TreeBuffer:get_cursor_item()
     local id, itemdata = self:_get_cur_item()
     if not id or not itemdata then return nil end
-    return { id = id, data = itemdata.userdata, expanded = itemdata.expanded }
+    return { id = id, data = itemdata.userdata, expandable = itemdata.expandable, expanded = itemdata.expanded }
 end
 
 ---@return boolean
@@ -670,6 +673,58 @@ function TreeBuffer:set_children(parent_id, children)
     return true
 end
 
+--- Updates children of a node. Existing subtrees are preserved.
+---@param parent_id any -- nil for root
+---@param children loop.comp.TreeBuffer.ItemDef[]
+---@return boolean
+function TreeBuffer:update_children(parent_id, children)
+    -- 1. Validate parent exists (if not root)
+    if parent_id and not self._tree:have_item(parent_id) then return false end
+    -- 2. Prepare data for the underlying Tree
+    local baseitems = {}
+    for _, c in ipairs(children) do
+        table.insert(baseitems, { id = c.id, data = _itemdef_to_itemdata(c) })
+    end
+    -- 3. Capture the visual state BEFORE the update
+    -- We need to know how many lines were visible in this branch to clear them
+    local old_visible_size = 0
+    if parent_id == nil then
+        -- If updating root, the "old size" is the current total flat list minus header
+        local header_offset = self._header_enabled and 1 or 0
+        old_visible_size = #self._flat_ids - header_offset
+    else
+        old_visible_size = self._tree:tree_size(parent_id, _filter)
+    end
+    -- 4. Logical Update (The "re-parenting/assert" logic you added to Tree)
+    -- This moves nodes internally without destroying their first_child pointers
+    self._tree:update_children(parent_id, baseitems)
+    -- 5. Visual Update
+    local buf = self:get_buf()
+    if buf > 0 then
+        if parent_id == nil then
+            local header_offset = self._header_enabled and 1 or 0
+            local new_flat = self._tree:flatten(nil, _filter)
+            -- Replace everything after the header
+            self:_render_range(header_offset + 1, math.max(0, old_visible_size), new_flat)
+        else
+            local parent_idx = self._id_to_idx[parent_id]
+            if parent_idx then
+                -- Re-calculate depth and flattened visibility for the updated subtree
+                local base_depth = self._tree:get_depth(parent_id)
+                local new_subtree_flat = self._tree:flatten(parent_id, _filter)
+                -- Ensure depth is relative to the parent's actual depth in the buffer
+                for _, node in ipairs(new_subtree_flat) do
+                    node.depth = base_depth + node.depth
+                end
+                -- Surgery: Replace the old visible range with the new one
+                -- This will automatically include expanded children that were preserved
+                self:_render_range(parent_idx, old_visible_size, new_subtree_flat)
+            end
+        end
+    end
+    return true
+end
+
 ---Removes all children of a node from the tree and updates the buffer.
 ---@param id any The ID of the parent node whose children should be removed.
 function TreeBuffer:remove_children(id)
@@ -689,7 +744,7 @@ end
 
 function TreeBuffer:expand(id)
     local data = self:_get_data(id)
-    if not data or data.expanded then return end
+    if not data or data.expanded or not (data.expandable or self._tree:have_children(id)) then return end
 
     local idx = self._id_to_idx[id]
     data.expanded = true
@@ -864,6 +919,7 @@ function TreeBuffer:get_children(parent_id)
         local item = {
             id = treeitem.id,
             data = data.userdata,
+            expandable = data.expandable,
             expanded = data.expanded
         }
         table.insert(items, item)
@@ -875,6 +931,12 @@ end
 ---@return boolean
 function TreeBuffer:have_item(id)
     return self._tree:have_item(id)
+end
+
+---@param id any
+---@return boolean
+function TreeBuffer:have_children(id)
+    return self._tree:have_children(id)
 end
 
 ---Removes a specific item and all its descendants from the tree and buffer.

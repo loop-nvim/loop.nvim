@@ -15,6 +15,7 @@ local uv             = vim.loop
 ---@field path string
 ---@field name string
 ---@field is_dir boolean
+---@field is_link boolean?
 ---@field icon string
 ---@field icon_hl string
 ---@field is_current boolean?
@@ -24,6 +25,23 @@ local uv             = vim.loop
 ---@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
+
+---@class loop.FileTree.PrepareDirEntry
+---@field name string
+---@field type string
+
+---@class loop.FileTree.ProcessDirEntry
+---@field name string
+---@field is_dir boolean
+---@field is_link boolean
+
+---@class loop.FileTree.UpsetSingleItemArgs
+---@field parent_path string
+---@field full_path string
+---@field name string
+---@field loname string
+---@field is_dir boolean
+---@field is_link boolean?
 
 -- at the top of your file
 local _dev_icons_attempt, devicons
@@ -73,6 +91,9 @@ local function _file_formatter(id, data)
     if data.error_flag then
         table.insert(virt_chunks, { "⚠", "ErrorMsg" })
     end
+    if data.is_link then
+        table.insert(virt_chunks, { "↗", "Special" })
+    end
     local chunks = {
         { data.icon, data.icon_hl },
         { " " },
@@ -99,7 +120,8 @@ local function _show_help()
         "  D        Delete directory (recursive)",
         "",
         "Other:",
-        "  R        Rescan workspace",
+        "  r        Reload dir",
+        "  R        Reload workspace",
         "  g?       Show this help",
     }
 
@@ -119,7 +141,7 @@ function FileTree:init()
     self._expanded_lru = LRU:new(10000)
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
-            --vim.notify("removing monitor: " .. path)
+            vim.notify("removing monitor: " .. path)
             cancel_fn()
         end
     })
@@ -266,12 +288,9 @@ function FileTree:_get_viewport_monitor_fn()
 
             -- 2. Attach new monitors and Sync
             for path, _ in pairs(active_folders) do
-                -- Only act if this folder is NOT already monitored
-                if not self._monitor_lru:has(path) then
-                    -- A. Start monitor FIRST to catch tail-end changes
-                    self:_start_dir_monitor(path)
-
-                    -- B. Immediate Sync to catch anything missed before the monitor started
+                -- Start monitor FIRST to catch tail-end changes
+                if self:_start_dir_monitor(path) then
+                    -- If monitoring, immediate Sync to catch anything missed before the monitor started
                     self:_read_dir(path, self._reload_counter, false)
                 end
             end
@@ -321,8 +340,8 @@ function FileTree:_setup_keymaps()
 
     -- Refactoring
     self._tree:add_keymap("r", {
-        desc = "Rename",
-        callback = function() with_item(function(i) self:_rename_node(i) end) end
+        desc = "Refresh (reload) directory",
+        callback = function() with_item(function(i) self:_reload_node(i) end) end
     })
     self._tree:add_keymap("c", {
         desc = "Change (Rename)",
@@ -352,11 +371,16 @@ function FileTree:_init_workspace_tracker()
     ---@param wsdir string?
     ---@param config loop.WorkspaceConfig?
     local function reload(wsdir, config)
+        local follow_symlinks
+        if config then
+            follow_symlinks = config.files.follow_symlinks
+        end
         vim.schedule(function()
             self:_load_workspace(config and config.name,
                 wsdir,
                 config and config.files.include,
-                config and config.files.exclude)
+                config and config.files.exclude,
+                follow_symlinks)
         end)
     end
     assert(not self._workspace_tracker)
@@ -424,28 +448,36 @@ function FileTree:_should_include(rel, is_dir)
 end
 
 --- Starts a monitor for a single directory and manages its lifecycle via LRU
+---@private
+---@param path string
+---@return boolean
 function FileTree:_start_dir_monitor(path)
     if not loopconfig.filetree.monitor_file_system then
-        return
+        return false
     end
     if self._monitor_lru:has(path) then
-        return
+        return false
     end
-    local cancel_fn, error_msg = filetools.monitor_dir(path, function(fname, status)
-        local full_path = vim.fs.joinpath(path, fname)
-        vim.schedule(function()
+    local cancel_fn, error_msg = filetools.monitor_dir(path, function(name, status)
+        path = vim.fs.normalize(path)
+        local reload_counter = self._reload_counter
+        ---@type loop.FileTree.ProcessDirEntry[]
+        vim.schedule(function() -- get out of the fast event context
+            if reload_counter ~= self._reload_counter then return end
             if self._tree:get_buf() ~= -1 then
-                self:_handle_fs_change(full_path, status)
+                vim.notify("change: " .. path .. " - " .. name)
+                -- rescan the whole dir, detecting individual file change is not reliable on case insenstive systems
+                self:_read_dir(path, reload_counter, false)
             end
         end)
     end)
-
-    if cancel_fn then
-        --vim.notify("attach_monitor: " .. path)
-        self._monitor_lru:put(path, cancel_fn)
-    elseif error_msg then
-        log.log("FileTree monitor error: " .. tostring(error_msg), vim.log.levels.ERROR)
+    if not cancel_fn then
+        log.log("FileTree monitor error: " .. tostring(error_msg or "unknown error"), vim.log.levels.ERROR)
+        return false
     end
+    vim.notify("attach_monitor: " .. path)
+    self._monitor_lru:put(path, cancel_fn)
+    return true
 end
 
 function FileTree:_clear_all_monitors()
@@ -457,17 +489,19 @@ end
 ---@param root string?
 ---@param include_globs string[]?
 ---@param exclude_globs string[]?
-function FileTree:_load_workspace(name, root, include_globs, exclude_globs)
+---@param follow_symlinks boolean?
+function FileTree:_load_workspace(name, root, include_globs, exclude_globs, follow_symlinks)
     self._root = root and vim.fs.normalize(root) or nil -- normalize is important because we may use / to split path
     self._include_patterns = include_globs and _compile_globs(include_globs) or nil
     self._exclude_patterns = exclude_globs and _compile_globs(exclude_globs) or nil
+    self._follow_symlinks = follow_symlinks
     self:_reload()
 end
 
 function FileTree:_reload()
     self._reload_counter = self._reload_counter + 1
     local path = self._root
-    if not path or not self._include_patterns or not self._exclude_patterns then
+    if not path or not self._include_patterns or not self._exclude_patterns or self._follow_symlinks == nil then
         local error_msg = path and "Workspace configuration error" or "No workspace"
         local root_item = {
             id = _error_node_id,
@@ -501,50 +535,29 @@ function FileTree:_reload()
     self:_read_dir(path, self._reload_counter, true)
 end
 
----@param path string Full path to the changed file/dir
----@param status table|nil optional status from uv.fs_event
-function FileTree:_handle_fs_change(path, status)
-    path = vim.fs.normalize(path)
-    local parent_path = vim.fs.normalize(vim.fn.fnamemodify(path, ":h"))
-
-    -- Check if we even care about this parent
-    local parent_item = self._tree:get_item(parent_path)
-    if not parent_item then return end
-
-    -- Use libuv to check if the file still exists
-    ---@diagnostic disable-next-line: undefined-field
-    uv.fs_stat(path, function(err, stat)
-        vim.schedule(function()
-            if err then
-                -- File likely deleted or moved
-                if self._tree:get_item(path) then
-                    self._tree:remove_item(path)
-                end
-            else
-                -- File created or modified
-                local is_dir = stat.type == "directory"
-                self:_upsert_single_item(parent_path, path, is_dir)
-            end
-        end)
-    end)
-end
-
----@param parent_path string
----@param full_path string
----@param is_dir boolean
 ---@private
-function FileTree:_upsert_single_item(parent_path, full_path, is_dir)
+---@param args loop.FileTree.UpsetSingleItemArgs
+---@param append boolean
+function FileTree:_upsert_single_item(args, append)
+    local parent_path, full_path, name, loname, is_dir, is_link =
+        args.parent_path, args.full_path, args.name, args.loname, args.is_dir, args.is_link
     local root = self._root
     if not root then return end
-    if self._tree:get_item(full_path) then
-        -- If it exists, nothing to do
-        return
+    do
+        local existing = self._tree:get_item(full_path)
+        if existing then
+            local type_changed = (is_dir ~= existing.data.is_dir)
+            if not type_changed then
+                if is_link ~= existing.data.is_link then
+                    existing.data.is_link = is_link
+                    self._tree:refresh_item(full_path)
+                end
+                return -- nothing to do if name did not change
+            end
+            self._tree:remove_item(full_path)
+        end
     end
-    -- Logical check: should this file even be here?
-    local rel = vim.fs.relpath(root, full_path)
-    if not rel or not self:_should_include(rel, is_dir) then return end
     -- Prepare the new item definition
-    local name = vim.fn.fnamemodify(full_path, ":t")
     local icon, icon_hl = self:_get_icon_for_node(name, is_dir)
     ---@type loop.comp.TreeBuffer.ItemDef
     local new_item = {
@@ -555,30 +568,31 @@ function FileTree:_upsert_single_item(parent_path, full_path, is_dir)
             path = full_path,
             name = name,
             is_dir = is_dir,
+            is_link = is_link,
             icon = icon,
             icon_hl = icon_hl
         }
     }
     -- Find the correct alphabetical position among siblings
-    local loname = name:lower()
     local siblings = self._tree:get_children(parent_path)
     local insert_target_id = nil
     local insert_before = false
-
-    for _, sibling in ipairs(siblings) do
-        -- Sorting logic: Directories first, then alphabetical
-        local sibling_is_dir = sibling.data.is_dir
-        local sibling_name = sibling.data.name:lower()
-        local should_be_before = false
-        if is_dir ~= sibling_is_dir then
-            should_be_before = is_dir -- dirs come before files
-        else
-            should_be_before = loname < sibling_name
-        end
-        if should_be_before then
-            insert_target_id = sibling.id
-            insert_before = true
-            break
+    if not append then
+        for _, sibling in ipairs(siblings) do
+            -- Sorting logic: Directories first, then alphabetical
+            local sibling_is_dir = sibling.data.is_dir
+            local sibling_name = sibling.data.name:lower()
+            local should_be_before = false
+            if is_dir ~= sibling_is_dir then
+                should_be_before = is_dir -- dirs come before files
+            else
+                should_be_before = loname < sibling_name
+            end
+            if should_be_before then
+                insert_target_id = sibling.id
+                insert_before = true
+                break
+            end
         end
     end
     if insert_target_id then
@@ -616,6 +630,57 @@ function FileTree:_get_icon_for_node(name, is_dir)
 end
 
 ---@param path string
+---@param prep_entries loop.FileTree.PrepareDirEntry[]
+---@param callback fun(resolved_entries: loop.FileTree.ProcessDirEntry[])
+function FileTree:_prepare_dir_entries(path, prep_entries, callback)
+    local root = self._root
+    local resolved = {} ---@type loop.FileTree.ProcessDirEntry[]
+    local pending = #prep_entries
+    -- Handle empty directories immediately
+    if pending == 0 or not root then
+        callback({})
+        return
+    end
+
+    ---@type fun(fp:string,name:string,is_dir:boolean,is_link:boolean)
+    local process_entry = function(full_path, name, is_dir, is_link)
+        local rel = vim.fs.relpath(self._root, full_path)
+        -- No need to stat files or non-followed links
+        if rel and self:_should_include(rel, is_dir) then
+            ---@type loop.FileTree.ProcessDirEntry
+            local entry = {
+                name = name,
+                is_dir = is_dir,
+                is_link = is_link,
+            }
+            table.insert(resolved, entry)
+        end
+        pending = pending - 1
+        if pending == 0 then
+            vim.schedule(function() -- get out of the fast event context
+                callback(resolved)
+            end)
+        end
+    end
+
+    local reload_counter = self._reload_counter
+    for _, entry in ipairs(prep_entries) do
+        local full_path = vim.fs.joinpath(path, entry.name)
+        if entry.type == "link" and self._follow_symlinks then
+            ---@diagnostic disable-next-line: undefined-field
+            vim.uv.fs_stat(full_path, function(err, stat)
+                if reload_counter ~= self._reload_counter then return end
+                -- If it's a link, we update is_dir based on the target
+                local is_dir = not err and stat and stat.type == "directory"
+                process_entry(full_path, entry.name, is_dir, true)
+            end)
+        else
+            process_entry(full_path, entry.name, entry.type == "directory", entry.type == "link")
+        end
+    end
+end
+
+---@param path string
 ---@param reload_counter number
 ---@param recursive boolean
 function FileTree:_read_dir(path, reload_counter, recursive)
@@ -630,97 +695,112 @@ function FileTree:_read_dir(path, reload_counter, recursive)
     data.childrenload_req_id = req_id
     data.on_children_loaded = nil
 
-    --vim.notify("Scanning dir: " .. path)
+    vim.notify("Scanning dir: " .. path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
         if reload_counter ~= self._reload_counter then return end
         if req_id ~= data.childrenload_req_id then return end
-        local entries = {}
+        local prep_entries = {} ---@type loop.FileTree.PrepareDirEntry[]
         if handle then
             while true do
                 ---@diagnostic disable-next-line: undefined-field
                 local name, type = uv.fs_scandir_next(handle)
                 if not name then break end
-                table.insert(entries, { name = name, type = type })
+                local entry = { name = name, type = type } ---@type loop.FileTree.PrepareDirEntry
+                table.insert(prep_entries, entry)
             end
         end
-        -- schedule because read_dir is called in a fast event context
-        vim.schedule(function()
-            if reload_counter ~= self._reload_counter then return end
-            if req_id ~= data.childrenload_req_id then return end
-            self:_process_dir(path, entries, err ~= nil)
-            data.children_loading = false
-            if data.on_children_loaded then
-                data.on_children_loaded()
-                data.on_children_loaded = nil
-            end
-            -- Handle nested expansion for existing expanded folders
-            -- This ensures that if a folder was already expanded, we refresh its view too
-            if recursive then
-                for _, entry in ipairs(entries) do
-                    if entry.type == "directory" then
-                        local child_path = vim.fs.joinpath(path, entry.name)
-                        local child_item = self._tree:get_item(child_path)
-                        -- it's important to load non-expanded nodes,
-                        -- otherwise it will load the whole tree and we may have infinite recursion with symlinks
-                        if child_item and child_item.expanded then
-                            self:_read_dir(child_path, reload_counter, recursive)
+        vim.schedule(function() -- get out of the fast event context
+            self:_prepare_dir_entries(path, prep_entries, function(resolved_entries)
+                -- schedule because read_dir is called in a fast event context
+                if reload_counter ~= self._reload_counter then return end
+                if req_id ~= data.childrenload_req_id then return end
+                local children = self:_process_dir(path, resolved_entries, err ~= nil)
+                data.children_loading = false
+                if data.on_children_loaded then
+                    data.on_children_loaded()
+                    data.on_children_loaded = nil
+                end
+                -- Handle nested expansion for existing expanded folders
+                -- This ensures that if a folder was already expanded, we refresh its view too
+                if recursive then
+                    for _, child in ipairs(children) do
+                        ---@type loop.comp.FileTree.ItemData
+                        local child_data = child.data
+                        if child_data.is_dir then
+                            local child_path = child.id
+                            -- it's important to load non-expanded nodes,
+                            -- otherwise it will load the whole tree and we may have infinite recursion with symlinks
+                            if child.expandable and child.expanded then
+                                self:_read_dir(child_path, reload_counter, recursive)
+                            end
                         end
                     end
                 end
-            end
+            end)
         end)
     end)
 end
 
 ---@param path string
----@param entries table[]
+---@param entries loop.FileTree.ProcessDirEntry[]
 ---@param error_flag boolean
+---@return loop.comp.TreeBuffer.ItemDef[]
 function FileTree:_process_dir(path, entries, error_flag)
     local root = self._root
-    if not root then return end
-    local parent_item = self._tree:get_item(path)
-    if not parent_item then return end
-
+    if not root then return {} end
+    -- 1. Handle Error State
     if error_flag then
-        parent_item.data.error_flag = true
-        self._tree:refresh_item(path)
+        local data = self._tree:get_item_data(path)
+        if data then
+            data.error_flag = true
+            self._tree:refresh_item(path)
+        end
     end
-
-    -- Map new entries for quick lookup and filtering
-    local new_entries_map = {}
+    -- 2. Filter and Prepare Item Definitions
+    -- We create a flat list of ItemDefs to pass to the buffer
+    local new_children = {} ---@type loop.comp.TreeBuffer.ItemDef[]
     for _, entry in ipairs(entries) do
         local full_path = vim.fs.joinpath(path, entry.name)
-        local is_dir = entry.type == "directory"
-        local rel = vim.fs.relpath(root, full_path)
-
-        if rel and self:_should_include(rel, is_dir) then
-            new_entries_map[full_path] = entry
+        local name, is_dir, is_link = entry.name, entry.is_dir, entry.is_link
+        -- Prepare the new item definition
+        local icon, icon_hl = self:_get_icon_for_node(name, is_dir)
+        ---@type loop.comp.TreeBuffer.ItemDef
+        local new_item = {
+            id = full_path,
+            expandable = is_dir,
+            expanded = is_dir and self._expanded_lru:has(full_path),
+            data = {
+                path = full_path,
+                name = name,
+                loname = name:lower(),
+                is_dir = is_dir,
+                is_link = is_link,
+                icon = icon,
+                icon_hl = icon_hl
+            }
+        }
+        table.insert(new_children, new_item)
+    end
+    -- 3. Sort (Always ascending, the Tree handles the linked-list performance)
+    table.sort(new_children, function(a, b)
+        -- Directories first
+        if a.data.is_dir ~= b.data.is_dir then
+            return a.data.is_dir
         end
-    end
-
-    -- Identify and remove children that are no longer present
-    local current_children = self._tree:get_children(path)
-    for _, child in ipairs(current_children) do
-        if not new_entries_map[child.id] then
-            self._tree:remove_item(child.id)
-        end
-    end
-
-    -- Create entries and reverse order them to improve the performance of _upsert_single_item
-    local sorted_entries = {}
-    for full_path, entry in pairs(new_entries_map) do
-        table.insert(sorted_entries, { path = full_path, name = entry.name, is_dir = (entry.type == "directory") })
-    end
-    table.sort(sorted_entries, function(a, b)
-        if a.is_dir ~= b.is_dir then return a.is_dir end
-        return a.name:lower() > b.name:lower() -- reverse order
+        -- Then alphabetical
+        return a.data.loname < b.data.loname
     end)
-    -- upsert
-    for _, entry in ipairs(sorted_entries) do
-        self:_upsert_single_item(path, entry.path, entry.is_dir)
-    end
+    -- 4. Atomic Update
+    -- This handles:
+    -- - Removing deleted files
+    -- - Adding new files in the right sorted position
+    -- - Updating existing nodes (renames/case sensitivity)
+    -- - Keeping expanded grandchildren intact
+    -- - Buffer surgery (UI update)
+    self._tree:update_children(path, new_children)
+    return new_children
 end
 
 -- async reveal
@@ -899,6 +979,12 @@ function FileTree:_create_node(item, as_dir, force_parent)
                 end
             end
         end)
+end
+
+---@param item table
+function FileTree:_reload_node(item)
+    local path = item.data.is_dir and item.data.path or vim.fn.fnamemodify(item.data.path, ":h")
+    self:_read_dir(path, self._reload_counter, false)
 end
 
 --- Rename a file or directory
