@@ -14,6 +14,9 @@ local Tree = require("loop.tools.Tree")
 ---@field expandable boolean?
 ---@field expanded boolean|nil
 
+---@class loop.comp.TreeBuffer.ItemUpdate : loop.comp.TreeBuffer.ItemDef
+---@field keep_children boolean
+
 ---@class loop.comp.TreeBuffer.ItemData
 ---@field userdata any
 ---@field expandable boolean?
@@ -675,7 +678,7 @@ end
 
 --- Updates children of a node. Existing subtrees are preserved.
 ---@param parent_id any -- nil for root
----@param children loop.comp.TreeBuffer.ItemDef[]
+---@param children loop.comp.TreeBuffer.ItemUpdate[]
 ---@return boolean
 function TreeBuffer:update_children(parent_id, children)
     -- 1. Validate parent exists (if not root)
@@ -683,7 +686,9 @@ function TreeBuffer:update_children(parent_id, children)
     -- 2. Prepare data for the underlying Tree
     local baseitems = {}
     for _, c in ipairs(children) do
-        table.insert(baseitems, { id = c.id, data = _itemdef_to_itemdata(c) })
+        ---@type loop.tools.Tree.ItemUpdate
+        local udpate = { id = c.id, data = _itemdef_to_itemdata(c), keep_children = c.keep_children }
+        table.insert(baseitems, udpate)
     end
     -- 3. Capture the visual state BEFORE the update
     -- We need to know how many lines were visible in this branch to clear them

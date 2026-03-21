@@ -141,7 +141,7 @@ function FileTree:init()
     self._expanded_lru = LRU:new(10000)
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
-            vim.notify("removing monitor: " .. path)
+            --vim.notify("removing monitor: " .. path)
             cancel_fn()
         end
     })
@@ -465,7 +465,7 @@ function FileTree:_start_dir_monitor(path)
         vim.schedule(function() -- get out of the fast event context
             if reload_counter ~= self._reload_counter then return end
             if self._tree:get_buf() ~= -1 then
-                vim.notify("change: " .. path .. " - " .. name)
+                --vim.notify("change: " .. path .. " - " .. name)
                 -- rescan the whole dir, detecting individual file change is not reliable on case insenstive systems
                 self:_read_dir(path, reload_counter, false)
             end
@@ -475,7 +475,7 @@ function FileTree:_start_dir_monitor(path)
         log.log("FileTree monitor error: " .. tostring(error_msg or "unknown error"), vim.log.levels.ERROR)
         return false
     end
-    vim.notify("attach_monitor: " .. path)
+    --vim.notify("attaching monitor: " .. path)
     self._monitor_lru:put(path, cancel_fn)
     return true
 end
@@ -695,7 +695,7 @@ function FileTree:_read_dir(path, reload_counter, recursive)
     data.childrenload_req_id = req_id
     data.on_children_loaded = nil
 
-    vim.notify("Scanning dir: " .. path)
+    --vim.notify("Scanning dir: " .. path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
@@ -766,11 +766,12 @@ function FileTree:_process_dir(path, entries, error_flag)
         local name, is_dir, is_link = entry.name, entry.is_dir, entry.is_link
         -- Prepare the new item definition
         local icon, icon_hl = self:_get_icon_for_node(name, is_dir)
-        ---@type loop.comp.TreeBuffer.ItemDef
+        ---@type loop.comp.TreeBuffer.ItemUpdate
         local new_item = {
             id = full_path,
             expandable = is_dir,
             expanded = is_dir and self._expanded_lru:has(full_path),
+            keep_children = is_dir,
             data = {
                 path = full_path,
                 name = name,
@@ -948,7 +949,7 @@ function FileTree:_create_node(item, as_dir, force_parent)
                 local new_path = vim.fs.joinpath(base_dir, name)
                 local rel = vim.fs.relpath(root, new_path)
                 if not rel then return false, "Invalid name" end
-                vim.notify("validating " .. rel)
+                --vim.notify("validating " .. rel)
                 if not self:_should_include(rel, as_dir) then
                     return false, "Name incompatible with worspace file patterns"
                 end
@@ -1007,7 +1008,7 @@ function FileTree:_rename_node(item)
                 if not name or name == "" then return false, "Name cannot be empty" end
                 local new_path = vim.fs.joinpath(parent_dir, name)
                 local rel = vim.fs.relpath(root, new_path)
-                vim.notify("validating " .. rel)
+                --vim.notify("validating " .. rel)
                 if not rel then return false, "Invalid name" end
                 if not self:_should_include(rel, is_dir) then
                     return false, "Name incompatible with worspace file patterns"

@@ -355,6 +355,10 @@ function Tree:update_children(parent_id, items)
 				string.format("ID conflict: node '%s' already exists under parent '%s'",
 					tostring(id), tostring(node.parent_id)))
 
+			if item.keep_children == false then
+				self:_remove_children(node)
+			end
+
 			-- Update metadata
 			node.data = item.data
 			-- Reset sibling pointers for the new order
@@ -574,14 +578,9 @@ function Tree:remove_item(id)
 end
 
 ---Remove all children of a node but keep the node itself.
----@param id any
-function Tree:remove_children(id)
-	assert(id ~= nil, "id is required")
-	local node = self._nodes[id]
-
-	-- If node doesn't exist, there's nothing to clear
-	if not node then return end
-
+---@private
+---@param node loop.tools.Tree.Node
+function Tree:_remove_children(node)
 	local child = node.first_child
 	while child do
 		-- Grab the next sibling before removing the current child subtree
@@ -589,10 +588,20 @@ function Tree:remove_children(id)
 		self:_remove_subtree(child)
 		child = next_child
 	end
-
 	-- Clear the pointers on the parent so it no longer thinks it has children
 	node.first_child = nil
 	node.last_child = nil
+end
+
+---Remove all children of a node but keep the node itself.
+---@param id any
+function Tree:remove_children(id)
+	assert(id ~= nil, "id is required")
+	local node = self._nodes[id]
+
+	-- If node doesn't exist, there's nothing to clear
+	if not node then return end
+	self:_remove_children(node)
 end
 
 ---Walk a node and its descendants (depth-first).

@@ -3,7 +3,6 @@ require("plenary.busted")
 local Tree = require("loop.tools.Tree")
 
 describe("loop.tools.Tree (new API)", function()
-
     ------------------------------------------------------------
     -- Basic insertion
     ------------------------------------------------------------
@@ -169,7 +168,7 @@ describe("loop.tools.Tree (new API)", function()
             { id = "C", data = {} },
         })
 
-        tree:add_sibling("C","B", {},  true)
+        tree:add_sibling("C", "B", {}, true)
         tree:validate()
 
         local flat = tree:flatten()
@@ -240,5 +239,132 @@ describe("loop.tools.Tree (new API)", function()
             { id = "B", depth = 1, data = {} },
         }, flat)
     end)
+end)
 
+------------------------------------------------------------
+-- update_children behavior
+------------------------------------------------------------
+
+describe("update_children", function()
+    it("adds new children and removes missing ones", function()
+        local tree = Tree:new()
+        tree:add_item(nil, "P", {})
+        tree:add_item("P", "Old", { val = 1 })
+
+        tree:update_children("P", {
+            { id = "New", data = { val = 2 }, keep_children = true }
+        })
+        tree:validate()
+
+        assert.is_nil(tree._nodes["Old"])
+        assert.truthy(tree._nodes["New"])
+        assert.equal(2, tree:get_data("New").val)
+        assert.equal("New", tree._nodes["P"].first_child)
+    end)
+
+    it("preserves grandchildren by default", function()
+        local tree = Tree:new()
+        tree:add_item(nil, "P", {})
+        tree:add_item("P", "A", { label = "old" })
+        tree:add_item("A", "A_Child", {})     -- This should stay
+
+        tree:update_children("P", {
+            { id = "A", data = { label = "new" }, keep_children = true }
+        })
+        tree:validate()
+
+        -- Node A should be updated but still have its child
+        assert.equal("new", tree:get_data("A").label)
+        assert.truthy(tree._nodes["A_Child"])
+        assert.equal("A", tree._nodes["A_Child"].parent_id)
+        assert.equal("A_Child", tree._nodes["A"].first_child)
+    end)
+
+    it("reorders existing children correctly", function()
+        local tree = Tree:new()
+        tree:set_children(nil, {
+            { id = "A", data = {} },
+            { id = "B", data = {} },
+            { id = "C", data = {} },
+        })
+
+        -- Reverse the order
+        tree:update_children(nil, {
+            { id = "C", data = {}, keep_children = true },
+            { id = "B", data = {}, keep_children = true },
+            { id = "A", data = {}, keep_children = true },
+        })
+        tree:validate()
+
+        assert.equal("C", tree._root_first)
+        assert.equal("A", tree._root_last)
+        assert.equal("B", tree._nodes["C"].next_sibling)
+        assert.equal("A", tree._nodes["B"].next_sibling)
+    end)
+
+    it("wipes grandchildren if keep_children is false", function()
+        local tree = Tree:new()
+        tree:add_item(nil, "P", {})
+        tree:add_item("P", "A", {})
+        tree:add_item("A", "A_Child", {})
+
+        tree:update_children("P", {
+            { id = "A", data = {}, keep_children = false }
+        })
+        tree:validate()
+
+        -- Node A exists, but A_Child is gone
+        assert.truthy(tree._nodes["A"])
+        assert.is_nil(tree._nodes["A_Child"])
+        assert.is_nil(tree._nodes["A"].first_child)
+    end)
+
+    it("handles mixing new and existing nodes with keep_children", function()
+        local tree = Tree:new()
+        tree:add_item(nil, "P", {})
+        tree:add_item("P", "Stay", {})
+        tree:add_item("Stay", "Grandchild", {})
+
+        tree:update_children("P", {
+            { id = "New",  data = {}, keep_children = true },
+            { id = "Stay", data = {}, keep_children = false },
+        })
+        tree:validate()
+
+        assert.truthy(tree._nodes["New"])
+        assert.truthy(tree._nodes["Stay"])
+        assert.is_nil(tree._nodes["Grandchild"])
+
+        -- Verify sequence
+        assert.equal("New", tree._nodes["P"].first_child)
+        assert.equal("Stay", tree._nodes["New"].next_sibling)
+    end)
+
+    it("errors if an ID exists under a different parent", function()
+        local tree = Tree:new()
+        tree:add_item(nil, "P1", {})
+        tree:add_item(nil, "P2", {})
+        tree:add_item("P1", "Target", {})
+
+        -- Try to move "Target" to P2 via update_children (not supported)
+        assert.has_error(function()
+            tree:update_children("P2", {
+                { id = "Target", data = {}, keep_children = true }
+            })
+        end)
+    end)
+
+    it("clears all children when items list is empty", function()
+        local tree = Tree:new()
+        tree:add_item(nil, "P", {})
+        tree:add_item("P", "A", {})
+        tree:add_item("P", "B", {})
+
+        tree:update_children("P", {})
+        tree:validate()
+
+        assert.is_nil(tree._nodes["A"])
+        assert.is_nil(tree._nodes["B"])
+        assert.is_nil(tree._nodes["P"].first_child)
+    end)
 end)
