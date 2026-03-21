@@ -331,7 +331,6 @@ function Tree:update_children(parent_id, items)
 		current_id = self._root_first
 	end
 
-	local removed_ids = {} ---@type any[]
 	while current_id do
 		-- Grab the next sibling BEFORE we potentially destroy the current node's pointers
 		local next_id = self._nodes[current_id].next_sibling

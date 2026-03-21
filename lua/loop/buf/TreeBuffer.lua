@@ -676,10 +676,110 @@ function TreeBuffer:set_children(parent_id, children)
     return true
 end
 
+---Helper to calculate the visible height of a subtree in the buffer without recursion.
+---@private
+---@param id any
+---@param index_in_children number
+---@param siblings any[]
+---@param parent_id any|nil
+---@return number
+function TreeBuffer:_get_visible_size(id, index_in_children, siblings, parent_id)
+    local current_idx = self._id_to_idx[id]
+    if not current_idx then return 0 end
+
+    local next_idx
+    if index_in_children < #siblings then
+        -- Next sibling's start is this subtree's end
+        next_idx = self._id_to_idx[siblings[index_in_children + 1].id]
+    else
+        -- Last child: boundary is the end of the parent's subtree
+        if parent_id == nil then
+            next_idx = #self._flat_ids + 1
+        else
+            local p_idx = self._id_to_idx[parent_id]
+            next_idx = p_idx + self._tree:tree_size(parent_id, _filter)
+        end
+    end
+    return next_idx - current_idx
+end
+
 ---@param parent_id any|nil
 ---@param updates loop.comp.TreeBuffer.ItemUpdate[]
+---@return boolean
 function TreeBuffer:update_children(parent_id, updates)
-  
+    if parent_id and not self._tree:have_item(parent_id) then return false end
+
+    local old_children = self._tree:get_children(parent_id)
+
+    -- 0. Fast Path: Check if structure is identical to skip heavy reconciliation
+    if #updates == #old_children then
+        local structural_change = false
+        for i, u in ipairs(updates) do
+            local old = old_children[i]
+            if u.id ~= old.id or (u.keep_children == false and self._tree:have_children(old.id)) then
+                structural_change = true
+                break
+            end
+        end
+        if not structural_change then
+            local tree_updates = {}
+            for _, u in ipairs(updates) do table.insert(tree_updates, _wrap_item_update(u)) end
+            self._tree:update_children(parent_id, tree_updates)
+            for _, u in ipairs(updates) do
+                self:_render_line(u.id)
+            end
+            return true
+        end
+    end
+
+    -- 1. Snapshot sizes of current visible nodes (O(1) distance calculation)
+    local old_sizes = {}
+    for i, child in ipairs(old_children) do
+        old_sizes[child.id] = self:_get_visible_size(child.id, i, old_children, parent_id)
+    end
+
+    -- 2. Sync logical tree and get instructions
+    local tree_updates = {}
+    for _, u in ipairs(updates) do table.insert(tree_updates, _wrap_item_update(u)) end
+    local actions = self._tree:update_children(parent_id, tree_updates)
+
+    -- 3. Execution context
+    local current_idx
+    if parent_id == nil then
+        current_idx = self._header_enabled and 2 or 1
+    else
+        local p_idx = self._id_to_idx[parent_id]
+        if not p_idx then return true end -- Hidden/Collapsed
+        current_idx = p_idx + 1
+        self:_render_line(parent_id)      -- Update parent icon
+    end
+
+    local base_depth = (parent_id and self._tree:get_depth(parent_id) or -1) + 1
+
+    -- 4. Apply Actions
+    for _, action in ipairs(actions) do
+        local id = action.id
+        local old_size = old_sizes[id] or 0
+        if action.type == "skip" then
+            -- Node is stable. Update its text only and skip its children range.
+            self:_render_line(id)
+            current_idx = current_idx + old_size
+        elseif action.type == "remove" then
+            -- Node was removed. Delete its entire block.
+            self:_render_range(current_idx, old_size, {})
+            -- current_idx remains same as lines shift up
+        elseif action.type == "replace" then
+            -- Node is new or moved. Render it and its visible subtree.
+            local new_subtree = self._tree:flatten(id, _filter)
+            for _, node in ipairs(new_subtree) do
+                node.depth = base_depth + node.depth
+            end
+            self:_render_range(current_idx, old_size, new_subtree)
+            current_idx = current_idx + #new_subtree
+        end
+    end
+
+    return true
 end
 
 ---Removes all children of a node from the tree and updates the buffer.
