@@ -19,7 +19,8 @@ local uv             = vim.loop
 ---@field icon_hl string
 ---@field is_current boolean?
 ---@field error_flag boolean?
----@field loading_requests number
+---@field childrenload_req_id number
+---@field children_loading boolean
 ---@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
@@ -164,9 +165,9 @@ function FileTree:_setup_tree()
             if data.is_dir then
                 if expanded then
                     self._expanded_lru:put(data.path, true)
-                    local old = data.loading_requests
+                    local old = data.childrenload_req_id
                     self._viewport_monitor_fn()
-                    if old == data.loading_requests then
+                    if old == data.childrenload_req_id then
                         self:_read_dir(data.path, self._reload_counter, true)
                     end
                 else
@@ -497,7 +498,7 @@ function FileTree:_reload()
         self._tree:add_item(nil, root_item)
     end
 
-    self._viewport_monitor_fn() -- trigger Immediate viewport check
+    self:_read_dir(path, self._reload_counter, true)
 end
 
 ---@param path string Full path to the changed file/dir
@@ -621,16 +622,20 @@ function FileTree:_read_dir(path, reload_counter, recursive)
     if reload_counter ~= self._reload_counter then return end
     local item = self._tree:get_item(path)
     if not item then return end
-    item.data.loading_requests = item.data.loading_requests or 0
-    item.data.loading_requests = item.data.loading_requests + 1
+    ---@type loop.comp.FileTree.ItemData
+    local data = item.data
+
+    local req_id = (data.childrenload_req_id or 0) + 1
+    data.children_loading = true
+    data.childrenload_req_id = req_id
+    data.on_children_loaded = nil
+
     --vim.notify("Scanning dir: " .. path)
     -- Asynchronous scandir
     ---@diagnostic disable-next-line: undefined-field
     uv.fs_scandir(path, function(err, handle)
-        if reload_counter ~= self._reload_counter then
-            item.data.loading_requests = math.max(0, (item.data.loading_requests or 1) - 1)
-            return
-        end
+        if reload_counter ~= self._reload_counter then return end
+        if req_id ~= data.childrenload_req_id then return end
         local entries = {}
         if handle then
             while true do
@@ -642,8 +647,29 @@ function FileTree:_read_dir(path, reload_counter, recursive)
         end
         -- schedule because read_dir is called in a fast event context
         vim.schedule(function()
-            self:_process_dir(path, entries, err ~= nil, reload_counter, recursive)
-            item.data.loading_requests = math.max(0, (item.data.loading_requests or 1) - 1)
+            if reload_counter ~= self._reload_counter then return end
+            if req_id ~= data.childrenload_req_id then return end
+            self:_process_dir(path, entries, err ~= nil)
+            data.children_loading = false
+            if data.on_children_loaded then
+                data.on_children_loaded()
+                data.on_children_loaded = nil
+            end
+            -- Handle nested expansion for existing expanded folders
+            -- This ensures that if a folder was already expanded, we refresh its view too
+            if recursive then
+                for _, entry in ipairs(entries) do
+                    if entry.type == "directory" then
+                        local child_path = vim.fs.joinpath(path, entry.name)
+                        local child_item = self._tree:get_item(child_path)
+                        -- it's important to load non-expanded nodes,
+                        -- otherwise it will load the whole tree and we may have infinite recursion with symlinks
+                        if child_item and child_item.expanded then
+                            self:_read_dir(child_path, reload_counter, recursive)
+                        end
+                    end
+                end
+            end
         end)
     end)
 end
@@ -651,9 +677,7 @@ end
 ---@param path string
 ---@param entries table[]
 ---@param error_flag boolean
----@param reload_counter number
----@param recursive boolean
-function FileTree:_process_dir(path, entries, error_flag, reload_counter, recursive)
+function FileTree:_process_dir(path, entries, error_flag)
     local root = self._root
     if not root then return end
     local parent_item = self._tree:get_item(path)
@@ -696,23 +720,6 @@ function FileTree:_process_dir(path, entries, error_flag, reload_counter, recurs
     -- upsert
     for _, entry in ipairs(sorted_entries) do
         self:_upsert_single_item(path, entry.path, entry.is_dir)
-    end
-    -- Handle nested expansion for existing expanded folders
-    -- This ensures that if a folder was already expanded, we refresh its view too
-    if recursive then
-        for _, entry in ipairs(sorted_entries) do
-            if entry.is_dir then
-                local item = self._tree:get_item(entry.path)
-                if item and item.expanded then
-                    self:_read_dir(entry.path, reload_counter, recursive)
-                end
-            end
-        end
-    end
-    -- Notify reveal waiters
-    if parent_item.data.on_children_loaded then
-        parent_item.data.on_children_loaded()
-        parent_item.data.on_children_loaded = nil
     end
 end
 
@@ -805,7 +812,7 @@ function FileTree:_reveal_step(parent, parts, idx, set_current, token)
         self._tree:expand(parent) -- This triggers _read_dir
     end
     -- Check if we are currently waiting on the disk I/O
-    if parent_item.data.loading_requests and parent_item.data.loading_requests > 0 then
+    if parent_item.data.children_loading then
         parent_item.data.on_children_loaded = vim.schedule_wrap(function()
             continue()
         end)

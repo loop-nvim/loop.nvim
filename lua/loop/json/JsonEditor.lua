@@ -57,11 +57,10 @@ local function _show_help()
         "  u        Undo last change",
         "  C-r      Redo last change",
         "  i        Add element to object or array",
-        "  a        Add element",
-        "  o        Add element after",
-        "  O        Add element before",
+        "  a        Add element after",
+        "  A        Add element before",
         "  c        Change value",
-        "  C        Edit multiline string",
+        "  C        Change multiline string",
         "  d        Delete element",
         "  gy       Yank (copy) node",
         "  gp       Paste node after current",
@@ -388,17 +387,12 @@ function JsonEditor:_setup()
     })
 
     self._tree:add_keymap("a", {
-        desc = "add item (Add the parent node)",
+        desc = "add item after",
         callback = function() with_current_item(function(i) self:_add_new(i, "after") end) end,
     })
 
-    self._tree:add_keymap("o", {
-        desc = "insert item (Add the parent node)",
-        callback = function() with_current_item(function(i) self:_add_new(i, "after") end) end,
-    })
-
-    self._tree:add_keymap("O", {
-        desc = "insert item (Add the parent node)",
+    self._tree:add_keymap("A", {
+        desc = "add item before",
         callback = function() with_current_item(function(i) self:_add_new(i, "before") end) end,
     })
 
