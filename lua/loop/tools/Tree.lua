@@ -550,6 +550,23 @@ end
 
 ---Get all immediate children of a node in order.
 ---@param parent_id any|nil If nil, returns root nodes.
+---@return any[]
+function Tree:get_children_ids(parent_id)
+	assert(parent_id, "id required")
+	local parent_node = self._nodes[parent_id]
+	assert(parent_node, "parent does not exist")
+	local ids = {}
+	local child_id = parent_node.first_child
+	while child_id do
+		table.insert(ids, child_id)
+		local node = self._nodes[child_id]
+		child_id = node.next_sibling
+	end
+	return ids
+end
+
+---Get all immediate children of a node in order.
+---@param parent_id any|nil If nil, returns root nodes.
 ---@return loop.tools.Tree.Item[]
 function Tree:get_children(parent_id)
 	assert(parent_id, "id required")

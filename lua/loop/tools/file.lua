@@ -238,7 +238,7 @@ function M.monitor_dir(dir, change_callback)
             return
         end
         if fname then
-            vim.schedule(function()
+            vim.schedule(function() --callback ousdie the uv loop
                 if not terminated then
                     change_callback(fname, status)
                 end
