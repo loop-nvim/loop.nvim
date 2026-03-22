@@ -775,54 +775,62 @@ function TreeBuffer:update_children(parent_id, updates)
     -- STRUCTURAL CHANGE → rebuild range
     ----------------------------------------------------------------
     local prev_id = parent_id
+    local add_batch = {}   -- batch of nodes to insert
+    local insert_idx = nil -- where to insert the batch
+
     for _, action in ipairs(actions) do
-        if action.type == "remove" then
-            self:remove_item(action.id)
-        elseif action.type == "replace" then
-            self:remove_children(action.id)
-            self:_render_line(action.id)
-            prev_id = action.id
-        elseif action.type == "update" then
-            self:_render_line(action.id)
-            prev_id = action.id
-        elseif action.type == "add" then
+        if action.type == "add" then
             local id = action.id
             local data = self:_get_data(id)
             if not data then goto continue end
-            -- If parent is not expanded (non-root), nothing is visible
             if not is_root and parent_data and parent_data.expanded == false then
                 prev_id = id
                 goto continue
             end
-            local insert_idx
-            if prev_id and self._id_to_idx[prev_id] then
-                -- Insert AFTER previous node subtree
-                local prev_idx = self._id_to_idx[prev_id]
-                local size
-                if prev_id == parent_id then
-                    size = parent_oldsize
+            -- Determine insert index if this is the first in the batch
+            if not insert_idx then
+                if prev_id and self._id_to_idx[prev_id] then
+                    local prev_idx = self._id_to_idx[prev_id]
+                    local size = prev_id == parent_id and parent_oldsize or old_sizes[prev_id]
+                    insert_idx = prev_idx + size
                 else
-                    size = old_sizes[prev_id]
+                    insert_idx = parent_idx
                 end
-                insert_idx = prev_idx + size
-            else
-                -- First child → insert at parent start
-                insert_idx = parent_idx
             end
-            local node = {
+            table.insert(add_batch, {
                 id = id,
                 data = data,
                 depth = is_root and 0 or self._tree:get_depth(id)
-            }
-            self:_render_range(insert_idx, 0, { node })
+            })
             prev_id = id
             old_sizes[id] = self:_get_inbuffer_size(id)
         else
-            error("invalid action: " .. action.type)
+            -- flush any pending batch before handling other actions
+            if insert_idx and #add_batch > 0 then
+                self:_render_range(insert_idx, 0, add_batch)
+                add_batch = {}
+                insert_idx = nil
+            end
+            -- handle other actions
+            if action.type == "remove" then
+                self:remove_item(action.id)
+            elseif action.type == "replace" then
+                self:remove_children(action.id)
+                self:_render_line(action.id)
+                prev_id = action.id
+            elseif action.type == "update" then
+                self:_render_line(action.id)
+                prev_id = action.id
+            else
+                error("invalid action: " .. action.type)
+            end
         end
         ::continue::
     end
-
+    -- flush any remaining add batch at the end
+    if insert_idx and #add_batch > 0 then
+        self:_render_range(insert_idx, 0, add_batch)
+    end
     return true
 end
 
