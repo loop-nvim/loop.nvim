@@ -643,16 +643,18 @@ function FileTree:_prepare_dir_entries(path, prep_entries, callback)
 
     ---@type fun(fp:string,name:string,is_dir:boolean,is_link:boolean)
     local process_entry = function(full_path, name, is_dir, is_link)
-        local rel = vim.fs.relpath(self._root, full_path)
-        -- No need to stat files or non-followed links
-        if rel and self:_should_include(rel, is_dir) then
-            ---@type loop.FileTree.ProcessDirEntry
-            local entry = {
-                name = name,
-                is_dir = is_dir,
-                is_link = is_link,
-            }
-            table.insert(resolved, entry)
+        if not is_link or self._follow_symlinks then
+            local rel = vim.fs.relpath(self._root, full_path)
+            -- No need to stat files or non-followed links
+            if rel and self:_should_include(rel, is_dir) then
+                ---@type loop.FileTree.ProcessDirEntry
+                local entry = {
+                    name = name,
+                    is_dir = is_dir,
+                    is_link = is_link,
+                }
+                table.insert(resolved, entry)
+            end
         end
         pending = pending - 1
         if pending == 0 then callback(resolved) end
@@ -964,6 +966,7 @@ function FileTree:_create_node(item, as_dir, force_parent)
                 ---@diagnostic disable-next-line: undefined-field
                 local ok, err = vim.uv.fs_mkdir(new_path, 493) -- 493 is octal 0755
                 if ok then
+                    self:_read_dir(base_dir, self._reload_counter, false)
                     self:_reveal(new_path)
                 else
                     vim.notify(err, vim.log.levels.ERROR)
