@@ -266,7 +266,6 @@ local function _load_workspace(dir)
 
     -- resets must be before extentions are loaded
     taskmgr.reset_providers(dir)
-    views.reset_views()
     sidebar.on_workspace_open()
     -- init task runner
     runner.on_workspace_open(ws_info, _ws_data.page_manager)

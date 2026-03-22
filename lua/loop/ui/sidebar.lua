@@ -67,52 +67,93 @@ local function get_managed_windows()
     return wins
 end
 
-local function apply_ratios(windows, ratios, width_ratio)
-    if #windows == 0 then
+-- Validate that windows are stacked vertically
+local function are_windows_stacked_vertically(wins)
+    if #wins <= 1 then return true end
+
+    local first_win_pos = vim.api.nvim_win_get_position(wins[1])
+    local first_col = first_win_pos[2] -- [row, col]
+
+    for i = 2, #wins do
+        local pos = vim.api.nvim_win_get_position(wins[i])
+        -- If any window starts at a different column, they aren't in a single vertical stack
+        if pos[2] ~= first_col then
+            return false
+        end
+    end
+    return true
+end
+
+local function apply_ratios()
+    ---@type loop.SidebarPreset?
+    local preset = _presets[_active_preset_id]
+    if not preset then
         return
     end
 
-    local total = 0
-
-    for _, win in ipairs(windows) do
-        total = total + vim.api.nvim_win_get_height(win)
+    local windows = get_managed_windows()
+    if #preset.views ~= #windows then
+        -- "sidebar window were altered, skipping resize"
+        return
     end
 
-    local heights = {}
-    local used = 0
-
-    for i = 1, #windows - 1 do
-        local r = ratios[i] or (1 / #windows)
-        local h = math.floor(total * r)
-
-        heights[i] = h
-        used = used + h
+    if not are_windows_stacked_vertically(windows) then
+        -- sidebar window are not stacked vertically, skipping resize
+        return
     end
 
-    heights[#windows] = total - used
+    local width_ratio = 0.2
+    local ratios = {}
+    for _, viewdef in ipairs(preset.views) do
+        local view = views.get_view_info(viewdef.view_id)
+        table.insert(ratios, view and viewdef.ratio or 0)
+    end
 
-    for i, win in ipairs(windows) do
+
+    local num_wins = #windows
+    if num_wins == 0 then return end
+
+    -- 1. Handle Global Sidebar Width
+    local total_ui_width = vim.o.columns
+    local target_width = math.floor(total_ui_width * (width_ratio or .2))
+
+    -- 2. Calculate Vertical Heights
+    local total_ui_height = vim.o.lines - vim.o.cmdheight -- account for status/cmd line
+    local fixed_ratio_sum = 0
+    local nil_count = 0
+
+    for _, r in ipairs(ratios) do
+        if r and r > 0 then
+            fixed_ratio_sum = fixed_ratio_sum + r
+        else
+            nil_count = nil_count + 1
+        end
+    end
+
+    -- If ratio sum is > 1, we normalize it; if < 1, nils take the remainder
+    local remaining_ratio = math.max(0, 1 - fixed_ratio_sum)
+    local ratio_per_nil = nil_count > 0 and (remaining_ratio / nil_count) or 0
+
+    -- 3. Apply Dimensions
+    for i = num_wins, 1, -1 do
+        local win = windows[i]
         if vim.api.nvim_win_is_valid(win) then
-            if i == 1 then
-                local ratio = width_ratio or 0.20
-                vim.api.nvim_win_set_width(win, math.floor(ratio * vim.o.columns))
-            end
+            -- Set Width (Consistent for all sidebar windows)
+            vim.api.nvim_win_set_width(win, target_width)
 
-            vim.api.nvim_win_set_height(win, heights[i])
+            -- Set Height
+            local r = ratios[i]
+            if not r or r <= 0 then r = ratio_per_nil end
+            local target_height = math.floor(total_ui_height * r)
+
+            -- Ensure at least 1 line height to avoid errors
+            vim.api.nvim_win_set_height(win, math.max(target_height, 1))
         end
     end
 end
 
----@param ratios number[]
-local function _on_vim_resize(ratios)
-    local wins = get_managed_windows()
-    local d = _presets[_active_preset_id]
-    if not d then
-        return
-    end
-    if #wins == #ratios then
-        apply_ratios(wins, ratios, d.width_ratio)
-    end
+local function _on_vim_resize(r)
+    apply_ratios()
 end
 local function _destroy_buffers()
     for bufnr, _ in pairs(_active_buffers) do
@@ -153,18 +194,13 @@ local function _show(id)
 
     _active_preset_id = id
 
-    local width_ratio = 0.20
-
     local buffers = {}
-    local ratios = {}
-    local default_ratio = 1 / math.max(#def.views, 1)
-    for _, view in ipairs(def.views) do
-        local provider = views.get_view(view.name)
-        if provider then
-            local bufnr = provider.create_buffer()
+    for _, viewdef in ipairs(def.views) do
+        local view = views.get_view_info(viewdef.view_id)
+        if view and view.provider then
+            local bufnr = view.provider.create_buffer()
             if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
                 table.insert(buffers, bufnr)
-                table.insert(ratios, view.ratio or default_ratio)
             end
         end
     end
@@ -221,7 +257,7 @@ local function _show(id)
         vim.wo[win].winfixbuf = true
     end
 
-    apply_ratios(windows, ratios, width_ratio)
+    apply_ratios()
 
     if vim.api.nvim_win_is_valid(original) then
         vim.api.nvim_set_current_win(original)
@@ -232,7 +268,7 @@ local function _show(id)
     vim.api.nvim_create_autocmd("VimResized", {
         group = _resize_auto_group,
         callback = function()
-            _on_vim_resize(ratios)
+            _on_vim_resize()
         end,
     })
 
@@ -252,9 +288,19 @@ function M.on_workspace_close()
 end
 
 function M.on_workspace_open()
+    local FileTree = require("loop.ui.FileTree")
+    local tree = FileTree:new()
+    ---@type loop.ViewProvider
+    local provider = {
+        create_buffer = function()
+            local buf = tree:get_compbuffer():get_or_create_buf()
+            return buf
+        end,
+    }
+    local view_id = views.register_view("files", provider)
     M.register_preset({
         name = "files",
-        views = { { name = "files", ratio = 1 } }
+        views = { { view_id = view_id, ratio = 1 } }
     })
     _workspace_open = true
     _show()
