@@ -676,107 +676,131 @@ function TreeBuffer:set_children(parent_id, children)
     return true
 end
 
----Helper to calculate the visible height of a subtree in the buffer without recursion.
----@private
----@param id any
----@param index_in_children number
----@param siblings any[]
----@param parent_id any|nil
----@return number
-function TreeBuffer:_get_visible_size(id, index_in_children, siblings, parent_id)
-    local current_idx = self._id_to_idx[id]
-    if not current_idx then return 0 end
-
-    local next_idx
-    if index_in_children < #siblings then
-        -- Next sibling's start is this subtree's end
-        next_idx = self._id_to_idx[siblings[index_in_children + 1].id]
-    else
-        -- Last child: boundary is the end of the parent's subtree
-        if parent_id == nil then
-            next_idx = #self._flat_ids + 1
-        else
-            local p_idx = self._id_to_idx[parent_id]
-            next_idx = p_idx + self._tree:tree_size(parent_id, _filter)
-        end
-    end
-    return next_idx - current_idx
-end
-
 ---@param parent_id any|nil
 ---@param updates loop.comp.TreeBuffer.ItemUpdate[]
 ---@return boolean
 function TreeBuffer:update_children(parent_id, updates)
     if parent_id and not self._tree:have_item(parent_id) then return false end
 
-    local old_children = self._tree:get_children(parent_id)
+    local is_root = parent_id == nil
+    local parent_idx
+    if is_root then
+        local header_offset = self._header_enabled and 1 or 0
+        parent_idx = header_offset + 1
+    else
+        parent_idx = self._id_to_idx[parent_id]
+        if not parent_idx then return true end -- parent not visible
+    end
 
-    -- 0. Fast Path: Check if structure is identical to skip heavy reconciliation
-    if #updates == #old_children then
-        local structural_change = false
-        for i, u in ipairs(updates) do
-            local old = old_children[i]
-            if u.id ~= old.id or (u.keep_children == false and self._tree:have_children(old.id)) then
-                structural_change = true
-                break
-            end
-        end
-        if not structural_change then
-            local tree_updates = {}
-            for _, u in ipairs(updates) do table.insert(tree_updates, _wrap_item_update(u)) end
-            self._tree:update_children(parent_id, tree_updates)
-            for _, u in ipairs(updates) do
-                self:_render_line(u.id)
-            end
+    local old_sizes = {}
+    local parent_oldsize = 1
+    for _, id in ipairs(self._tree:get_children_ids(parent_id)) do
+        local size = self._tree:tree_size(id, _filter)
+        old_sizes[id] = size
+        parent_oldsize = parent_oldsize + size
+    end
+
+    -- Wrap updates
+    local baseitems = {}
+    for _, u in ipairs(updates) do
+        table.insert(baseitems, _wrap_item_update(u))
+    end
+
+    -- Apply update
+    local actions = self._tree:update_children(parent_id, baseitems)
+
+    local buf = self:get_buf()
+    if buf <= 0 then return true end
+
+    ----------------------------------------------------------------
+    -- Determine anchor + parent_data (root-aware)
+    ----------------------------------------------------------------
+    local parent_data
+    if not is_root then
+        parent_data = self._tree:get_data(parent_id)
+        if not parent_data then return true end
+        parent_data.reload_children = false
+        -- Not visible → nothing to do
+        if not parent_idx then return true end
+        -- Collapsed → just update line
+        if parent_data.expanded == false then
+            self:_render_line(parent_id, parent_data)
             return true
         end
     end
 
-    -- 1. Snapshot sizes of current visible nodes (O(1) distance calculation)
-    local old_sizes = {}
-    for i, child in ipairs(old_children) do
-        old_sizes[child.id] = self:_get_visible_size(child.id, i, old_children, parent_id)
-    end
-
-    -- 2. Sync logical tree and get instructions
-    local tree_updates = {}
-    for _, u in ipairs(updates) do table.insert(tree_updates, _wrap_item_update(u)) end
-    local actions = self._tree:update_children(parent_id, tree_updates)
-
-    -- 3. Execution context
-    local current_idx
-    if parent_id == nil then
-        current_idx = self._header_enabled and 2 or 1
-    else
-        local p_idx = self._id_to_idx[parent_id]
-        if not p_idx then return true end -- Hidden/Collapsed
-        current_idx = p_idx + 1
-        self:_render_line(parent_id)      -- Update parent icon
-    end
-
-    local base_depth = (parent_id and self._tree:get_depth(parent_id) or -1) + 1
-
-    -- 4. Apply Actions
-    for _, action in ipairs(actions) do
-        local id = action.id
-        local old_size = old_sizes[id] or 0
-        if action.type == "skip" then
-            -- Node is stable. Update its text only and skip its children range.
-            self:_render_line(id)
-            current_idx = current_idx + old_size
-        elseif action.type == "remove" then
-            -- Node was removed. Delete its entire block.
-            self:_render_range(current_idx, old_size, {})
-            -- current_idx remains same as lines shift up
-        elseif action.type == "replace" then
-            -- Node is new or moved. Render it and its visible subtree.
-            local new_subtree = self._tree:flatten(id, _filter)
-            for _, node in ipairs(new_subtree) do
-                node.depth = base_depth + node.depth
-            end
-            self:_render_range(current_idx, old_size, new_subtree)
-            current_idx = current_idx + #new_subtree
+    ----------------------------------------------------------------
+    -- FAST PATH: only updates
+    ----------------------------------------------------------------
+    local only_updates = true
+    for _, act in ipairs(actions) do
+        if act.type ~= "update" then
+            only_updates = false
+            break
         end
+    end
+
+    if only_updates then
+        for _, act in ipairs(actions) do
+            local id = act.id
+            local data = self:_get_data(id)
+            if data then
+                self:_render_line(id, data)
+            end
+        end
+        return true
+    end
+
+    ----------------------------------------------------------------
+    -- STRUCTURAL CHANGE → rebuild range
+    ----------------------------------------------------------------
+    local prev_id = parent_id
+    for _, action in ipairs(actions) do
+        if action.type == "remove" then
+            self:remove_item(action.id)
+        elseif action.type == "replace" then
+            self:remove_children(action.id)
+            self:_render_line(action.id)
+            prev_id = action.id
+        elseif action.type == "update" then
+            self:_render_line(action.id)
+            prev_id = action.id
+        elseif action.type == "add" then
+            local id = action.id
+            local data = self:_get_data(id)
+            if not data then goto continue end
+            -- If parent is not expanded (non-root), nothing is visible
+            if not is_root and parent_data and parent_data.expanded == false then
+                prev_id = id
+                goto continue
+            end
+            local insert_idx
+            if prev_id and self._id_to_idx[prev_id] then
+                -- Insert AFTER previous node subtree
+                local prev_idx = self._id_to_idx[prev_id]
+                local size
+                if prev_id == parent_id then
+                    size = parent_oldsize
+                else
+                    size = old_sizes[prev_id]
+                end
+                insert_idx = prev_idx + size
+            else
+                -- First child → insert at parent start
+                insert_idx = parent_idx
+            end
+            local node = {
+                id = id,
+                data = data,
+                depth = is_root and 0 or self._tree:get_depth(id)
+            }
+            self:_render_range(insert_idx, 0, { node })
+            prev_id = id
+            old_sizes[id ] = self._tree:tree_size(id, _filter)
+        else
+            error("invalid action: " .. action.type)
+        end
+        ::continue::
     end
 
     return true

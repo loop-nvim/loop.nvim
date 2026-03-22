@@ -303,12 +303,17 @@ function Tree:set_children(parent_id, items)
 	end
 end
 
+---@class loop.tree.UpdateAction
+---@field type "add"|"remove"|"replace"|"update"
+---@field id any
+
 --- Update the children of parent_id to match the provided items.
 --- Existing children NOT in the items list are removed.
 --- Grandchildren from existing children are preserved.
 --- If an item's ID already exists elsewhere in the tree (under a different parent), it asserts.
 ---@param parent_id any|nil
 ---@param items loop.tools.Tree.ItemUpdate[]
+---@return loop.tree.UpdateAction[]
 function Tree:update_children(parent_id, items)
 	assert(type(items) == "table", "items must be a table")
 	local parent_node = parent_id and self._nodes[parent_id]
@@ -320,6 +325,9 @@ function Tree:update_children(parent_id, items)
 		assert(not keep_ids[item.id], "duplicate item id in provided items: " .. tostring(item.id))
 		keep_ids[item.id] = true
 	end
+
+	---@type loop.tree.UpdateAction[]
+	local actions = {}
 
 	-- 2. Clean up: Remove old children of this parent that are no longer in the list
 	-- We must use a while loop because _remove_subtree calls _unlink,
@@ -338,6 +346,7 @@ function Tree:update_children(parent_id, items)
 			-- This will recursively remove grandchildren and call _unlink(current_id)
 			-- _unlink correctly updates the parent's first/last pointers if needed.
 			self:_remove_subtree(current_id)
+			table.insert(actions, { type = "remove", id = current_id })
 		end
 		current_id = next_id
 	end
@@ -358,6 +367,9 @@ function Tree:update_children(parent_id, items)
 
 			if item.keep_children == false then
 				self:_remove_children(node)
+				table.insert(actions, { type = "replace", id = id })
+			else
+				table.insert(actions, { type = "update", id = id })
 			end
 
 			-- Update metadata
@@ -376,6 +388,7 @@ function Tree:update_children(parent_id, items)
 				prev_sibling = last_new,
 			}
 			self._nodes[id] = node
+			table.insert(actions, { type = "add", id = id })
 		end
 
 		-- Link the sibling chain forward
@@ -395,6 +408,7 @@ function Tree:update_children(parent_id, items)
 		self._root_first = first_new
 		self._root_last  = last_new
 	end
+	return actions
 end
 
 ---@generic T
@@ -547,6 +561,22 @@ function Tree:have_children(id)
 	assert(id, "id required")
 	local node = self._nodes[id]
 	return node ~= nil and node.first_child ~= nil
+end
+
+---@param id any
+---@return any
+function Tree:prev_sibling_id(id)
+	assert(id, "id required")
+	local node = self._nodes[id]
+	return node and node.prev_sibling or nil
+end
+
+---@param id any
+---@return any
+function Tree:next_sibling_id(id)
+	assert(id, "id required")
+	local node = self._nodes[id]
+	return node and node.next_sibling or nil
 end
 
 ---Get all immediate children of a node in order.
