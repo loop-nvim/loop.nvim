@@ -512,7 +512,7 @@ function FileTree:_reload()
     self._tree:remove_item(_error_node_id)
 
     if not self._tree:have_item(path) then
-        local icon, iconhl = self:_get_icon_for_node(path, true)
+        local icon, iconhl = self:_get_icon_for_node(path, true, false)
         local root_item = {
             id = path,
             expandable = true,
@@ -555,7 +555,7 @@ function FileTree:_upsert_single_item(args, append)
         end
     end
     -- Prepare the new item definition
-    local icon, icon_hl = self:_get_icon_for_node(name, is_dir)
+    local icon, icon_hl = self:_get_icon_for_node(name, is_dir, is_link)
     ---@type loop.comp.TreeBuffer.ItemDef
     local new_item = {
         id = full_path,
@@ -606,10 +606,7 @@ end
 ---@param is_dir boolean
 ---@return string icon
 ---@return string|nil hl_group
-function FileTree:_get_icon_for_node(name, is_dir)
-    if is_dir then
-        return "", "Directory"
-    end
+function FileTree:_get_icon_for_node(name, is_dir, is_link)
     if not _dev_icons_attempt then
         _dev_icons_attempt = true
         local loaded, res = pcall(require, "nvim-web-devicons")
@@ -617,14 +614,18 @@ function FileTree:_get_icon_for_node(name, is_dir)
     end
 
     local icon, icon_hl
-    local ext = name:match("%.([^.]+)$") or ""
-    if devicons then
-        icon, icon_hl = devicons.get_icon(name, ext, { default = false })
-    else
-        icon = _file_icons[ext] or ""
+    if is_dir then
+        icon, icon_hl = "", "Directory"
+    elseif not is_link then
+        local ext = name:match("%.([^.]+)$") or ""
+        if devicons then
+            icon, icon_hl = devicons.get_icon(name, ext, { default = false })
+        else
+            icon = _file_icons[ext]
+        end
     end
 
-    return icon, icon_hl
+    return icon or "", icon_hl
 end
 
 ---@param path string
@@ -712,7 +713,7 @@ function FileTree:_read_dir(path, reload_counter, recursive)
                 -- schedule because read_dir is called in a fast event context
                 if reload_counter ~= self._reload_counter then return end
                 if req_id ~= data.childrenload_req_id then return end
-                local children = self:_process_dir(path, resolved_entries, err ~= nil)
+                self:_process_dir(path, resolved_entries, err ~= nil)
                 data.children_loading = false
                 if data.on_children_loaded then
                     data.on_children_loaded()
@@ -721,7 +722,7 @@ function FileTree:_read_dir(path, reload_counter, recursive)
                 -- Handle nested expansion for existing expanded folders
                 -- This ensures that if a folder was already expanded, we refresh its view too
                 if recursive then
-                    for _, child in ipairs(children) do
+                    for _, child in ipairs(self._tree:get_children(path)) do
                         ---@type loop.comp.FileTree.ItemData
                         local child_data = child.data
                         local child_path = child_data.path
@@ -740,84 +741,14 @@ function FileTree:_read_dir(path, reload_counter, recursive)
     end)
 end
 
----@param path string
----@param entries loop.FileTree.ProcessDirEntry[]
----@param error_flag boolean
----@return loop.comp.TreeBuffer.ItemDef[]
-function FileTree:_process_dir(path, entries, error_flag)
-    return self:_process_dir_with_update(path, entries, error_flag)
-end
-
----@param path string
----@param entries loop.FileTree.ProcessDirEntry[]
----@param error_flag boolean
----@return loop.comp.TreeBuffer.ItemDef[]
-function FileTree:_process_dir_with_update(path, entries, error_flag)
-    local root = self._root
-    if not root then return {} end
-    -- 1. Handle Error State
-    if error_flag then
-        local data = self._tree:get_item_data(path)
-        if data then
-            data.error_flag = true
-            self._tree:refresh_item(path)
-        end
-    end
-    -- 2. Filter and Prepare Item Definitions
-    -- We create a flat list of ItemDefs to pass to the buffer
-    local new_children = {} ---@type loop.comp.TreeBuffer.ItemDef[]
-    for _, entry in ipairs(entries) do
-        local full_path = vim.fs.joinpath(path, entry.name)
-        local name, is_dir, is_link = entry.name, entry.is_dir, entry.is_link
-        -- Prepare the new item definition
-        local icon, icon_hl = self:_get_icon_for_node(name, is_dir)
-        ---@type loop.comp.TreeBuffer.ItemUpdate
-        local new_item = {
-            id = full_path,
-            expandable = is_dir,
-            expanded = is_dir and self._expanded_lru:has(full_path),
-            keep_children = is_dir,
-            data = {
-                path = full_path,
-                name = name,
-                loname = name:lower(),
-                is_dir = is_dir,
-                is_link = is_link,
-                icon = icon,
-                icon_hl = icon_hl
-            }
-        }
-        table.insert(new_children, new_item)
-    end
-    -- 3. Sort (Always ascending, the Tree handles the linked-list performance)
-    table.sort(new_children, function(a, b)
-        -- Directories first
-        if a.data.is_dir ~= b.data.is_dir then
-            return a.data.is_dir
-        end
-        -- Then alphabetical
-        return a.data.loname < b.data.loname
-    end)
-    -- 4. Atomic Update
-    -- This handles:
-    -- - Removing deleted files
-    -- - Adding new files in the right sorted position
-    -- - Updating existing nodes (renames/case sensitivity)
-    -- - Keeping expanded grandchildren intact
-    -- - Buffer surgery (UI update)
-    self._tree:update_children(path, new_children)
-    return new_children
-end
-
 --@param path string
 ---@param entries loop.FileTree.ProcessDirEntry[]
 ---@param error_flag boolean
----@return loop.comp.TreeBuffer.ItemDef[]
-function FileTree:_process_dir_with_upsert(path, entries, error_flag)
+function FileTree:_process_dir(path, entries, error_flag)
     local root = self._root
-    if not root then return {} end
+    if not root then return end
     local parent_item = self._tree:get_item(path)
-    if not parent_item then return {} end
+    if not parent_item then return end
 
     if error_flag then
         parent_item.data.error_flag = true
@@ -866,13 +797,9 @@ function FileTree:_process_dir_with_upsert(path, entries, error_flag)
     end
 
     -- upsert
-    local items = {}
     for _, entry in ipairs(sorted_entries) do
         local item = self:_upsert_single_item(entry, append)
-        if item then table.insert(items, item) end
     end
-
-    return items
 end
 
 -- async reveal
@@ -1133,7 +1060,7 @@ end
 --- Delete a directory and all its contents
 ---@param item table The TreeBuffer item
 function FileTree:_delete_dir_recurive(item)
-    if not item.data.is_dir then
+    if not item.data.is_dir or item.data.is_link then
         vim.notify("Selected item is not a directory", vim.log.levels.WARN)
         return
     end
