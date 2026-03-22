@@ -891,6 +891,26 @@ function TreeBuffer:add_sibling(reference_id, item, before)
 end
 
 ---@return loop.comp.TreeBuffer.Item[]
+function TreeBuffer:get_roots()
+    local items = {}
+    local tree_items = self._tree:get_roots()
+
+    for _, treeitem in ipairs(tree_items) do
+        ---@type loop.comp.TreeBuffer.ItemData
+        local data = treeitem.data
+        ---@type loop.comp.TreeBuffer.Item
+        local item = {
+            id = treeitem.id,
+            data = data.userdata,
+            expandable = data.expandable,
+            expanded = data.expanded
+        }
+        table.insert(items, item)
+    end
+    return items
+end
+
+---@return loop.comp.TreeBuffer.Item[]
 function TreeBuffer:get_children(parent_id)
     local items = {}
     local tree_items = self._tree:get_children(parent_id)

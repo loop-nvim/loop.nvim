@@ -12,6 +12,7 @@ local fntools        = require("loop.tools.fntools")
 ---@class loop.comp.FileTree.ItemData
 ---@field path string
 ---@field name string
+---@field loname string
 ---@field is_dir boolean
 ---@field is_link boolean?
 ---@field icon string
@@ -532,74 +533,53 @@ function FileTree:_reload()
 end
 
 ---@private
----@param args loop.FileTree.UpsetSingleItemArgs
----@param append boolean
----@return loop.comp.TreeBuffer.ItemDef?
-function FileTree:_upsert_single_item(args, append)
-    local parent_path, full_path, name, loname, is_dir, is_link =
-        args.parent_path, args.full_path, args.name, args.loname, args.is_dir, args.is_link
+---@param parent_id string
+---@param item loop.comp.TreeBuffer.ItemDef
+function FileTree:_upsert_single_item(parent_id, item)
     local root = self._root
     if not root then return end
+    local data = item.data ---@type loop.comp.FileTree.ItemData
     do
-        local existing = self._tree:get_item(full_path)
+        local existing = self._tree:get_item(item.id)
         if existing then
-            local type_changed = (is_dir ~= existing.data.is_dir)
+            local type_changed = (data.is_dir ~= existing.data.is_dir)
             if not type_changed then
-                if is_link ~= existing.data.is_link then
-                    existing.data.is_link = is_link
-                    self._tree:refresh_item(full_path)
+                if data.is_link ~= existing.data.is_link then
+                    existing.data.is_link = data.is_link
+                    self._tree:refresh_item(item.id)
                 end
                 return -- nothing to do if name did not change
             end
-            self._tree:remove_item(full_path)
+            self._tree:remove_item(item.id)
         end
     end
-    -- Prepare the new item definition
-    local icon, icon_hl = self:_get_icon_for_node(name, is_dir, is_link)
-    ---@type loop.comp.TreeBuffer.ItemDef
-    local new_item = {
-        id = full_path,
-        expandable = is_dir,
-        expanded = is_dir and self._expanded_lru:has(full_path),
-        data = {
-            path = full_path,
-            name = name,
-            is_dir = is_dir,
-            is_link = is_link,
-            icon = icon,
-            icon_hl = icon_hl
-        }
-    }
     -- Find the correct alphabetical position among siblings
-    local siblings = self._tree:get_children(parent_path)
+    local siblings = self._tree:get_children(parent_id)
     local insert_target_id = nil
     local insert_before = false
-    if not append then
-        for _, sibling in ipairs(siblings) do
-            -- Sorting logic: Directories first, then alphabetical
-            local sibling_is_dir = sibling.data.is_dir
-            local sibling_name = sibling.data.name:lower()
-            local should_be_before = false
-            if is_dir ~= sibling_is_dir then
-                should_be_before = is_dir -- dirs come before files
-            else
-                should_be_before = loname < sibling_name
-            end
-            if should_be_before then
-                insert_target_id = sibling.id
-                insert_before = true
-                break
-            end
+    for _, sibling in ipairs(siblings) do
+        -- Sorting logic: Directories first, then alphabetical
+        local sibling_is_dir = sibling.data.is_dir
+        local sibling_name = sibling.data.loname
+        local should_be_before = false
+        if data.is_dir ~= sibling_is_dir then
+            should_be_before = data.is_dir -- dirs come before files
+        else
+            should_be_before = data.loname < sibling_name
+        end
+        if should_be_before then
+            insert_target_id = sibling.id
+            insert_before = true
+            break
         end
     end
     if insert_target_id then
         -- Insert into the specific alphabetical slot
-        self._tree:add_sibling(insert_target_id, new_item, insert_before)
+        self._tree:add_sibling(insert_target_id, item, insert_before)
     else
         -- Either no siblings exist, or this belongs at the very end
-        self._tree:add_item(parent_path, new_item)
+        self._tree:add_item(parent_id, item)
     end
-    return new_item
 end
 
 ---@param name string The filename or directory name
@@ -782,25 +762,44 @@ function FileTree:_process_dir(path, entries, error_flag)
         end
     end
 
-    local sorted_entries = vim.tbl_values(new_entries_map) ---@type loop.FileTree.UpsetSingleItemArgs[]
-    local append = self._tree:have_children(path) ~= true
-    if append then
-        -- insert order, sort in reverse order them to improve the performance of _upsert_single_item
-        table.sort(sorted_entries, function(a, b)
-            if a.is_dir ~= b.is_dir then return a.is_dir end
-            return a.loname > b.loname -- reverse order
-        end)
-    else
-        -- append mode, sort in ascending order
-        table.sort(sorted_entries, function(a, b)
-            if a.is_dir ~= b.is_dir then return a.is_dir end
-            return a.loname < b.loname
-        end)
+    local children = {} ---@type loop.comp.TreeBuffer.ItemDef[]
+    for _, entry in pairs(new_entries_map) do
+        -- Prepare the new item definition
+        local icon, icon_hl = self:_get_icon_for_node(entry.name, entry.is_dir, entry.is_link)
+        ---@type loop.comp.TreeBuffer.ItemDef
+        local child = {
+            id = entry.full_path,
+            expandable = entry.is_dir,
+            expanded = entry.is_dir and self._expanded_lru:has(entry.full_path),
+            data = {
+                path = entry.full_path,
+                name = entry.name,
+                loname = entry.loname,
+                is_dir = entry.is_dir,
+                is_link = entry.is_link,
+                icon = icon,
+                icon_hl = icon_hl
+            }
+        }
+        table.insert(children, child)
     end
 
-    -- upsert
-    for _, entry in ipairs(sorted_entries) do
-        local item = self:_upsert_single_item(entry, append)
+    if #current_children > 0 then
+        -- sort in reverse order them to improve the performance of _upsert_single_item
+        table.sort(children, function(a, b)
+            if a.data.is_dir ~= b.data.is_dir then return a.data.is_dir end
+            return a.data.loname > b.data.loname -- reverse order
+        end)
+        for _, child in ipairs(children) do
+            local item = self:_upsert_single_item(path, child)
+        end
+    else
+        -- set children directly
+        table.sort(children, function(a, b)
+            if a.data.is_dir ~= b.data.is_dir then return a.data.is_dir end
+            return a.data.loname < b.data.loname
+        end)
+        self._tree:set_children(path, children)
     end
 end
 
