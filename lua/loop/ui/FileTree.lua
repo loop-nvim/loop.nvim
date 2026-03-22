@@ -263,7 +263,7 @@ function FileTree:_get_viewport_monitor_fn()
         if winid ~= lastwinid or info.topline ~= topline or info.botline ~= botline or toggle_counter ~= self._toggle_counter then
             lastwinid, topline, botline, toggle_counter = winid, info.topline, info.botline, self._toggle_counter
 
-            local visible_items = self._tree:get_visible_items(winid)
+            local visible_items = self._tree:get_win_visible_items(winid)
             local active_folders = {}
 
             -- Identify folders that need monitoring

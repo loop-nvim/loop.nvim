@@ -452,7 +452,7 @@ end
 ---Returns a list of items currently visible in the provided window's viewport.
 ---@param winid number The window handle to check.
 ---@return loop.comp.TreeBuffer.Item[]
-function TreeBuffer:get_visible_items(winid)
+function TreeBuffer:get_win_visible_items(winid)
     if not winid or not vim.api.nvim_win_is_valid(winid) then return {} end
     if vim.api.nvim_win_get_buf(winid) ~= self:get_buf() then return {} end
 
@@ -480,6 +480,26 @@ function TreeBuffer:get_visible_items(winid)
     end
 
     return visible_items
+end
+
+function TreeBuffer:_get_inbuffer_size(id)
+    local start = self._id_to_idx[id]
+    if not start then return 0 end
+
+    local cur = id
+    while cur do
+        local sibling = self._tree:next_sibling_id(cur)
+        if sibling then
+            local sibling_idx = self._id_to_idx[sibling]
+            if sibling_idx then
+                return sibling_idx - start
+            end
+        end
+        cur = self._tree:get_parent_id(cur)
+    end
+
+    -- reached root → subtree goes until end
+    return #self._flat_ids - start + 1
 end
 
 ---Sets the header content
@@ -634,7 +654,7 @@ function TreeBuffer:set_children(parent_id, children)
     end
 
     -- We need the size BEFORE updating the tree to know how many lines to remove
-    local old_visible_size = self._tree:tree_size(parent_id, _filter)
+    local old_visible_size = self:_get_inbuffer_size(parent_id)
     self._tree:set_children(parent_id, baseitems)
 
     local buf = self:get_buf()
@@ -695,7 +715,7 @@ function TreeBuffer:update_children(parent_id, updates)
     local old_sizes = {}
     local parent_oldsize = 1
     for _, id in ipairs(self._tree:get_children_ids(parent_id)) do
-        local size = self._tree:tree_size(id, _filter)
+        local size = self:_get_inbuffer_size(id)
         old_sizes[id] = size
         parent_oldsize = parent_oldsize + size
     end
@@ -796,7 +816,7 @@ function TreeBuffer:update_children(parent_id, updates)
             }
             self:_render_range(insert_idx, 0, { node })
             prev_id = id
-            old_sizes[id ] = self._tree:tree_size(id, _filter)
+            old_sizes[id] = self:_get_inbuffer_size(id)
         else
             error("invalid action: " .. action.type)
         end
@@ -847,7 +867,7 @@ function TreeBuffer:collapse(id)
     if not data or not data.expanded then return end
 
     -- Get size while it is still expanded
-    local current_visible_size = self._tree:tree_size(id, _filter)
+    local current_visible_size = self:_get_inbuffer_size(id)
 
     -- NOW update the state
     data.expanded = false
@@ -921,7 +941,7 @@ function TreeBuffer:add_item(parent_id, item)
                 if parent_data and parent_data.expanded ~= false then
                     -- tree_size(parent_id) now includes the parent + all visible children
                     -- (including the one we just logically added via self._tree:add_item)
-                    local current_subtree_size = self._tree:tree_size(parent_id, _filter)
+                    local current_subtree_size = self:_get_inbuffer_size(parent_id)
                     -- The new item is the last one in the parent's subtree.
                     -- Its position in flat_ids is (parent_start_index + subtree_size - 1)
                     local insert_idx = parent_idx + current_subtree_size - 1
@@ -968,7 +988,7 @@ function TreeBuffer:add_sibling(reference_id, item, before)
         else
             -- If inserting after, we must skip over the reference node
             -- AND all of its currently visible children.
-            local ref_visible_size = self._tree:tree_size(reference_id, _filter)
+            local ref_visible_size = self:_get_inbuffer_size(reference_id)
             insert_idx = ref_idx + ref_visible_size
         end
 
@@ -1029,7 +1049,7 @@ function TreeBuffer:remove_item(id)
     -- first get the parent id
     local parent_id = self._tree:get_parent_id(id)
     -- Calculate how many lines this item AND its expanded children occupy
-    local visible_size = self._tree:tree_size(id, _filter)
+    local visible_size = self:_get_inbuffer_size(id)
 
     -- then remove it
     self._tree:remove_item(id)
