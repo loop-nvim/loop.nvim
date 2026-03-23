@@ -345,6 +345,54 @@ function M.create_line_buffered_feed(callback)
 	end
 end
 
+---@compile glob patterns into vim.regex objects
+---@param globs string[]
+---@return vim.regex[]
+function M.compile_globs(globs)
+	local compiled = {}
+	for _, g in ipairs(globs) do
+		-- Compile into a vim.regex object
+		table.insert(compiled, vim.regex(vim.fn.glob2regpat(g)))
+	end
+	return compiled
+end
+
+---@param str string
+---@param regex_list vim.regex[]
+---@return boolean
+function M.any_match(str, regex_list)
+	for _, pat in ipairs(regex_list) do
+		-- .match_str is significantly faster than vim.fn.match
+		if pat:match_str(str) then
+			return true
+		end
+	end
+	return false
+end
+
+---@param path string
+---@param is_dir boolean
+---@param include_regex vim.regex[]?
+---@param exclude_regex vim.regex[]?
+---@return boolean
+function M.check_path_pattern(path, is_dir, include_regex, exclude_regex)
+	if is_dir and path:sub(-1) == "/" then
+		path = path:sub(1, #path - 1)
+	end
+	if exclude_regex then
+		if M.any_match(path, exclude_regex) then
+			return false
+		end
+		if is_dir and M.any_match(path .. '/', exclude_regex) then
+			return false
+		end
+	end
+	if include_regex then
+		return M.any_match(path, include_regex)
+	end
+	return true
+end
+
 ---@param text string
 ---@param query string
 ---@return boolean, number, integer[]  -- match success, score, match positions

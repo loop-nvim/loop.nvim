@@ -1,6 +1,7 @@
 local M = {}
 
 local utils = require("loop.utils.utils")
+local strtools = require("loop.utils.strtools")
 
 ---@param path string
 function M.file_exists(path)
@@ -265,21 +266,14 @@ end
 local uv = vim.uv or vim.loop
 
 ---@param dir string
----@param exclude_globs string[]
----@param on_file fun(path:string,name:string)
+---@param include_regex_list vim.regex[]
+---@param exclude_regex_list vim.regex[]
+---@param on_file fun(path:string,name:string,rel_path:string)
 ---@param on_done fun()
 ---@return function # cancel function
-function M.async_walk_dir(dir, exclude_globs, on_file, on_done)
-    local results_count = 0
+function M.async_walk_dir(dir, include_regex_list, exclude_regex_list, on_file, on_done)
     local pending_dirs = { dir }
     local is_cancelled = false
-
-    local function is_excluded(path)
-        for _, pat in ipairs(exclude_globs or {}) do
-            if path:match(pat) then return true end
-        end
-        return false
-    end
 
     local on_done_called = false
     local call_on_done = function()
@@ -313,7 +307,6 @@ function M.async_walk_dir(dir, exclude_globs, on_file, on_done)
             return
         end
 
-        local chunk = {}
         -- 3. Iterate through entries
         while true do
             ---@diagnostic disable-next-line: undefined-field
@@ -321,16 +314,18 @@ function M.async_walk_dir(dir, exclude_globs, on_file, on_done)
             if not name then break end
 
             local full_path = vim.fs.joinpath(path, name)
-
-            -- Directory logic
-            if type_ == "directory" then
-                if not is_excluded(full_path) then
-                    table.insert(pending_dirs, full_path)
-                end
-                -- File logic
-            elseif type_ == "file" then
-                if not is_excluded(full_path) then
-                    on_file(full_path, name)
+            local rel_path = vim.fs.relpath(dir, full_path)
+            if rel_path then
+                -- Directory logic
+                if type_ == "directory" then
+                    if strtools.check_path_pattern(rel_path, true, nil, exclude_regex_list) then
+                        table.insert(pending_dirs, full_path)
+                    end
+                    -- File logic
+                elseif type_ == "file" then
+                    if strtools.check_path_pattern(rel_path, false, include_regex_list, exclude_regex_list) then
+                        on_file(full_path, name, rel_path)
+                    end
                 end
             end
         end

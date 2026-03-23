@@ -1,6 +1,7 @@
 local loopconfig     = require("loop").config
 local class          = require("loop.utils.class")
 local log            = require("loop.log")
+local strtools       = require("loop.utils.strtools")
 local uitools        = require("loop.utils.uitools")
 local filetools      = require("loop.utils.file")
 local TreeBuffer     = require("loop.buf.TreeBuffer")
@@ -69,18 +70,6 @@ local _file_icons    = {
 }
 
 local _error_node_id = {} -- unique id for the error node
-
----@param globs string[]|nil
----@return string[]|nil
-local function _compile_globs(globs)
-    if not globs or #globs == 0 then return nil end
-    local compiled = {}
-    for _, g in ipairs(globs) do
-        -- Compile into a vim.regex object
-        table.insert(compiled, vim.regex(vim.fn.glob2regpat(g)))
-    end
-    return compiled
-end
 
 ---@param id string
 ---@param data loop.comp.FileTree.ItemData
@@ -406,41 +395,15 @@ function FileTree:get_compbuffer()
     return self._tree
 end
 
----@param path string
----@param patterns string[]|nil
----@return boolean
-function FileTree:_match_patterns(path, patterns)
-    if not patterns then return false end
-    for i = 1, #patterns do
-        -- .match_str is significantly faster than vim.fn.match
-        ---@diagnostic disable-next-line: undefined-field
-        if patterns[i]:match_str(path) then
-            return true
-        end
-    end
-    return false
-end
-
 ---@param rel string
 ---@param is_dir boolean
 ---@return boolean
 function FileTree:_should_include(rel, is_dir)
-    if is_dir and rel:sub(-1) == "/" then
-        rel = rel:sub(1, #rel - 1)
-    end
-    if self:_match_patterns(rel, self._exclude_patterns) then
-        return false
-    end
-    if self:_match_patterns(rel .. '/', self._exclude_patterns) then
-        return false
-    end
     if is_dir then
-        return true
+        -- dir is included unless explicitly excluded
+        return strtools.check_path_pattern(rel, true, nil, self._exclude_patterns)
     end
-    if self._include_patterns then
-        return self:_match_patterns(rel, self._include_patterns)
-    end
-    return true
+    return strtools.check_path_pattern(rel, false, self._include_patterns, self._exclude_patterns)
 end
 
 --- Starts a monitor for a single directory and manages its lifecycle via LRU
@@ -486,8 +449,8 @@ end
 ---@param follow_symlinks boolean?
 function FileTree:_load_workspace(name, root, include_globs, exclude_globs, follow_symlinks)
     self._root = root and vim.fs.normalize(root) or nil -- normalize is important because we may use / to split path
-    self._include_patterns = include_globs and _compile_globs(include_globs) or nil
-    self._exclude_patterns = exclude_globs and _compile_globs(exclude_globs) or nil
+    self._include_patterns = include_globs and strtools.compile_globs(include_globs) or nil
+    self._exclude_patterns = exclude_globs and strtools.compile_globs(exclude_globs) or nil
     self._follow_symlinks = follow_symlinks
     self:_reload()
 end

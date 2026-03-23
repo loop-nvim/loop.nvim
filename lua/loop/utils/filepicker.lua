@@ -8,31 +8,31 @@ local filetools = require("loop.utils.file")
 local picker = require('loop.utils.picker')
 local pickertools = require("loop.utils.pickertools")
 
----@class loop.filepicker.fdopts
+---@class loop.filepicker.SearchOpts
 ---@field cwd string The root directory for the search
 ---@field include_globs string[] List of glob patterns to include (filtered in Lua)
 ---@field exclude_globs string[] List of glob patterns for fd to ignore
 ---@field max_results number?
 ---@
 ---@param query string User input
----@param fd_opts loop.filepicker.fdopts
+---@param opts loop.filepicker.SearchOpts
 ---@param fetch_opts loop.Picker.FetcherOpts
 ---@param callback fun(items:loop.SelectorItem[]?)
-local function async_lua_search(query, fd_opts, fetch_opts, callback)
+local function async_lua_search(query, opts, fetch_opts, callback)
     assert(query ~= "")
     local count = 0
-    local max_results = fd_opts.max_results or 10000
+    local max_results = opts.max_results or 10000
     local items = {}
+
+    local include_regex_list = strtools.compile_globs(opts.include_globs)
+    local exclude_regex_list = strtools.compile_globs(opts.exclude_globs)
 
     local cancel_fn
     cancel_fn = filetools.async_walk_dir(
-        fd_opts.cwd,
-        fd_opts.exclude_globs,
-        function(full_path, filename)
-            if filename:sub(1, 1) == '.' then return end
-
-            local relative_path = full_path:sub(#fd_opts.cwd + 1)
-
+        opts.cwd,
+        include_regex_list,
+        exclude_regex_list,
+        function(full_path, filename, relative_path)
             -- Use generic tool: Match against filename, but display relative_path
             local res = pickertools.make_picker_item(filename, query, relative_path, {
                 list_width = fetch_opts.list_width,
@@ -75,7 +75,7 @@ local function async_lua_search(query, fd_opts, fetch_opts, callback)
 end
 
 ---@param query string
----@param fd_opts loop.filepicker.fdopts
+---@param fd_opts loop.filepicker.SearchOpts
 ---@param fetch_opts loop.Picker.FetcherOpts
 ---@param callback fun(items:loop.Picker.Item[]?)
 local function async_fd_search(query, fd_opts, fetch_opts, callback)
@@ -94,31 +94,35 @@ local function async_fd_search(query, fd_opts, fetch_opts, callback)
     local count = 0
     local max_results = fd_opts.max_results or 10000
 
+    local include_regex_list = strtools.compile_globs(fd_opts.include_globs)
+
     local buffered_feed = strtools.create_line_buffered_feed(function(lines)
         local items = {}
         for _, line in ipairs(lines) do
             if read_stop then return end
-            line = line:gsub("^%.[/]", "")
-
-            if count < max_results then
-                -- Match against line (the relative path from fd)
-                local res = pickertools.make_picker_item(line, query, line, {
-                    list_width = fetch_opts.list_width,
-                    is_path = true
-                })
-
-                if res then
-                    table.insert(items, {
-                        label_chunks = res.chunks,
-                        data = vim.fs.joinpath(fd_opts.cwd, line),
-                        score = res.score
+            local relpath = line:gsub("^%.[/]", "")
+            -- line is path relative to fd_opts.cwd
+            if strtools.check_path_pattern(line, false, include_regex_list, nil) then
+                if count < max_results then
+                    -- Match against line (the relative path from fd)
+                    local res = pickertools.make_picker_item(relpath, query, relpath, {
+                        list_width = fetch_opts.list_width,
+                        is_path = true
                     })
-                    count = count + 1
+
+                    if res then
+                        table.insert(items, {
+                            label_chunks = res.chunks,
+                            data = vim.fs.joinpath(fd_opts.cwd, relpath),
+                            score = res.score
+                        })
+                        count = count + 1
+                    end
+                else
+                    process:kill({ stop_read = true })
+                    read_stop = true
+                    break
                 end
-            else
-                process:kill({ stop_read = true })
-                read_stop = true
-                break
             end
         end
 
@@ -153,16 +157,17 @@ function M.open(opts)
                 callback()
                 return function() end
             end
-            local fd_opts = {
+            ---@type loop.filepicker.SearchOpts
+            local search_opts = {
                 cwd = opts.cwd or vim.fn.getcwd(),
                 include_globs = opts.include_globs or {},
                 exclude_globs = opts.exclude_globs,
                 max_results = opts.max_results,
             }
             if ksconfig.use_fd_find then
-                return async_fd_search(query, fd_opts, fetch_opts, callback)
+                return async_fd_search(query, search_opts, fetch_opts, callback)
             else
-                return async_lua_search(query, fd_opts, fetch_opts, callback)
+                return async_lua_search(query, search_opts, fetch_opts, callback)
             end
         end,
         async_preview = pickertools.default_file_preview,
