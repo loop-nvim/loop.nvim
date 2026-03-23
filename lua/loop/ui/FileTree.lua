@@ -212,7 +212,9 @@ function FileTree:_on_buffer_create()
         if uitools.is_regular_buffer(buf) then
             local path = vim.api.nvim_buf_get_name(buf)
             if path ~= "" then
-                self:_reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others, true)
+                vim.schedule(function()
+                    self:_reveal(path, loopconfig.filetree.track_current_file.auto_collapse_others, true)
+                end)
             end
         end
     end
@@ -530,7 +532,8 @@ end
 function FileTree:_on_refresh_by_user()
     self._reload_counter = self._reload_counter + 1
     self._tree:clear_items()
-    -- delay a little to avoid flicker and to provide visual feedback
+    -- delay a little to
+    -- avoid flicker, protect against burst, and to provide visual feedback
     local reload_counter = self._reload_counter
     vim.defer_fn(function()
         if reload_counter == self._reload_counter then
