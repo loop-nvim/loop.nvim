@@ -43,7 +43,9 @@ end
 ---@param opts { list_width: number, is_path: boolean, offset: number? }
 ---@return {score:number,chunks:string[][]}?
 function M.make_picker_item(match_target, query, display_string, opts)
-    local is_match, score, positions = strtools.fuzzy_match(match_target, query)
+    local is_match, score, positions = strtools.fuzzy_match(match_target, query, {
+        short_bias = not opts.is_path,
+    })
     if not is_match and query ~= "" then return nil end
 
     local final_display = display_string
@@ -86,8 +88,8 @@ function M.default_file_preview(filepath, opts, callback)
         function(load_err, content)
             callback(content, {
                 filepath = filepath,
-                 lnum = opts.lnum,
-                 col = opts.col,
+                lnum = opts.lnum,
+                col = opts.col,
                 error_msg = load_err,
             })
         end)

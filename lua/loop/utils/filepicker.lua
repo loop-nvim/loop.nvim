@@ -34,10 +34,10 @@ local function async_lua_search(query, opts, fetch_opts, callback)
         exclude_regex_list,
         function(full_path, filename, relative_path)
             -- Use generic tool: Match against filename, but display relative_path
-            local res = pickertools.make_picker_item(filename, query, relative_path, {
+            local res = pickertools.make_picker_item(relative_path, query, relative_path, {
                 list_width = fetch_opts.list_width,
                 is_path = true,
-                offset = #relative_path - #filename
+                offset = 0
             })
 
             if not res then return end

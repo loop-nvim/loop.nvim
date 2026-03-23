@@ -18,6 +18,26 @@ function M.special_marker3()
 	return "\240\159\188\130"
 end
 
+-- Helpers
+local function _to_lower(byte)
+	if byte >= 65 and byte <= 90 then
+		return byte + 32
+	end
+	return byte
+end
+local function _is_upper(byte)
+	return byte >= 65 and byte <= 90
+end
+local function _is_boundary(text, i)
+	if i == 1 then return true end
+	local prev = text:byte(i - 1)
+	return not (
+		(prev >= 48 and prev <= 57) or -- 0-9
+		(prev >= 65 and prev <= 90) or -- A-Z
+		(prev >= 97 and prev <= 122) -- a-z
+	)
+end
+
 ---@param str string
 ---@param len number
 ---@return string
@@ -395,58 +415,57 @@ end
 
 ---@param text string
 ---@param query string
----@return boolean, number, integer[]  -- match success, score, match positions
-function M.fuzzy_match(text, query)
+---@param opts {short_bias:boolean}?
+---@return boolean, number, integer[]
+function M.fuzzy_match(text, query, opts)
 	local tlen = #text
 	local qlen = #query
-
 	if qlen == 0 then
 		return true, 0, {}
 	end
 
-	local ti = 1
-	local qi = 1
+	local ti, qi = 1, 1
 	local score = 0
 	local last = 0
 	local positions = {}
-
-	-- 1. Standard fuzzy matching loop
+	-- Matching loop
 	while ti <= tlen and qi <= qlen do
-		local tc = text:byte(ti)
-		local qc = query:byte(qi)
-
-		-- Case-insensitive comparison
-		if tc >= 65 and tc <= 90 then tc = tc + 32 end
-		if qc >= 65 and qc <= 90 then qc = qc + 32 end
+		local raw_tc = text:byte(ti)
+		local tc = _to_lower(raw_tc)
+		local qc = _to_lower(query:byte(qi))
 
 		if tc == qc then
-			-- Bonus for consecutive matches
-			if last > 0 and last + 1 == ti then
-				score = score + 10 -- Higher weight for flow
+			if last > 0 then
+				local gap = ti - last - 1
+				score = score + (gap == 0 and 10 or (2 - gap))
 			else
-				score = score + 2
+				score = score + 3
 			end
-
+			if _is_boundary(text, ti) then
+				-- Word boundary bonus
+				score = score + 6
+			elseif ti > 1 then
+				-- CamelCase bonus
+				local prev = text:byte(ti - 1)
+				if _is_upper(raw_tc) and not _is_upper(prev) then
+					score = score + 5
+				end
+			end
 			last = ti
 			positions[#positions + 1] = ti
 			qi = qi + 1
 		end
 		ti = ti + 1
 	end
-
-	-- If we didn't match the whole query, it's a fail
+	--  Not a full match
 	if qi <= qlen then
 		return false, 0, {}
 	end
-
-	--- 2. Scope Closeness Calculation
-	-- Calculate ratio: 1.0 is a perfect length match, lower is more "noise"
-	local coverage = qlen / tlen
-
-	-- Apply the coverage as a multiplier to the base score
-	-- This ensures that shorter strings with the same match pattern rank higher
-	score = score * (1 + coverage)
-
+	-- Short string bias (additive, safe)
+	if not opts or opts.short_bias then
+		local coverage = qlen / tlen
+		score = score + (coverage * 5)
+	end
 	return true, score, positions
 end
 
