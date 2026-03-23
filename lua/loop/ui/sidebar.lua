@@ -30,7 +30,7 @@ local _workspace_open = false
 -- ======================================
 
 local _state = {
-    is_visible = false,
+    is_visible = true,
     width_ratio = nil,
     ---@type table<string, number[]> -- Maps preset name to array of vertical ratios
     ratios = {}

@@ -66,8 +66,8 @@ local function _show_help()
         "  gp       Paste node after current",
         "  gP       Paste node before current",
         "  gi       Paste node under current (append to object/array)",
-        "  Alt-j    Move array item down",
-        "  Alt-k    Move array item up",
+        "  o        Move array item down",
+        "  O        Move array item up",
         "",
         "Other:",
         "  K        Show element help (hover window)",
@@ -421,12 +421,12 @@ function JsonEditor:_setup()
         desc = "Paste node inside (append)",
         callback = function() with_current_item(function(i) self:_paste(i, "under") end) end,
     })
-    self._tree:add_keymap("<A-j>", {
+    self._tree:add_keymap("o", {
         desc = "Move item down",
         callback = function() with_current_item(function(i) self:_move_item(i, "down") end) end,
     })
 
-    self._tree:add_keymap("<A-k>", {
+    self._tree:add_keymap("O", {
         desc = "Move item up",
         callback = function() with_current_item(function(i) self:_move_item(i, "up") end) end,
     })
