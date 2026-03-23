@@ -313,7 +313,7 @@ local function _load_and_run_task(mode, task_name)
             return
         end
         taskmgr.save_last_task_name(root_name, config_dir)
-        statuspanel.show_window()
+        M.show_window()
         runner.run_task_with_deps(all_tasks, root_name)
     end)
 end
@@ -812,6 +812,7 @@ function M.show_window()
         _notify_no_ws()
         return
     end
+    sidebar.save_layout()
     statuspanel.show_window()
     sidebar.fix_layout()
 end

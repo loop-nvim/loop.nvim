@@ -26,6 +26,17 @@ local _active_buffers = {}
 local _workspace_open = false
 
 -- ======================================
+-- State
+-- ======================================
+
+local _state = {
+    is_visible = false,
+    width_ratio = nil,
+    ---@type table<string, number[]> -- Maps preset name to array of vertical ratios
+    ratios = {}
+}
+
+-- ======================================
 -- Window Helpers
 -- ======================================
 
@@ -93,6 +104,30 @@ local function _are_windows_stacked_vertically(wins)
     return true
 end
 
+local function _save_current_layout_to_state()
+    if not _active_preset_id then return end
+    local wins = _get_managed_windows()
+    if #wins == 0 then return end
+
+    local preset = _presets[_active_preset_id]
+    if not preset then return end
+
+    local total_w = vim.o.columns
+    local total_h = vim.o.lines - vim.o.cmdheight
+
+    -- Save Global Width Ratio
+    local actual_w = vim.api.nvim_win_get_width(wins[1])
+    _state.width_ratio = actual_w / total_w
+
+    -- Save Vertical Ratios for this specific preset name
+    local current_ratios = {}
+    for _, win in ipairs(wins) do
+        local actual_h = vim.api.nvim_win_get_height(win)
+        table.insert(current_ratios, actual_h / total_h)
+    end
+    _state.ratios[preset.name] = current_ratios
+end
+
 local function _apply_ratios()
     ---@type loop.SidebarPreset?
     local preset = _presets[_active_preset_id]
@@ -111,11 +146,14 @@ local function _apply_ratios()
         return
     end
 
-    local width_ratio = 0.2
+    local active_ratios = _state.ratios[preset.name]
+    
+    local width_ratio = _state.width_ratio or 0.2
     local ratios = {}
-    for _, viewdef in ipairs(preset.views) do
+    for i, viewdef in ipairs(preset.views) do
         local view = views.get_view_info(viewdef.view_id)
-        table.insert(ratios, view and viewdef.ratio or 0)
+        local r = (active_ratios and active_ratios[i]) or view and viewdef.ratio or 0
+        table.insert(ratios, r)
     end
 
 
@@ -167,7 +205,6 @@ local function _fix_layout()
     if not _are_windows_stacked_vertically(windows) then
         return
     end
-    vim.notify("fixing layout")
     -- 1. Setup the Anchor (Move first window to far left)
     local anchor_win = windows[1]
     local width = vim.api.nvim_win_get_width(anchor_win)
@@ -198,6 +235,24 @@ local function _destroy_buffers()
     _active_buffers = {}
 end
 
+local function _hide()
+    local wins = _get_managed_windows()
+    if #wins > 0 then
+        _save_current_layout_to_state()
+    end
+    vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
+    -- destroy_buffers()
+    for _, win in ipairs(wins) do
+        if vim.api.nvim_win_is_valid(win) then
+            -- avoid error when closing last window on vim exit
+            pcall(vim.api.nvim_win_close, win)
+        end
+    end
+    _destroy_buffers()
+    _state.is_visible = true
+end
+
+
 ---@param id number?
 ---@return boolean
 local function _show(id)
@@ -223,10 +278,11 @@ local function _show(id)
 
     _destroy_buffers()
     if #wins > 0 then
-        M.hide()
+        _hide()
     end
 
     _active_preset_id = id
+    _state.is_visible = true
 
     local buffers = {}
     for _, viewdef in ipairs(def.views) do
@@ -304,13 +360,12 @@ local function _show(id)
     return true
 end
 
-
 -- ======================================
 -- Public API
 -- ======================================
 
 function M.on_workspace_close()
-    M.hide()
+    _hide()
     _presets = {}
     _active_preset_id = nil
     -- don't reset _next_id so that old ids expire
@@ -332,7 +387,9 @@ function M.on_workspace_open()
         views = { { view_id = view_id, ratio = 1 } }
     })
     _workspace_open = true
-    _show()
+    if _state.is_visible ~= false then
+        _show()
+    end
 end
 
 ---@param def loop.SidebarPreset
@@ -410,25 +467,20 @@ function M.is_visible()
 end
 
 function M.hide()
-    local wins = _get_managed_windows()
-    vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
-    -- destroy_buffers()
-    for _, win in ipairs(wins) do
-        if vim.api.nvim_win_is_valid(win) then
-            -- avoid error when closing last window on vim exit
-            pcall(vim.api.nvim_win_close, win)
-        end
-    end
-    _destroy_buffers()
+    _hide()
 end
 
-function M.toggle(name)
+function M.toggle()
     local wins = _get_managed_windows()
     if #wins > 0 then
-        M.hide()
+        _hide()
     else
-        M.show(name)
+        _show()
     end
+end
+
+function M.save_layout()
+    _save_current_layout_to_state()
 end
 
 function M.fix_layout()
