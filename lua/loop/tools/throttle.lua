@@ -2,6 +2,10 @@ local M = {}
 
 local uv = vim.uv
 
+local function _is_exiting()
+    return vim.v.exiting ~= vim.NIL
+end
+
 -- Throttle that:
 -- • Runs the first call immediately
 -- • Guarantees at least `ms` between executions
@@ -18,7 +22,9 @@ function M.throttle_wrap(ms, fn)
         local function run()
             ---@diagnostic disable-next-line: undefined-field
             last_exec = uv.now()
-            fn()
+            if not _is_exiting() then
+                fn()
+            end
         end
 
         -- Can run immediately
@@ -76,7 +82,9 @@ function M.trailing_fixed_wrap(ms, fn)
                 -- Reset state BEFORE running so the function itself
                 -- could technically trigger a new debounce if needed.
                 is_pending = false
-                fn()
+                if not _is_exiting() then
+                    fn()
+                end
             end)
         end)
     end
@@ -99,11 +107,12 @@ function M.leading_idle_debounce(ms, fn)
         timer:start(ms, 0, function()
             vim.schedule(function()
                 cooling = false
-                fn()
+                if not _is_exiting() then
+                    fn()
+                end
             end)
         end)
     end
 end
-
 
 return M
