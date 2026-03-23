@@ -119,8 +119,7 @@ local function _show_help()
         "  D        Delete directory (recursive)",
         "",
         "Other:",
-        "  r        Reload dir",
-        "  R        Reload workspace",
+        "  R        Refresh tree",
         "  g?       Show this help",
     }
 
@@ -338,10 +337,6 @@ function FileTree:_setup_keymaps()
     })
 
     -- Refactoring
-    self._tree:add_keymap("r", {
-        desc = "Refresh (reload) directory",
-        callback = function() with_item(function(i) self:_reload_node(i) end) end
-    })
     self._tree:add_keymap("c", {
         desc = "Change (Rename)",
         callback = function() with_item(function(i) self:_rename_node(i) end) end
@@ -357,8 +352,8 @@ function FileTree:_setup_keymaps()
 
     -- Utilities
     self._tree:add_keymap("R", {
-        desc = "Reload Workspace",
-        callback = function() self:_reload() end
+        desc = "Refresh tree",
+        callback = function() self:_on_refresh_by_user() end
     })
     self._tree:add_keymap("g?", {
         desc = "Show Help",
@@ -530,6 +525,17 @@ function FileTree:_reload()
     end
 
     self:_read_dir(path, self._reload_counter, true)
+end
+
+function FileTree:_on_refresh_by_user()
+    self._tree:clear_items()
+    -- delay a little to avoid flicker to provide visual feedback
+    local reload_counter = self._reload_counter
+    vim.defer_fn(function()
+        if reload_counter == self._reload_counter then
+            self:_reload()
+        end
+    end, 300)
 end
 
 ---@private
@@ -980,12 +986,6 @@ function FileTree:_create_node(item, as_dir, force_parent)
                 end
             end
         end)
-end
-
----@param item table
-function FileTree:_reload_node(item)
-    local path = item.data.is_dir and item.data.path or vim.fn.fnamemodify(item.data.path, ":h")
-    self:_read_dir(path, self._reload_counter, false)
 end
 
 --- Rename a file or directory

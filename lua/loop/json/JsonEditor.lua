@@ -264,6 +264,12 @@ local function _formatter(_, data, expanded)
 
     -- Key label
     table.insert(text_chunks, { key, "Label" })
+    if expanded == false and vt == "object" then
+        if type(data.summary) == "string" then
+            table.insert(text_chunks, { " ", nil }) -- spacing
+            table.insert(text_chunks, { data.summary, "Comment" })
+        end
+    end
 
     if vt == "object" or vt == "array" then
         -- Show bracket count as virt_text
@@ -272,12 +278,6 @@ local function _formatter(_, data, expanded)
             local bracket = vt == "object" and "{…}" or ("[…] (" .. count .. ")")
             table.insert(virt_chunks, { "", nil }) -- spacing
             table.insert(virt_chunks, { bracket, "Comment" })
-            if expanded == false and vt == "object" then
-                if type(data.summary) == "string" then
-                    table.insert(virt_chunks, { " ", nil }) -- spacing
-                    table.insert(virt_chunks, { data.summary, "Comment" })
-                end
-            end
         else
             table.insert(virt_chunks, { "Type Error", "Error" })
         end
