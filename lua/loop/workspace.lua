@@ -1,7 +1,7 @@
 local M             = {}
 
 local loopconfig    = require("loop").config
-local log          = require('loop.log')
+local log           = require('loop.log')
 local taskmgr       = require("loop.task.taskmgr")
 local variablesmgr  = require("loop.task.variablesmgr")
 local statuspanel   = require("loop.ui.statuspanel")
@@ -812,15 +812,8 @@ function M.show_window()
         _notify_no_ws()
         return
     end
-    if not statuspanel.is_visible() then
-        if sidebar.is_visible() then
-            sidebar.hide()
-            statuspanel.show_window()
-            sidebar.show()
-        else
-            statuspanel.show_window()
-        end
-    end
+    statuspanel.show_window()
+    sidebar.fix_layout()
 end
 
 function M.hide_window()

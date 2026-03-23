@@ -29,7 +29,7 @@ local _workspace_open = false
 -- Window Helpers
 -- ======================================
 
-local function is_managed_window(win)
+local function _is_managed_window(win)
     if not vim.api.nvim_win_is_valid(win) then
         return false
     end
@@ -42,33 +42,42 @@ local function is_managed_window(win)
 end
 
 
-local function get_window_index(win)
+local function _get_window_index(win)
     local ok, val = pcall(function()
         return vim.w[win][INDEX_MARKER]
     end)
 
-    return ok and val or 1
+    return ok and val or nil
 end
 
 
-local function get_managed_windows()
+local function _get_managed_windows()
     local wins = {}
 
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if is_managed_window(win) then
+        if _is_managed_window(win) then
             table.insert(wins, win)
         end
     end
 
     table.sort(wins, function(a, b)
-        return get_window_index(a) < get_window_index(b)
+        return (_get_window_index(a) or 1) < (_get_window_index(b) or 1)
     end)
 
     return wins
 end
 
+---@param win number
+local function _set_custom_win_flags(win)
+    vim.wo[win].wrap = false
+    vim.wo[win].spell = false
+    vim.wo[win].winfixbuf = true
+    vim.wo[win].winfixheight = true
+    vim.wo[win].winfixwidth = true
+end
+
 -- Validate that windows are stacked vertically
-local function are_windows_stacked_vertically(wins)
+local function _are_windows_stacked_vertically(wins)
     if #wins <= 1 then return true end
 
     local first_win_pos = vim.api.nvim_win_get_position(wins[1])
@@ -84,20 +93,20 @@ local function are_windows_stacked_vertically(wins)
     return true
 end
 
-local function apply_ratios()
+local function _apply_ratios()
     ---@type loop.SidebarPreset?
     local preset = _presets[_active_preset_id]
     if not preset then
         return
     end
 
-    local windows = get_managed_windows()
+    local windows = _get_managed_windows()
     if #preset.views ~= #windows then
         -- "sidebar window were altered, skipping resize"
         return
     end
 
-    if not are_windows_stacked_vertically(windows) then
+    if not _are_windows_stacked_vertically(windows) then
         -- sidebar window are not stacked vertically, skipping resize
         return
     end
@@ -152,8 +161,33 @@ local function apply_ratios()
     end
 end
 
+local function _fix_layout()
+    local windows = _get_managed_windows()
+    if #windows <= 0 then return end
+    if not _are_windows_stacked_vertically(windows) then
+        return
+    end
+    vim.notify("fixing layout")
+    -- 1. Setup the Anchor (Move first window to far left)
+    local anchor_win = windows[1]
+    local width = vim.api.nvim_win_get_width(anchor_win)
+    -- Force the anchor to the FAR LEFT using the layout-breaking command
+    vim.api.nvim_win_call(anchor_win, function()
+        vim.cmd("wincmd H")
+    end)
+    vim.api.nvim_win_set_width(anchor_win, width)
+    -- 2. Move existing windows into the stack
+    local last_win = anchor_win
+    for i = 2, #windows do
+        local win = windows[i]
+        vim.fn.win_splitmove(win, last_win, { vertical = false, rightbelow = true })
+        last_win = win
+    end
+    _apply_ratios()
+end
+
 local function _on_vim_resize(r)
-    apply_ratios()
+    _apply_ratios()
 end
 local function _destroy_buffers()
     for bufnr, _ in pairs(_active_buffers) do
@@ -179,7 +213,7 @@ local function _show(id)
         return false
     end
 
-    local wins = get_managed_windows()
+    local wins = _get_managed_windows()
 
     if not id or id == _active_preset_id then
         if #wins > 0 then
@@ -239,12 +273,7 @@ local function _show(id)
 
     -- Configure windows
     for i, win in ipairs(windows) do
-        vim.wo[win].wrap = false
-        vim.wo[win].spell = false
-        vim.wo[win].winfixbuf = true
-        vim.wo[win].winfixheight = true
-        vim.wo[win].winfixwidth = true
-
+        _set_custom_win_flags(win)
         vim.w[win][KEY_MARKER] = true
         vim.w[win][INDEX_MARKER] = i
     end
@@ -257,7 +286,7 @@ local function _show(id)
         vim.wo[win].winfixbuf = true
     end
 
-    apply_ratios()
+    _apply_ratios()
 
     if vim.api.nvim_win_is_valid(original) then
         vim.api.nvim_set_current_win(original)
@@ -376,12 +405,12 @@ function M.show(name)
 end
 
 function M.is_visible()
-    local wins = get_managed_windows()
+    local wins = _get_managed_windows()
     return #wins > 0
 end
 
 function M.hide()
-    local wins = get_managed_windows()
+    local wins = _get_managed_windows()
     vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
     -- destroy_buffers()
     for _, win in ipairs(wins) do
@@ -394,12 +423,16 @@ function M.hide()
 end
 
 function M.toggle(name)
-    local wins = get_managed_windows()
+    local wins = _get_managed_windows()
     if #wins > 0 then
         M.hide()
     else
         M.show(name)
     end
+end
+
+function M.fix_layout()
+    return _fix_layout()
 end
 
 return M
