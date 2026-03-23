@@ -147,7 +147,7 @@ local function _apply_ratios()
     end
 
     local active_ratios = _state.ratios[preset.name]
-    
+
     local width_ratio = _state.width_ratio or 0.2
     local ratios = {}
     for i, viewdef in ipairs(preset.views) do
@@ -163,6 +163,12 @@ local function _apply_ratios()
     -- 1. Handle Global Sidebar Width
     local total_ui_width = vim.o.columns
     local target_width = math.floor(total_ui_width * (width_ratio or .2))
+
+    if num_wins == 1 then
+        -- Single window, the only the width
+        vim.api.nvim_win_set_width(windows[1], target_width)
+        return
+    end
 
     -- 2. Calculate Vertical Heights
     local total_ui_height = vim.o.lines - vim.o.cmdheight -- account for status/cmd line

@@ -313,7 +313,7 @@ local function _load_and_run_task(mode, task_name)
             return
         end
         taskmgr.save_last_task_name(root_name, config_dir)
-        M.show_window()
+        statuspanel.show_window()
         runner.run_task_with_deps(all_tasks, root_name)
     end)
 end
@@ -783,9 +783,9 @@ function M.statuspanel_command(command)
     if not command or command == "" then
         M.toggle_window()
     elseif command == "show" then
-        M.show_window()
+        statuspanel.show_window()
     elseif command == "hide" then
-        M.hide_window()
+        statuspanel.hide_window()
     elseif command == "clean" then
         if _ws_data and _ws_data.page_manager then _ws_data.page_manager.delete_expired_groups() end
         extensionsmgr.clean_page_groups()
@@ -806,28 +806,26 @@ function M.sidebar_command(command, name)
     end
 end
 
-function M.show_window()
+function M.show_statuspanel()
     _ensure_init()
     if not _ws_data then
         _notify_no_ws()
         return
     end
-    sidebar.save_layout()
     statuspanel.show_window()
-    sidebar.fix_layout()
 end
 
-function M.hide_window()
+function M.hide_statuspanel()
     _ensure_init()
     statuspanel.hide_window()
 end
 
-function M.toggle_window()
+function M.toggle_statuspanel()
     _ensure_init()
     if statuspanel.is_visible() then
-        M.hide_window()
+        statuspanel.hide_window()
     else
-        M.show_window()
+        statuspanel.show_window()
     end
 end
 

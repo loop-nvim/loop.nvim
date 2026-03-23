@@ -1,6 +1,7 @@
 local M = {}
 local loopconfig = require('loop').config
 local Page = require('loop.ui.Page')
+local sidebar = require('loop.ui.sidebar')
 local throttle = require('loop.tools.throttle')
 local uitools = require('loop.tools.uitools')
 local strtools = require('loop.tools.strtools')
@@ -308,8 +309,10 @@ local function _create_window()
     end
 
     local prev_win = vim.api.nvim_get_current_win()
-    -- Open a bottom split.
-    vim.cmd('bot 1split')
+
+    sidebar.save_layout()
+    vim.cmd('bot 1split') -- Open a bottom split.
+    sidebar.fix_layout()
 
     -- Get the new window ID.
     _loop_win = vim.api.nvim_get_current_win()
