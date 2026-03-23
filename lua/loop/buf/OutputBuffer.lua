@@ -61,6 +61,7 @@ end
 function OutputBuffer:add_lines(lines)
     if self:is_destroyed() then return end
     local bufnr = self:get_or_create_buf()
+    if bufnr < 0 then return end
 
     if type(lines) == "string" then
         lines = { lines }

@@ -121,6 +121,7 @@ end
 ---@return boolean refresh_needed
 function BaseBuffer:get_or_create_buf()
     assert(not self._destroyed)
+    if vim.v.exiting ~= vim.NIL then return -1, false end
 
     if self._buf ~= -1 then
         local refresh_needed = false
