@@ -50,24 +50,24 @@ function M.stop_and_close_timer(timer)
 end
 
 function M.deep_merge_tables(dest, src)
-    vim.validate("dest", dest, "table")
-    vim.validate("src", src, "table")
+    vim.validate({
+        dest = { dest, "table" },
+        src = { src, "table" },
+    })
+
     for k, v in pairs(src) do
         if type(v) == "table" then
-            if type(dest[k]) == "table" then
-                if vim.islist(v) then
-                    -- Override lists completely
-                    dest[k] = v
-                else
-                    -- Recursively merge dictionaries
-                    dest[k] = M.deep_merge_tables(dest[k], v)
-                end
+            if type(dest[k]) == "table" and not vim.islist(v) then
+                -- Recursively merge dictionaries into existing dest table
+                M.deep_merge_tables(dest[k], v)
             else
-                -- Replace non-table with table
-                dest[k] = v
+                -- 1. Use vim.deepcopy to break the reference to src
+                -- 2. This handles both list overrides and replacing primitives
+                dest[k] = vim.deepcopy(v)
             end
         else
-            -- Override primitive values
+            -- Primitives (strings, numbers, bools) are passed by value,
+            -- so no deepcopy is needed here.
             dest[k] = v
         end
     end

@@ -108,8 +108,8 @@ local function _run_process_for_ext(start_args, ext_context, page_manager)
 	ext_context.page_groups[name] = group
 	local start_args_cpy = vim.fn.copy(start_args)
 	start_args_cpy.on_exit_handler = function(code)
+		group.expire()
 		if start_args then
-			group.expire()
 			start_args.on_exit_handler(code)
 		end
 	end
@@ -119,7 +119,11 @@ local function _run_process_for_ext(start_args, ext_context, page_manager)
 		term_args = start_args_cpy,
 		activate = true,
 	})
-	return page_data and page_data.term_proc, err_str
+	if not page_data or not page_data.term_proc then
+		group.expire()
+		return nil, err_str
+	end
+	return page_data.term_proc, nil
 end
 
 ---@param ext_context loop.ExtentionContext

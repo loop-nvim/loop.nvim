@@ -313,7 +313,7 @@ end
 
 ---@param opts loop.JsonEditorOpts
 function JsonEditor:init(opts)
-    assert(not _open_editors[opts.filepath], "File already open in another editor")
+    assert(not _open_editors[opts.filepath], "Json editor already open for this file")
     self._opts = opts or {} ---@type loop.JsonEditorOpts
     self._undo_stack = {} ---@type table[]
     self._redo_stack = {} ---@type table[]

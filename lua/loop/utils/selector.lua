@@ -11,6 +11,7 @@ local M           = {}
 ---@class loop.SelectorItem
 ---@field label        string?             main displayed text (optional if label_chunks used)
 ---@field label_chunks {[1]:string, [2]:string?}[]?  optional, allows chunked labels with highlights
+---@field score        number?
 ---@field file         string?
 ---@field lnum         number?
 ---@field virt_lines? {[1]:string, [2]:string?}[][] chunks: { { "text", "HighlightGroup?" }, ... }

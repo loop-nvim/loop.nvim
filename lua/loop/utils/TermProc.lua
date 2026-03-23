@@ -78,10 +78,13 @@ function TermProc:start(bufnr, args)
 	end
 
 	local ok, err
-	vim.api.nvim_buf_call(bufnr, function()
+	local pcall_ok, pcall_err = pcall(vim.api.nvim_buf_call, bufnr, function()
 		ok, err = self:_start_term_job(cmd_and_args, env, cwd, args.output_handler,
 			args.on_exit_handler)
 	end)
+	if not pcall_ok then
+		return false, pcall_err
+	end
 	return ok, err
 end
 
