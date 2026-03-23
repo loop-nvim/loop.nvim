@@ -1,13 +1,13 @@
 local M = {}
 
 local JsonEditor = require('loop.json.JsonEditor')
-local uitools = require('loop.tools.uitools')
-local strtools = require('loop.tools.strtools')
+local uitools = require('loop.utils.uitools')
+local strtools = require('loop.utils.strtools')
 local jsoncodec = require('loop.json.codec')
 local jsonvalidator = require('loop.json.validator')
-local filetools = require('loop.tools.file')
+local filetools = require('loop.utils.file')
 local providers = require("loop.task.providers")
-local selector = require("loop.tools.selector")
+local selector = require("loop.utils.selector")
 local log = require("loop.log")
 
 ---@return table

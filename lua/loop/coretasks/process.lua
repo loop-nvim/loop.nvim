@@ -18,7 +18,7 @@ function M.start_task(ws_dir, task, page_group, on_exit)
 
     local interrupted = false
     -- Your original args — unchanged, just using the resolved values
-    ---@type loop.tools.TermProc.StartArgs
+    ---@type loop.utils.TermProc.StartArgs
     local start_args = {
         name = task.name or "Unnamed Tool Task",
         command = task.command,

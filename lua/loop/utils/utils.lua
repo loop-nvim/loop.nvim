@@ -49,4 +49,29 @@ function M.stop_and_close_timer(timer)
     return nil
 end
 
+function M.deep_merge_tables(dest, src)
+    vim.validate("dest", dest, "table")
+    vim.validate("src", src, "table")
+    for k, v in pairs(src) do
+        if type(v) == "table" then
+            if type(dest[k]) == "table" then
+                if vim.islist(v) then
+                    -- Override lists completely
+                    dest[k] = v
+                else
+                    -- Recursively merge dictionaries
+                    dest[k] = M.deep_merge_tables(dest[k], v)
+                end
+            else
+                -- Replace non-table with table
+                dest[k] = v
+            end
+        else
+            -- Override primitive values
+            dest[k] = v
+        end
+    end
+    return dest
+end
+
 return M

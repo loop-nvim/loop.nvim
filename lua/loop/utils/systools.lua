@@ -34,14 +34,14 @@ function M.get_process_name(cmdline)
     return name
 end
 
----@class loop.tools.ProcessInfo
+---@class loop.utils.ProcessInfo
 ---@field pid number
 ---@field name string
 ---@field user string|nil  -- username or owner (may be nil on some systems)
 ---@field cmd string|nil   -- full command line (bonus, available on Unix)
 
 --- Returns a table of running processes with PID, name, and username
----@return loop.tools.ProcessInfo[]
+---@return loop.utils.ProcessInfo[]
 function M.get_running_processes()
     local processes = {}
     local handle
@@ -104,7 +104,7 @@ function M.get_running_processes()
 end
 
 --- Returns a table of running processes with PID, name, and username
----@return loop.tools.ProcessInfo[]
+---@return loop.utils.ProcessInfo[]
 function M.get_current_user_processes()
     local all = M.get_running_processes()
     local is_windows = package.config:sub(1, 1) == "\\" or os.getenv("OS") == "Windows_NT"

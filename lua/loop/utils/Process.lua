@@ -1,7 +1,7 @@
 -- Process.lua
 local uv = require('luv')
-local class = require('loop.tools.class')
-local fntools = require('loop.tools.fntools')
+local class = require('loop.utils.class')
+local utils = require('loop.utils.utils')
 
 local function _safe_close(h)
     if h and not h:is_closing() then
@@ -82,7 +82,7 @@ function Process:_spawn()
         if self.exited then return end
         self.exited = true
 
-        self._kill_timer = fntools.stop_and_close_timer(self._kill_timer)
+        self._kill_timer = utils.stop_and_close_timer(self._kill_timer)
         -- Clean shutdown of readers
         self:_close_all()
         if self.on_exit then

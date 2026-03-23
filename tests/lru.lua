@@ -1,8 +1,8 @@
 ---@diagnostic disable: undefined-global, undefined-field
 require("plenary.busted")
-local LRU = require("loop.tools.LRU")
+local LRU = require("loop.utils.LRU")
 
-describe("loop.tools.LRU", function()
+describe("loop.utils.LRU", function()
     -- Internal helper to get keys in order for assertions
     local function get_keys(cache)
         local keys = {}

@@ -2,10 +2,10 @@ local M = {}
 local loopconfig = require('loop').config
 local Page = require('loop.ui.Page')
 local sidebar = require('loop.ui.sidebar')
-local throttle = require('loop.tools.throttle')
-local uitools = require('loop.tools.uitools')
-local strtools = require('loop.tools.strtools')
-local selector = require("loop.tools.selector")
+local throttle = require('loop.utils.throttle')
+local uitools = require('loop.utils.uitools')
+local strtools = require('loop.utils.strtools')
+local selector = require("loop.utils.selector")
 local BaseBuffer = require('loop.buf.BaseBuffer')
 local OutputBuffer = require('loop.buf.OutputBuffer')
 local ReplBuffer = require('loop.buf.ReplBuffer')
@@ -500,13 +500,13 @@ function M.get_page_names(group_label)
 end
 
 ---@param page loop.pages.Page
----@param args loop.tools.TermProc.StartArgs
----@return loop.tools.TermProc|nil,string|nil
+---@param args loop.utils.TermProc.StartArgs
+---@return loop.utils.TermProc|nil,string|nil
 local function _create_term(page, args)
     _create_window()
     assert(_loop_win ~= -1)
 
-    ---@type loop.tools.TermProc.StartArgs
+    ---@type loop.utils.TermProc.StartArgs
     ---@diagnostic disable-next-line: missing-fields
     local args_cpy = {}
     for k, v in pairs(args) do args_cpy[k] = v end
@@ -547,7 +547,7 @@ local function _create_term(page, args)
         end
     end
 
-    local TermProc = require('loop.tools.TermProc')
+    local TermProc = require('loop.utils.TermProc')
 
     logger.log({ "Starting term proc", vim.inspect(args_cpy) }, vim.log.levels.DEBUG)
 

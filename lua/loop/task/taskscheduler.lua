@@ -1,5 +1,5 @@
-local class = require("loop.tools.class")
-local Scheduler = require("loop.tools.Scheduler")
+local class = require("loop.utils.class")
+local Scheduler = require("loop.utils.Scheduler")
 
 ---@alias loop.TaskScheduler.StartTaskFn fun(task: loop.Task, on_exit: fun(ok:boolean, reason:string|nil)): { terminate:fun() }|nil, string|nil
 
@@ -31,7 +31,7 @@ local _last_plan_id = 0
 ---@type number
 local _last_task_id = 0
 
----@type table<number, loop.tools.Scheduler>
+---@type table<number, loop.utils.Scheduler>
 local _plan_schedulers = {}
 
 ---@type table<string, table<number, loop.TaskScheduler.TaskData>>

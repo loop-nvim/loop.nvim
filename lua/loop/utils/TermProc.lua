@@ -1,11 +1,11 @@
-local class    = require('loop.tools.class')
-local uitools  = require('loop.tools.uitools')
-local strtools = require('loop.tools.strtools')
+local class    = require('loop.utils.class')
+local uitools  = require('loop.utils.uitools')
+local strtools = require('loop.utils.strtools')
 
----@class loop.tools.TermProc
----@field new fun(self: loop.tools.TermProc) : loop.tools.TermProc
----@field is_running fun(self: loop.tools.TermProc):boolean
----@field terminate fun(self: loop.tools.TermProc)
+---@class loop.utils.TermProc
+---@field new fun(self: loop.utils.TermProc) : loop.utils.TermProc
+---@field is_running fun(self: loop.utils.TermProc):boolean
+---@field terminate fun(self: loop.utils.TermProc)
 local TermProc = class()
 
 ---Initializes the TermProc instance.
@@ -35,7 +35,7 @@ function TermProc:get_pid()
 	return vim.fn.jobpid(self.job_id)
 end
 
----@class loop.tools.TermProc.StartArgs
+---@class loop.utils.TermProc.StartArgs
 ---@field name string
 ---@field command string|string[]
 ---@field env table<string,string>|nil
@@ -45,7 +45,7 @@ end
 
 ---Starts a new terminal job.
 ---@param bufnr number
----@param args loop.tools.TermProc.StartArgs
+---@param args loop.utils.TermProc.StartArgs
 ---@return boolean success
 ---@return string|nil error msg or nil
 function TermProc:start(bufnr, args)

@@ -1,8 +1,8 @@
 local M = {}
 
-local uitools = require('loop.tools.uitools')
-local systools = require("loop.tools.systools")
-local selector = require("loop.tools.selector")
+local uitools = require('loop.utils.uitools')
+local systools = require("loop.utils.systools")
+local selector = require("loop.utils.selector")
 
 local _nofile_error = "Current buffer is not a regular file"
 local _badtype_error = "Current file type is not `%s`"

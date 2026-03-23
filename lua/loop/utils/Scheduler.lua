@@ -1,4 +1,4 @@
-local class = require("loop.tools.class")
+local class = require("loop.utils.class")
 
 ---@alias loop.scheduler.exit_trigger "cycle"|"invalid_node"|"interrupt"|"node"|"deps_failed"
 ---@alias loop.scheduler.exit_fn fun(success:boolean,trigger:loop.scheduler.exit_trigger,param:any)
@@ -13,8 +13,8 @@ local class = require("loop.tools.class")
 ---@field deps loop.scheduler.NodeId[]?
 ---@field order "sequence"|"parallel"|nil
 
----@class loop.tools.Scheduler
----@field new fun(self:loop.tools.Scheduler):loop.tools.Scheduler
+---@class loop.utils.Scheduler
+---@field new fun(self:loop.utils.Scheduler):loop.utils.Scheduler
 ---@field _nodes table<loop.scheduler.NodeId, loop.scheduler.Node>
 ---@field _start_node loop.scheduler.StartNodeFn
 ---@field _running table<loop.scheduler.NodeId, { terminate:fun() }>

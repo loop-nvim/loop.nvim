@@ -1,4 +1,4 @@
----@class loop.tools.floatwin
+---@class loop.utils.floatwin
 ---@field _complete_cache? string[]
 ---@field _complete_buf? integer
 local M = {}
@@ -248,7 +248,7 @@ function M.input_at_cursor(opts, on_confirm)
 
     -- Setup completion if completions provided
     if opts.completions and #opts.completions > 0 then
-        vim.bo[buf].omnifunc = 'v:lua.require("loop.tools.floatwin")._complete'
+        vim.bo[buf].omnifunc = 'v:lua.require("loop.utils.floatwin")._complete'
         M._complete_cache = opts.completions
         M._complete_buf = buf
     end

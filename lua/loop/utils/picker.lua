@@ -1,6 +1,6 @@
-local Spinner    = require("loop.tools.Spinner")
-local class      = require("loop.tools.class")
-local fntools    = require("loop.tools.fntools")
+local Spinner    = require("loop.utils.Spinner")
+local class      = require("loop.utils.class")
+local utils    = require("loop.utils.utils")
 
 ---@mod loop.picker
 ---@brief Floating async picker with fuzzy filtering and optional preview.
@@ -188,8 +188,8 @@ end
 -- Picker Class
 --------------------------------------------------------------------------------
 
----@class loop.tools.Picker
----@field new fun(self: loop.tools.Picker,opts:loop.Picker.opts,callback:loop.Picker.Callback) : loop.tools.Picker
+---@class loop.utils.Picker
+---@field new fun(self: loop.utils.Picker,opts:loop.Picker.opts,callback:loop.Picker.Callback) : loop.utils.Picker
 ---@field opts loop.Picker.opts
 ---@field callback loop.Picker.Callback
 ---@field has_preview boolean
@@ -200,7 +200,7 @@ end
 ---@field pwin integer
 ---@field lwin integer
 ---@field vwin integer|nil
----@field spinner loop.tools.Spinner|nil
+---@field spinner loop.utils.Spinner|nil
 ---@field closed boolean
 ---@field items_data any[]
 ---@field async_fetch_context number
@@ -645,7 +645,7 @@ function Picker:request_clear_preview()
 end
 
 function Picker:cancel_clear_preview_req()
-    self.preview_timer = fntools.stop_and_close_timer(self.preview_timer)
+    self.preview_timer = utils.stop_and_close_timer(self.preview_timer)
 end
 
 function Picker:clear_list()
@@ -855,7 +855,7 @@ function Picker:close(result)
 
     self:stop_spinner()
 
-    self.preview_timer = fntools.stop_and_close_timer(self.preview_timer)
+    self.preview_timer = utils.stop_and_close_timer(self.preview_timer)
 
     if self.async_fetch_cancel then self.async_fetch_cancel() end
     if self.async_preview_cancel then self.async_preview_cancel() end

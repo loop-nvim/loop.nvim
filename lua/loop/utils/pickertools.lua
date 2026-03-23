@@ -1,7 +1,7 @@
 local M = {}
 
-local strtools = require("loop.tools.strtools")
-local filetools = require("loop.tools.file")
+local strtools = require("loop.utils.strtools")
+local filetools = require("loop.utils.file")
 
 ---@param display_string string The final string to be shown
 ---@param positions integer[] Matched indices (already adjusted for any offsets)

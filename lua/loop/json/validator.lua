@@ -1,6 +1,7 @@
 local M = {}
 
 local jsontools = require("loop.json.jsontools")
+local utils = require("loop.utils.utils")
 
 ---@param errors loop.json.ValidationError[]
 ---@param path string -- path is a JSON Pointer (defined in RFC 6901)
@@ -43,8 +44,9 @@ end
 ---@param schema_map table<string, table>?
 local function _validate(schema, data, path, errors, schema_map)
     if schema_map then
-        schema_map[path] = vim.tbl_deep_extend("force", schema_map[path] or {}, schema)
-        local map = schema_map[path]
+        local map = schema_map[path] or {}
+        utils.deep_merge_tables(map, schema)
+        schema_map[path] = map
         for _, key in ipairs({ "if", "then", "else", "allOf", "oneOf" }) do
             map[key] = nil
         end
@@ -221,7 +223,7 @@ local function _validate(schema, data, path, errors, schema_map)
             end
         end
         if schema_map and best_schema_map then
-            vim.tbl_extend("force", schema_map, best_schema_map)
+            utils.deep_merge_tables(schema_map, best_schema_map)
         end
         if best_count > 0 and best_errors then
             vim.list_extend(errors, best_errors)

@@ -1,6 +1,6 @@
-local class = require('loop.tools.class')
+local class = require('loop.utils.class')
 local BaseBuffer = require('loop.buf.BaseBuffer')
-local Tree = require("loop.tools.Tree")
+local Tree = require("loop.utils.Tree")
 
 ---@class loop.comp.TreeBuffer.Item
 ---@field id any
@@ -194,7 +194,7 @@ end
 
 ---Renders a single node's text and collects its metadata
 ---@private
----@param flatnode loop.tools.Tree.FlatNode
+---@param flatnode loop.utils.Tree.FlatNode
 ---@param row number The buffer row this node will occupy
 ---@return string line, table hl_calls, table extmark_data
 function TreeBuffer:_render_node(flatnode, row)
@@ -324,7 +324,7 @@ end
 ---@private
 ---@param start_idx number
 ---@param old_size number
----@param new_flat loop.tools.Tree.FlatNode[]
+---@param new_flat loop.utils.Tree.FlatNode[]
 function TreeBuffer:_render_range(start_idx, old_size, new_flat)
     local buf = self:get_buf()
     if buf <= 0 then return end

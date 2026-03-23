@@ -1,7 +1,7 @@
-local picker      = require("loop.tools.picker")
-local filetools   = require("loop.tools.file")
-local strtools    = require("loop.tools.strtools")
-local pickertools = require("loop.tools.pickertools")
+local picker      = require("loop.utils.picker")
+local filetools   = require("loop.utils.file")
+local strtools    = require("loop.utils.strtools")
+local pickertools = require("loop.utils.pickertools")
 
 local M           = {}
 

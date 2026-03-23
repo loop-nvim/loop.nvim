@@ -1,4 +1,4 @@
-local class = require('loop.tools.class')
+local class = require('loop.utils.class')
 local BaseBuffer = require('loop.buf.BaseBuffer')
 
 ---@class loop.comp.ListBuffer.Item

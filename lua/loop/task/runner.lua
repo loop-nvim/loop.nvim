@@ -1,11 +1,11 @@
 local M                   = {}
 
 local taskmgr             = require("loop.task.taskmgr")
-local resolver            = require("loop.tools.resolver")
+local resolver            = require("loop.utils.resolver")
 local logs                = require("loop.log")
 local task_scheduler      = require("loop.task.taskscheduler")
 local variablesmgr        = require("loop.task.variablesmgr")
-local strtools            = require("loop.tools.strtools")
+local strtools            = require("loop.utils.strtools")
 local planner             = require("loop.task.planner")
 
 ---@type loop.ws.WorkspaceInfo?

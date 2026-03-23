@@ -1,8 +1,8 @@
 local M = {}
 
 local log = require('loop.log')
-local uitools = require('loop.tools.uitools')
-local strtools = require('loop.tools.strtools')
+local uitools = require('loop.utils.uitools')
+local strtools = require('loop.utils.strtools')
 
 ---@param root string Normalized absolute path
 ---@param path string Normalized absolute path

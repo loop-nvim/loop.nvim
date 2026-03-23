@@ -1,13 +1,13 @@
 local loopconfig     = require("loop").config
-local class          = require("loop.tools.class")
+local class          = require("loop.utils.class")
 local log            = require("loop.log")
-local uitools        = require("loop.tools.uitools")
-local filetools      = require("loop.tools.file")
+local uitools        = require("loop.utils.uitools")
+local filetools      = require("loop.utils.file")
 local TreeBuffer     = require("loop.buf.TreeBuffer")
 local wsmonitor      = require("loop.workspacemonitor")
-local LRU            = require("loop.tools.LRU")
-local floatwin       = require("loop.tools.floatwin")
-local fntools        = require("loop.tools.fntools")
+local LRU            = require("loop.utils.LRU")
+local floatwin       = require("loop.utils.floatwin")
+local utils          = require("loop.utils.utils")
 
 ---@class loop.comp.FileTree.ItemData
 ---@field path string
@@ -224,7 +224,7 @@ function FileTree:_on_buffer_create()
         })
     end
 
-    self._cancel_viewport_timer = fntools.start_timer(1000, self._viewport_monitor_fn)
+    self._cancel_viewport_timer = utils.start_timer(1000, self._viewport_monitor_fn)
 
     self:_init_workspace_tracker()
 end

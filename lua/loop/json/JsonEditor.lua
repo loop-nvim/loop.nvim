@@ -1,12 +1,12 @@
-local class = require("loop.tools.class")
+local class = require("loop.utils.class")
 local TreeBuffer = require("loop.buf.TreeBuffer")
-local floatwin = require("loop.tools.floatwin")
-local selector = require("loop.tools.selector")
-local filetools = require("loop.tools.file")
+local floatwin = require("loop.utils.floatwin")
+local selector = require("loop.utils.selector")
+local filetools = require("loop.utils.file")
 local validator = require("loop.json.validator")
 local jsontools = require("loop.json.jsontools")
 local jsoncodec = require("loop.json.codec")
-local uitools = require('loop.tools.uitools')
+local uitools = require('loop.utils.uitools')
 
 ---@alias JsonPrimitive string|number|boolean|nil
 ---@alias JsonValue JsonPrimitive|table<string,JsonValue>|JsonValue[]

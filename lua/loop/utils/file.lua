@@ -1,6 +1,6 @@
 local M = {}
 
-local fntools = require("loop.tools.fntools")
+local utils = require("loop.utils.utils")
 
 ---@param path string
 function M.file_exists(path)
@@ -205,7 +205,7 @@ function M.async_load_text_file(path, opts, callback)
     return function()
         if finished or aborted then return end
         aborted = true
-        fntools.stop_and_close_timer(timeout_timer)
+        utils.stop_and_close_timer(timeout_timer)
         finish("Aborted", nil)
     end
 end

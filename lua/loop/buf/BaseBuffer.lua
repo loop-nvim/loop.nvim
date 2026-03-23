@@ -1,6 +1,6 @@
-local class = require('loop.tools.class')
-local Trackers = require('loop.tools.Trackers')
-local throttle = require('loop.tools.throttle')
+local class = require('loop.utils.class')
+local Trackers = require('loop.utils.Trackers')
+local throttle = require('loop.utils.throttle')
 
 ---@alias loop.comp.Keymaps table<string,loop.KeyMap>
 

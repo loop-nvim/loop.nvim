@@ -8,12 +8,12 @@ local statuspanel   = require("loop.ui.statuspanel")
 local runner        = require("loop.task.runner")
 local jsoncodec     = require('loop.json.codec')
 local jsonvalidator = require('loop.json.validator')
-local filetools     = require('loop.tools.file')
-local flock         = require('loop.tools.flock')
-local fntools       = require('loop.tools.fntools')
+local filetools     = require('loop.utils.file')
+local flock         = require('loop.utils.flock')
+local utils         = require('loop.utils.utils')
 local wssaveutil    = require('loop.ws.saveutil')
-local floatwin      = require('loop.tools.floatwin')
-local selector      = require('loop.tools.selector')
+local floatwin      = require('loop.utils.floatwin')
+local selector      = require('loop.utils.selector')
 local extensionsmgr = require("loop.extensionsmgr")
 local JsonEditor    = require('loop.json.JsonEditor')
 local views         = require('loop.ui.views')
@@ -275,7 +275,7 @@ local function _load_workspace(dir)
     assert(not _ws_data.cancel_save_timer)
     local save_interval = (loopconfig.state_autosave_interval or 5) * 60 * 1000
     if save_interval > 0 then
-        _ws_data.cancel_save_timer = fntools.start_timer(save_interval, vim.schedule_wrap(_save_workspace))
+        _ws_data.cancel_save_timer = utils.start_timer(save_interval, vim.schedule_wrap(_save_workspace))
     end
 
     -- notify trackers
@@ -888,7 +888,7 @@ function M.find_workspace_files()
             jsoncodec.save_to_file(history_file, hist)
         end
     }
-    local filepicker = require("loop.tools.filepicker")
+    local filepicker = require("loop.utils.filepicker")
     filepicker.open({
         cwd = _ws_data.ws_dir,
         include_globs = ws_config.files.include,
@@ -919,7 +919,7 @@ function M.grep_workspace_files()
             jsoncodec.save_to_file(history_file, hist)
         end
     }
-    local livegrep = require("loop.tools.livegrep")
+    local livegrep = require("loop.utils.livegrep")
     livegrep.open({
         cwd = _ws_data.ws_dir,
         include_globs = ws_config.files.include,

@@ -1,20 +1,20 @@
-local class = require("loop.tools.class")
+local class = require("loop.utils.class")
 
----@class loop.tools.LRU.Node
+---@class loop.utils.LRU.Node
 ---@field key any
 ---@field value any
----@field prev loop.tools.LRU.Node?
----@field next loop.tools.LRU.Node?
+---@field prev loop.utils.LRU.Node?
+---@field next loop.utils.LRU.Node?
 
----@class loop.tools.LRU
+---@class loop.utils.LRU
 ---@field capacity integer
 ---@field count integer
----@field map table<any, loop.tools.LRU.Node>
----@field head loop.tools.LRU.Node?
----@field tail loop.tools.LRU.Node?
+---@field map table<any, loop.utils.LRU.Node>
+---@field head loop.utils.LRU.Node?
+---@field tail loop.utils.LRU.Node?
 ---@field on_evict fun(key:any, value:any)? Called ONLY when capacity is exceeded.
 ---@field on_removed fun(key:any, value:any)? Called for EVERY removal (eviction, delete, clear).
----@field new fun(self:loop.tools.LRU, capacity:integer, opts?:{on_evict?:fun(key:any, value:any), on_removed?:fun(key:any, value:any)}):loop.tools.LRU
+---@field new fun(self:loop.utils.LRU, capacity:integer, opts?:{on_evict?:fun(key:any, value:any), on_removed?:fun(key:any, value:any)}):loop.utils.LRU
 local LRU = class()
 
 ---@param capacity integer

@@ -66,7 +66,7 @@ local function _get_logs(count)
 end
 
 function M.show_logs()
-    local floatwin = require('loop.tools.floatwin')
+    local floatwin = require('loop.utils.floatwin')
 
     local logs_count = _get_log_count()
     local logs = _get_logs(logs_count)

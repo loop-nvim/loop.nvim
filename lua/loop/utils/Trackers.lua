@@ -1,10 +1,10 @@
-local class = require("loop.tools.class")
+local class = require("loop.utils.class")
 
 ---@class loop.TrackerRef
 ---@field cancel fun()
 
----@class loop.tools.Trackers
----@field new fun(self: loop.tools.Trackers) : loop.tools.Trackers
+---@class loop.utils.Trackers
+---@field new fun(self: loop.utils.Trackers) : loop.utils.Trackers
 ---@field private _next_id integer
 ---@field private _items table<integer, table>
 local Trackers = class()

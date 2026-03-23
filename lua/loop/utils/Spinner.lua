@@ -1,9 +1,9 @@
 local uv = vim.loop
 
-local class = require('loop.tools.class')
-local fntools = require('loop.tools.fntools')
+local class = require('loop.utils.class')
+local utils = require('loop.utils.utils')
 
----@class loop.tools.Spinner
+---@class loop.utils.Spinner
 ---@field frames string[]
 ---@field interval integer
 ---@diagnostic disable-next-line: undefined-doc-name
@@ -18,13 +18,13 @@ local default_frames = {
 }
 
 
----@alias loop.tools.SpinnerOpts {frames?:string[], interval?:integer, on_update?:fun(frame:string, index:integer)}
+---@alias loop.utils.SpinnerOpts {frames?:string[], interval?:integer, on_update?:fun(frame:string, index:integer)}
 
----@class loop.tools.Spinner
----@field new fun(self:loop.tools.Spinner,opts:loop.tools.SpinnerOpts):loop.tools.Spinner
+---@class loop.utils.Spinner
+---@field new fun(self:loop.utils.Spinner,opts:loop.utils.SpinnerOpts):loop.utils.Spinner
 local Spinner = class()
 
----@param opts loop.tools.SpinnerOpts?
+---@param opts loop.utils.SpinnerOpts?
 function Spinner:init(opts)
     opts = opts or {}
     self.frames = opts.frames or default_frames
@@ -40,7 +40,7 @@ function Spinner:start()
         return
     end
     self.running = true
-    self.cancel_timer = fntools.start_timer(self.interval,
+    self.cancel_timer = utils.start_timer(self.interval,
         vim.schedule_wrap(function()
             if not self.running then return end
             local frame = self.frames[self.frame]

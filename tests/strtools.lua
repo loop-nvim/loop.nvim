@@ -1,8 +1,8 @@
 ---@diagnostic disable: undefined-global, undefined-field
 require("plenary.busted")
 
-describe("loop.tools.strtools.split_shell_args", function()
-  local split_shell_args = require("loop.tools.strtools").split_shell_args
+describe("loop.utils.strtools.split_shell_args", function()
+  local split_shell_args = require("loop.utils.strtools").split_shell_args
 
   local function t(input, expected)
     it("splits '" .. input .. "' correctly", function()

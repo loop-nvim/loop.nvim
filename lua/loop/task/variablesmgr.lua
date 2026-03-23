@@ -1,10 +1,10 @@
 local M = {}
 
 local JsonEditor = require('loop.json.JsonEditor')
-local floatwin = require('loop.tools.floatwin')
+local floatwin = require('loop.utils.floatwin')
 local jsoncodec = require('loop.json.codec')
-local filetools = require('loop.tools.file')
-local uitools = require('loop.tools.uitools')
+local filetools = require('loop.utils.file')
+local uitools = require('loop.utils.uitools')
 local jsonvalidator = require('loop.json.validator')
 
 ---@param config_dir string

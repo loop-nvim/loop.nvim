@@ -44,7 +44,7 @@ error('Cannot require a meta file')
 ---@field register_view fun(name:string, provider:loop.ViewProvider):number - view id
 ---@field register_sidebar_preset fun(preset:loop.SidebarPreset):number -- preset id
 ---@field show_sidebar_preset fun(id:number)
----@field run_process fun(start_args:loop.tools.TermProc.StartArgs):loop.tools.TermProc?,string?
+---@field run_process fun(start_args:loop.utils.TermProc.StartArgs):loop.utils.TermProc?,string?
 
 ---@class loop.TaskTypeProvider
 ---@field get_task_schema fun():table
@@ -95,14 +95,14 @@ error('Cannot require a meta file')
 ---@field type "term"|"output"|"repl"
 ---@field label string
 ---@field activate boolean?
----@field term_args loop.tools.TermProc.StartArgs?
+---@field term_args loop.utils.TermProc.StartArgs?
 
 ---@class loop.PageData
 ---@field page loop.PageController
 ---@field base_buf loop.BaseBufferController?
 ---@field output_buf loop.OutputBufferController?
 ---@field repl_buf loop.ReplController?
----@field term_proc loop.tools.TermProc?
+---@field term_proc loop.utils.TermProc?
 
 ---@class loop.PageGroup
 ---@field have_pages fun():boolean

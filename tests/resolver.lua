@@ -1,10 +1,10 @@
 ---@diagnostic disable: undefined-global, undefined-field
 require("plenary.busted")
 
-local M = require("loop.tools.resolver")
+local M = require("loop.utils.resolver")
 local loopconfig = require('loop').config
 
-describe("loop.tools.resolver (variadic args)", function()
+describe("loop.utils.resolver (variadic args)", function()
     --- Mock task context for testing
     local mock_ctx = {
         ws_dir = "/tmp",

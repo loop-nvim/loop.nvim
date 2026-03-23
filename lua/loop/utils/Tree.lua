@@ -1,15 +1,15 @@
-local class = require("loop.tools.class")
+local class = require("loop.utils.class")
 
----@class loop.tools.Tree.Item
+---@class loop.utils.Tree.Item
 ---@field id any
 ---@field data any
 
----@class loop.tools.Tree.ItemUpdate
+---@class loop.utils.Tree.ItemUpdate
 ---@field id any
 ---@field data any
 ---@field keep_children boolean
 
----@class loop.tools.Tree.Node
+---@class loop.utils.Tree.Node
 ---@field parent_id any|nil
 ---@field data any
 ---@field first_child any|nil
@@ -17,22 +17,22 @@ local class = require("loop.tools.class")
 ---@field next_sibling any|nil
 ---@field prev_sibling any|nil
 
----@class loop.tools.Tree.FlatNode
+---@class loop.utils.Tree.FlatNode
 ---@field id any
 ---@field data any
 ---@field depth integer
 
 ---@generic T
----@class loop.tools.Tree
----@field new fun(self: loop.tools.Tree) : loop.tools.Tree
----@field _nodes table<any, loop.tools.Tree.Node>
+---@class loop.utils.Tree
+---@field new fun(self: loop.utils.Tree) : loop.utils.Tree
+---@field _nodes table<any, loop.utils.Tree.Node>
 ---@field _root_first any|nil
 ---@field _root_last any|nil
 local Tree = class()
 
 ---Initialize internal state
 function Tree:init()
-	---@type table<any, loop.tools.Tree.Node>
+	---@type table<any, loop.utils.Tree.Node>
 	self._nodes = {}
 
 	---@type any|nil
@@ -238,7 +238,7 @@ end
 --- Replace the children of parent_id with exactly these items, in order.
 ---@generic T
 ---@param parent_id any|nil
----@param items loop.tools.Tree.Item[]
+---@param items loop.utils.Tree.Item[]
 function Tree:set_children(parent_id, items)
 	assert(type(items) == "table")
 	local parent_node = parent_id and self._nodes[parent_id]
@@ -308,7 +308,7 @@ end
 --- Grandchildren from existing children are preserved.
 --- If an item's ID already exists elsewhere in the tree (under a different parent), it asserts.
 ---@param parent_id any|nil
----@param items loop.tools.Tree.ItemUpdate[]
+---@param items loop.utils.Tree.ItemUpdate[]
 function Tree:update_children(parent_id, items)
 	assert(type(items) == "table", "items must be a table")
 	local parent_node = parent_id and self._nodes[parent_id]
@@ -531,7 +531,7 @@ function Tree:get_depth(id)
 	return depth
 end
 
----@return loop.tools.Tree.Item[]
+---@return loop.utils.Tree.Item[]
 function Tree:get_items()
 	local items = {}
 	for id, node in pairs(self._nodes) do
@@ -567,7 +567,7 @@ end
 
 ---Get all immediate children of a node in order.
 ---@param parent_id any|nil If nil, returns root nodes.
----@return loop.tools.Tree.Item[]
+---@return loop.utils.Tree.Item[]
 function Tree:get_children(parent_id)
 	assert(parent_id, "id required")
 
@@ -596,7 +596,7 @@ end
 
 ---Remove all children of a node but keep the node itself.
 ---@private
----@param node loop.tools.Tree.Node
+---@param node loop.utils.Tree.Node
 function Tree:_remove_children(node)
 	local child = node.first_child
 	while child do
@@ -683,7 +683,7 @@ end
 ---Flatten the tree (or a subtree) in depth-first order.
 ---@param starting_id any|nil  -- nil = whole tree
 ---@param filter (fun(id:any, data:any):boolean?)?
----@return loop.tools.Tree.FlatNode[]
+---@return loop.utils.Tree.FlatNode[]
 function Tree:flatten(starting_id, filter)
 	local out = {}
 

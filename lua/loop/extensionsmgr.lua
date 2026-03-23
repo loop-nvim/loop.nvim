@@ -2,7 +2,7 @@ local M = {}
 
 local extensions = require('loop.extensions')
 local taskproviders = require('loop.task.providers')
-local filetools = require('loop.tools.file')
+local filetools = require('loop.utils.file')
 local jsoncodec = require('loop.json.codec')
 local views = require('loop.ui.views')
 local sidebar = require('loop.ui.sidebar')
@@ -86,10 +86,10 @@ local function _register_task_template_provider(category, provider)
 	taskproviders.register_template_provider(category, provider)
 end
 
----@param start_args loop.tools.TermProc.StartArgs
+---@param start_args loop.utils.TermProc.StartArgs
 ---@param ext_context loop.ExtentionContext
 ---@param page_manager loop.PageManager
----@return  loop.tools.TermProc?,string?
+---@return  loop.utils.TermProc?,string?
 local function _run_process_for_ext(start_args, ext_context, page_manager)
 	local name = start_args.name or ext_context.ext_name
 	local group = ext_context.page_groups[name] ---@type loop.PageGroup?

@@ -1,8 +1,8 @@
 ---@diagnostic disable: undefined-global, undefined-field
 require("plenary.busted")
-local Scheduler = require("loop.tools.Scheduler")
+local Scheduler = require("loop.utils.Scheduler")
 
-describe("loop.tools.Scheduler", function()
+describe("loop.utils.Scheduler", function()
     -- Synchronous mock
     local function sync_start_node(behavior_map)
         behavior_map = behavior_map or {}

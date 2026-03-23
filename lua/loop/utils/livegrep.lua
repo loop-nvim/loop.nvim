@@ -1,10 +1,10 @@
 local M = {}
 
-local Process = require("loop.tools.Process")
-local uitools = require("loop.tools.uitools")
-local strtools = require("loop.tools.strtools")
-local picker = require('loop.tools.picker')
-local pickertools = require("loop.tools.pickertools")
+local Process = require("loop.utils.Process")
+local uitools = require("loop.utils.uitools")
+local strtools = require("loop.utils.strtools")
+local picker = require('loop.utils.picker')
+local pickertools = require("loop.utils.pickertools")
 
 ---@class loop.livegrep.opts
 ---@field cwd string? Optional directory to start search (defaults to getcwd)

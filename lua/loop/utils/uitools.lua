@@ -1,6 +1,6 @@
 local M = {}
 
-local filetools = require("loop.tools.file")
+local filetools = require("loop.utils.file")
 
 ---@param winid number?
 function M.get_window_text_width(winid)

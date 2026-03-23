@@ -2,8 +2,8 @@ local M = {}
 
 -- Dependencies
 local workspace = require("loop.workspace")
-local strtools = require('loop.tools.strtools')
-local selector = require('loop.tools.selector')
+local strtools = require('loop.utils.strtools')
+local selector = require('loop.utils.selector')
 
 function M.complete(arg_lead, cmd_line)
     local function filter(strs)

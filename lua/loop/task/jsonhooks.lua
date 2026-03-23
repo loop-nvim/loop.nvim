@@ -1,6 +1,6 @@
 local M = {}
 
-local selector = require("loop.tools.selector")
+local selector = require("loop.utils.selector")
 local taskmgr = require("loop.task.taskmgr")
 local providers = require("loop.task.providers")
 local jsontools = require("loop.json.jsontools")

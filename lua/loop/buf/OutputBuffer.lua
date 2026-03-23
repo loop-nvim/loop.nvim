@@ -1,5 +1,5 @@
-local class = require('loop.tools.class')
-local strtools = require('loop.tools.strtools')
+local class = require('loop.utils.class')
+local strtools = require('loop.utils.strtools')
 local BaseBuffer = require('loop.buf.BaseBuffer')
 
 ---@class loop.comp.OutputBuffer:loop.comp.BaseBuffer

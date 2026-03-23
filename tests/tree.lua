@@ -1,8 +1,8 @@
 ---@diagnostic disable: undefined-global, undefined-field
 require("plenary.busted")
-local Tree = require("loop.tools.Tree")
+local Tree = require("loop.utils.Tree")
 
-describe("loop.tools.Tree (new API)", function()
+describe("loop.utils.Tree (new API)", function()
     ------------------------------------------------------------
     -- Basic insertion
     ------------------------------------------------------------
