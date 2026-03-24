@@ -131,7 +131,7 @@ end
 local FileTree = class()
 
 function FileTree:init()
-    self._expanded_lru = LRU:new(10000)
+    self._expanded_lru = LRU:new(1000) -- limit to 1000 for performance (note that those are stored in the persistence)
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
             --vim.notify("removing monitor: " .. path)
@@ -497,6 +497,10 @@ function FileTree:_reload()
     end
 
     self:_read_dir(path, self._reload_counter, true)
+    if self._pending_selection then
+        self:_reveal(self._pending_selection)
+        self._pending_selection = nil
+    end
 end
 
 function FileTree:_on_refresh_by_user()
@@ -843,6 +847,7 @@ function FileTree:_reveal_step(parent, parts, idx, set_current, token)
 
     if idx > #parts then
         self._tree:set_cursor_by_id(parent)
+        self._last_selection_id = parent
         if set_current then
             local data = self._tree:get_item(parent)
             if data then
@@ -1061,6 +1066,46 @@ function FileTree:_delete_dir_recurive(item)
         end
         -- Note: The monitor will handle removing the item from the tree
     end)
+end
+
+function FileTree:set_persistent_state(state)
+    self._expanded_lru:clear()
+
+    if type(state) ~= "table" then return end
+    if type(state.root) ~= "string" then return end
+    if type(state.expanded) ~= "table" then return end
+
+    local root = vim.fs.normalize(state.root)
+    for _, rel in ipairs(state.expanded) do
+        if type(rel) == "string" then
+            local full_path = vim.fs.joinpath(root, rel)
+            self._expanded_lru:put(full_path, true)
+        end
+    end
+    if type(state.current) == "string" then
+        self._pending_selection = state.current
+    end
+end
+
+function FileTree:get_persistent_state()
+    local root = self._root
+    if not root then
+        return { root = nil, expanded = {} }
+    end
+    local expanded = {}
+    for path, _ in self._expanded_lru:items() do
+        local rel = vim.fs.relpath(root, path)
+        if rel then
+            table.insert(expanded, rel)
+        end
+    end
+    local cursor_item = self._tree:get_cursor_item()
+    local current = cursor_item and cursor_item.id or nil
+    return {
+        root = root,
+        current = current,
+        expanded = expanded,
+    }
 end
 
 return FileTree

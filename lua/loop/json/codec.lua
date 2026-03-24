@@ -48,7 +48,7 @@ local function _order_keys(keys, schema)
     return keys
 end
 
----@param value string
+---@param value any
 ---@param level number
 ---@param path string
 ---@param schema_map table<string, table>?
@@ -100,8 +100,8 @@ local function _serialize(value, level, path, schema_map)
 end
 
 --- Pretty JSON encoder using only real Neovim built-ins
----@param obj any
----@param schema any
+---@param obj table
+---@param schema table?
 ---@return string
 local function json_encode_pretty(obj, schema)
     local schema_map
@@ -125,7 +125,12 @@ end
 ---@return boolean
 ---@return string | nil
 function M.save_to_file(filepath, data, schema)
-    local json = json_encode_pretty(data, schema)
+    local json
+    if schema then
+        json_encode_pretty(data, schema)
+    else
+        json = vim.json.encode(data)
+    end
     assert(type(json) == 'string')
     local fd = io.open(filepath, "w")
     if not fd then
@@ -169,11 +174,15 @@ function M.from_string(content)
     return true, data
 end
 
----@param data any
----@param schema any
+---@param data table
+---@param schema table?
 ---@return string
 function M.to_string(data, schema)
-    return json_encode_pretty(data, schema)
+    if schema then
+        return json_encode_pretty(data, schema)
+    else
+        return vim.json.encode(data)
+    end
 end
 
 return M

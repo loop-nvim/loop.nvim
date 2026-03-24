@@ -41,8 +41,10 @@ local _workspace_open = false
 local _state = {
     is_visible = true,
     width_ratio = nil,
-    ---@type table<string, number[]> -- Maps preset name to array of vertical ratios
-    ratios = {}
+    ---@type table<string, number[]> -- Maps preset ID -> array of vertical ratios
+    ratios = {},
+    ---@type table<string, table[]> -- Maps preset ID -> array of view-specific states
+    view_states = {}
 }
 
 -- ======================================
@@ -124,17 +126,33 @@ local function _save_current_layout_to_state()
     local total_w = vim.o.columns
     local total_h = vim.o.lines - vim.o.cmdheight
 
-    -- Save Global Width Ratio
+    -- 1. Save Width
     local actual_w = vim.api.nvim_win_get_width(wins[1])
     _state.width_ratio = actual_w / total_w
 
-    -- Save Vertical Ratios for this specific preset name
+    -- 2. Save Vertical Ratios and View-specific States
     local current_ratios = {}
-    for _, win in ipairs(wins) do
+    local current_view_states = {}
+
+    for i, win in ipairs(wins) do
+        -- Save Height Ratio
         local actual_h = vim.api.nvim_win_get_height(win)
         table.insert(current_ratios, actual_h / total_h)
+
+        -- Save State from Provider based on the view definition at this index
+        local view_def = preset.views[i]
+        local state = nil
+        if view_def then
+            local viewinfo = views.get_view_info(view_def.id)
+            if viewinfo and viewinfo.provider and viewinfo.provider.get_state then
+                state = viewinfo.provider.get_state()
+            end
+        end
+        table.insert(current_view_states, state)
     end
+
     _state.ratios[_active_preset_id] = current_ratios
+    _state.view_states[_active_preset_id] = current_view_states
 end
 
 local function _apply_ratios()
@@ -240,14 +258,15 @@ end
 local function _load_layout(config_dir)
     if not config_dir then return end
     local filepath = vim.fs.joinpath(config_dir, "sidebar.json")
-    -- Check if file exists to avoid codec errors if it's a fresh workspace
     if vim.fn.filereadable(filepath) == 0 then return end
+
     local ok, data = jsoncodec.load_from_file(filepath)
     if ok and data then
         _state.width_ratio = data.width_ratio or _state.width_ratio
-        _state.ratios = data.ratios or _state.ratios
-        _state.is_visible = (data.is_visible ~= nil) and data.is_visible or true
-        -- Optional: Restore the last used preset if it still exists
+        _state.ratios = data.ratios or {}
+        _state.view_states = data.view_states or {}
+        -- _state.is_visible = (data.is_visible ~= nil) and data.is_visible -- sidebar always visible on load for now
+
         if data.active_preset_id and _presets[data.active_preset_id] then
             _active_preset_id = data.active_preset_id
         end
@@ -256,16 +275,16 @@ end
 
 local function _save_layout(config_dir)
     if not config_dir then return end
-    -- Ensure state is up to date with current window sizes before saving
     _save_current_layout_to_state()
-    local filepath = vim.fs.joinpath(config_dir, "sidebar.json")
+
     local data_to_save = {
         width_ratio = _state.width_ratio,
         ratios = _state.ratios,
+        view_states = _state.view_states,
         is_visible = _state.is_visible,
         active_preset_id = _active_preset_id
     }
-    jsoncodec.save_to_file(filepath, data_to_save)
+    jsoncodec.save_to_file(vim.fs.joinpath(config_dir, "sidebar.json"), data_to_save)
 end
 
 local function _on_vim_resize(r)
@@ -294,7 +313,7 @@ local function _hide()
         end
     end
     _destroy_buffers()
-    _state.is_visible = true
+    _state.is_visible = false
 end
 
 
@@ -307,9 +326,9 @@ local function _show(id)
     if not id then
         return false
     end
-    local def = _presets[id]
+    local preset = _presets[id]
 
-    if not def then
+    if not preset then
         return false
     end
 
@@ -329,16 +348,21 @@ local function _show(id)
     _active_preset_id = id
     _state.is_visible = true
 
+    -- Get the array of states for this specific preset
+    local saved_states = _state.view_states[id] or {}
+
     local buffers = {}
-    for _, view in ipairs(def.views) do
-        local viewinfo = views.get_view_info(view.id)
+    for i, view_def in ipairs(preset.views) do
+        local viewinfo = views.get_view_info(view_def.id)
         if viewinfo and viewinfo.provider then
-            local bufnr = viewinfo.provider.create_buffer()
+            -- Pass state indexed by the view's position in the preset
+            local bufnr = viewinfo.provider.create_buffer(saved_states[i])
             if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
                 table.insert(buffers, bufnr)
             end
         end
     end
+
     if #buffers == 0 then
         return false
     end
@@ -418,14 +442,21 @@ end
 
 function M.on_workspace_open(config_dir)
     _load_layout(config_dir)
-    local FileTree = require("loop.ui.FileTree")
-    local tree = FileTree:new()
+    local tree
     ---@type loop.ViewProvider
     local provider = {
-        create_buffer = function()
+        create_buffer = function(state)
+            if not tree then
+                local FileTree = require("loop.ui.FileTree")
+                tree = FileTree:new()
+            end
+            tree:set_persistent_state(state)
             local buf = tree:get_compbuffer():get_or_create_buf()
             return buf
         end,
+        get_state = function()
+            return tree and tree:get_persistent_state() or {}
+        end
     }
     views.register_view("builtin:files", "files", provider)
     M.register_preset("builtin:files", "files",
