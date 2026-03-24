@@ -13,7 +13,7 @@ local _trackers = Trackers:new()
 
 ---@param callbacks loop.workspace.Tracker
 function M.add_tracker(callbacks)
-    assert(_init_done)
+    -- don't assert _init_done here, statusline may be invoked before init
     if _current_wsdir then
         if callbacks.on_open then
             callbacks.on_open(_current_wsdir, _current_wsconfig)

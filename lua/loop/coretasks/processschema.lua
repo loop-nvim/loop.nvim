@@ -35,12 +35,25 @@ local schema = {
             description = "Working directory used when executing the command"
         },
 
+
         env = {
-            type = { "object", "null" },
-            description = "Additional environment variables applied to the command execution",
-            additionalProperties = {
-                type = "string",
-                description = "Environment variable value"
+            description =
+            "Environment variables applied to the command execution",
+            oneOf = {
+                {
+                    type = "string",
+                    minLength = 1,
+                    description =
+                    "Environment variables applied to the command execution, format: VAR1=VALUE1 VAR2=VALUE2 ..."
+                },
+                {
+                    type = { "object", "null" },
+                    description = "Additional environment variables applied to the command execution",
+                    additionalProperties = {
+                        type = "string",
+                        description = "Environment variable value"
+                    },
+                },
             },
         },
     },

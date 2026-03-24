@@ -61,6 +61,7 @@ local function _show_help()
         "  A        Add element before",
         "  c        Change value",
         "  C        Change multiline string",
+        "  r        Rename key",
         "  d        Delete element",
         "  gy       Yank (copy) node",
         "  gp       Paste node after current",
@@ -396,6 +397,11 @@ function JsonEditor:_setup()
         callback = function() with_current_item(function(i) self:_add_new(i, "before") end) end,
     })
 
+    self._tree:add_keymap("r", {
+        desc = "Rename key",
+        callback = function() with_current_item(function(i) self:_rename_key(i) end) end,
+    })
+
     self._tree:add_keymap("d", {
         desc = "Delete",
         callback = function() with_current_item(function(i) self:_delete(i) end) end,
@@ -581,6 +587,44 @@ function JsonEditor:value_at(path)
     local item = self._tree:get_item(path)
     if not item then return nil end
     return item.data.value
+end
+
+---@param item loop.comp.TreeBuffer.Item
+function JsonEditor:_rename_key(item)
+    local parent_item = self._tree:get_parent_item(item.data.path)
+    if not parent_item or parent_item.data.value_type ~= "object" then
+        vim.notify("Can only rename keys within an object", vim.log.levels.WARN)
+        return
+    end
+
+    local old_key = item.data.key
+    local parent_obj = parent_item.data.value
+
+    floatwin.input_at_cursor({
+        prompt = "New key name",
+        default_text = old_key,
+    }, function(new_key)
+        if not new_key or new_key == "" or new_key == old_key then return end
+
+        if parent_obj[new_key] ~= nil then
+            vim.notify("Key '" .. new_key .. "' already exists", vim.log.levels.ERROR)
+            return
+        end
+
+        self:_push_undo()
+
+        -- In Lua/JSON, we swap the key by assigning the value to the new key
+        -- and nil-ing out the old one.
+        parent_obj[new_key] = parent_obj[old_key]
+        parent_obj[old_key] = nil
+
+        -- Construct the new path to maintain cursor position
+        local parts = jsontools.split_path(parent_item.data.path)
+        table.insert(parts, new_key)
+        local new_path = jsontools.join_path_parts(parts)
+
+        self:_apply_changes(new_path)
+    end)
 end
 
 ---@param path string
