@@ -1083,7 +1083,9 @@ function FileTree:set_persistent_state(state)
         end
     end
     if type(state.current) == "string" then
-        self._pending_selection = state.current
+        if not self._tree:set_cursor_by_id(state.current) then
+            self._pending_selection = state.current
+        end
     end
 end
 
@@ -1100,10 +1102,12 @@ function FileTree:get_persistent_state()
         end
     end
     local cursor_item = self._tree:get_cursor_item()
-    local current = cursor_item and cursor_item.id or nil
+    if cursor_item and cursor_item.id then
+        self._last_saved_cursor = cursor_item.id
+    end
     return {
         root = root,
-        current = current,
+        current = self._last_saved_cursor,
         expanded = expanded,
     }
 end

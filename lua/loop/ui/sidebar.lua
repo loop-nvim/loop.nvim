@@ -39,7 +39,7 @@ local _workspace_open = false
 -- ======================================
 
 local _state = {
-    is_visible = true,
+    --is_visible = true,
     width_ratio = nil,
     ---@type table<string, number[]> -- Maps preset ID -> array of vertical ratios
     ratios = {},
@@ -313,7 +313,7 @@ local function _hide()
         end
     end
     _destroy_buffers()
-    _state.is_visible = false
+    -- _state.is_visible = false
 end
 
 
@@ -340,13 +340,12 @@ local function _show(id)
         end
     end
 
-    _destroy_buffers()
     if #wins > 0 then
         _hide()
     end
 
     _active_preset_id = id
-    _state.is_visible = true
+    --_state.is_visible = true
 
     -- Get the array of states for this specific preset
     local saved_states = _state.view_states[id] or {}
@@ -463,9 +462,9 @@ function M.on_workspace_open(config_dir)
         { { id = "builtin:files", name = "files", ratio = 1 } }
     )
     _workspace_open = true
-    if _state.is_visible ~= false then
-        _show()
-    end
+    --if _state.is_visible ~= false then
+    _show()
+    --end
 end
 
 ---@param id string

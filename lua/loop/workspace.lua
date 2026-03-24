@@ -97,7 +97,8 @@ local function _save_workspace()
 end
 
 ---@param quiet? boolean
-local function _close_workspace(quiet)
+---@param no_save boolean?
+local function _close_workspace(quiet, no_save)
     if runner.have_running_tasks() then
         runner.terminate_tasks()
         local max_waits = 100 -- 10 seconds max
@@ -112,7 +113,9 @@ local function _close_workspace(quiet)
     if _ws_data then
         if _ws_data.cancel_save_timer then _ws_data.cancel_save_timer() end
 
-        _save_workspace()
+        if not no_save then
+            _save_workspace()
+        end
 
         extensionsmgr.on_workspace_unload()
         runner.on_workspace_close()
@@ -343,9 +346,14 @@ local function _ensure_init()
         statuspanel.set_status_text(table.concat(parts, " "))
     end)
 
+    vim.api.nvim_create_autocmd("QuitPre", {
+        callback = function()
+            _save_workspace()
+        end,
+    })
     vim.api.nvim_create_autocmd("VimLeavePre", {
         callback = function()
-            _close_workspace(true)
+            _close_workspace(true, true)
         end,
     })
 end
