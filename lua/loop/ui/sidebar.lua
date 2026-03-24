@@ -1,6 +1,7 @@
 local M = {}
 
 local views = require("loop.ui.views")
+local jsoncodec = require("loop.json.codec")
 
 local KEY_MARKER = "LoopPlugin_SideWin"
 local INDEX_MARKER = "LoopPlugin_SideWinlIdx"
@@ -236,6 +237,37 @@ local function _fix_layout()
     _apply_ratios()
 end
 
+local function _load_layout(config_dir)
+    if not config_dir then return end
+    local filepath = vim.fs.joinpath(config_dir, "sidebar.json")
+    -- Check if file exists to avoid codec errors if it's a fresh workspace
+    if vim.fn.filereadable(filepath) == 0 then return end
+    local ok, data = jsoncodec.load_from_file(filepath)
+    if ok and data then
+        _state.width_ratio = data.width_ratio or _state.width_ratio
+        _state.ratios = data.ratios or _state.ratios
+        _state.is_visible = (data.is_visible ~= nil) and data.is_visible or true
+        -- Optional: Restore the last used preset if it still exists
+        if data.active_preset_id and _presets[data.active_preset_id] then
+            _active_preset_id = data.active_preset_id
+        end
+    end
+end
+
+local function _save_layout(config_dir)
+    if not config_dir then return end
+    -- Ensure state is up to date with current window sizes before saving
+    _save_current_layout_to_state()
+    local filepath = vim.fs.joinpath(config_dir, "sidebar.json")
+    local data_to_save = {
+        width_ratio = _state.width_ratio,
+        ratios = _state.ratios,
+        is_visible = _state.is_visible,
+        active_preset_id = _active_preset_id
+    }
+    jsoncodec.save_to_file(filepath, data_to_save)
+end
+
 local function _on_vim_resize(r)
     _apply_ratios()
 end
@@ -384,7 +416,8 @@ function M.on_workspace_close()
     -- don't reset _next_id so that old ids expire
 end
 
-function M.on_workspace_open()
+function M.on_workspace_open(config_dir)
+    _load_layout(config_dir)
     local FileTree = require("loop.ui.FileTree")
     local tree = FileTree:new()
     ---@type loop.ViewProvider
@@ -509,6 +542,11 @@ end
 
 function M.fix_layout()
     return _fix_layout()
+end
+
+---@param config_dir string
+function M.on_workspace_save(config_dir)
+    _save_layout(config_dir)
 end
 
 return M

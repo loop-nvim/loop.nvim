@@ -28,7 +28,8 @@ error('Cannot require a meta file')
 ---@field keys fun():string[]
 
 ---@class loop.ViewProvider
----@field create_buffer fun():number
+---@field create_buffer fun(state:table?):number
+---@field get_state fun():table?
 
 ---@alias loop.SidebarPresetView {name:string, ratio:number?}
 

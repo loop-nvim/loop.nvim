@@ -49,34 +49,40 @@ local _buf_filetype = "loop-jsoneditor"
 local _json_clipboard = nil
 
 local function _show_help()
-    local help_text = {
-        "Navigation:",
-        "  <CR>     Toggle expand/collapse",
-        "",
-        "Editing:",
-        "  u        Undo last change",
-        "  C-r      Redo last change",
-        "  i        Add element to object or array",
-        "  a        Add element after",
-        "  A        Add element before",
-        "  c        Change value",
-        "  C        Change multiline string",
-        "  r        Rename key",
-        "  d        Delete element",
-        "  gy       Yank (copy) node",
-        "  gp       Paste node after current",
-        "  gP       Paste node before current",
-        "  gi       Paste node under current (append to object/array)",
-        "  o        Move array item down",
-        "  O        Move array item up",
-        "",
-        "Other:",
-        "  K        Show element help (hover window)",
-        "  ge       Show validation errors",
-        "  g?       Show this help",
-    }
+    local help_text = {[[
+NAVIGATION
+==========
+`ENTER`   Toggle expand/collapse
+`u`       Undo last change
+`C-r`     Redo last change
 
-    floatwin.show_floatwin(table.concat(help_text, "\n"), { title = "JSON Editor help" })
+EDITING
+=======
+`i`       Add element inside (to object or array)
+`a`       Add element after
+`A`       Add element before
+`c`       Change value
+`C`       Change multiline string
+`r`       Rename key
+`d`       Delete element
+
+CLIPBOARD & MOVEMENT
+====================
+`gy`      Yank (copy) node
+`gp`      Paste node after current
+`gP`      Paste node before current
+`gi`      Paste node under current (append)
+`o`       Move array item down
+`O`       Move array item up
+
+OTHER
+=====
+`K`       Show element help (hover window)
+`ge`      Show validation errors
+`g?`      Show this help]]
+}
+
+    floatwin.show_floatwin(table.concat(help_text, "\n"), { title = "JSON Editor help", is_markdown = true })
 end
 
 --- Dynamically call a Lua function given a module path string

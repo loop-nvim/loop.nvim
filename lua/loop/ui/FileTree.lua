@@ -92,30 +92,36 @@ end
 
 
 local function _show_help()
-    local help_text = {
-        "Navigation:",
-        "  <CR>     Open file / Toggle directory",
-        "",
-        "Creation:",
-        "  a        Create new file (in parent directory)",
-        "  i        Create new file (inside directory / current folder)",
-        "  A        Create new directory (in parent directory)",
-        "  I        Create new directory (inside directory / current folder)",
-        "",
-        "Management:",
-        "  r, c     Rename file/directory",
-        "  d        Delete file or empty directory",
-        "  D        Delete directory (recursive)",
-        "",
-        "Other:",
-        "  R        Refresh tree",
-        "  g?       Show this help",
+    local help_text = { [[
+NAVIGATION
+==========
+`ENTER`   Open file / Toggle directory
+`R`       Refresh tree
+
+CREATION (FILE)
+===============
+`a`       Create in parent directory
+`i`       Create inside selected directory
+
+CREATION (DIRECTORY)
+====================
+`A`       Create in parent directory
+`I`       Create inside selected directory
+
+MANAGEMENT
+==========
+`r`       Rename file or directory
+`d!`      **Permanently** delete file or empty directory
+`D!`      **Permanently** delete directory and **all** its contents (recursive)
+
+OTHER
+=====
+`g?`      Show this help]]
     }
 
     floatwin.show_floatwin(table.concat(help_text, "\n"), {
-        title = "File Tree Help",
-        relative = "editor",
-        border = "rounded"
+        title = " File Tree Help ",
+        is_markdown = true,
     })
 end
 
@@ -149,6 +155,7 @@ function FileTree:_setup_tree()
         formatter = function(id, data)
             return _file_formatter(id, data)
         end,
+        header = { { "Worskpace files", "Title" } },
         base_opts = {
             name = "Workspace Files",
             filetype = "loop-filetree",
@@ -328,16 +335,16 @@ function FileTree:_setup_keymaps()
     })
 
     -- Refactoring
-    self._tree:add_keymap("c", {
-        desc = "Change (Rename)",
+    self._tree:add_keymap("r", {
+        desc = "Rename file or directory",
         callback = function() with_item(function(i) self:_rename_node(i) end) end
     })
-    self._tree:add_keymap("d", {
-        desc = "Delete file or empty directory",
+    self._tree:add_keymap("d!", {
+        desc = "Permanenty delete file or empty directory",
         callback = function() with_item(function(i) self:_delete_node(i) end) end
     })
-    self._tree:add_keymap("D", {
-        desc = "Delete Folder",
+    self._tree:add_keymap("D!", {
+        desc = "Permanenty delete folder and ALL it's content",
         callback = function() with_item(function(i) self:_delete_dir_recurive(i) end) end
     })
 
@@ -1013,7 +1020,7 @@ function FileTree:_delete_node(item)
     local type_str = is_folder and "directory" or "file"
     local reload_counter = self._reload_counter
     -- Confirmation dialog
-    local confirm = uitools.confirm_action(("Delete %s?\n%s"):format(type_str, path), false, function(confirmed)
+    uitools.confirm_action(("Permanently delete %s?\n%s"):format(type_str, path), false, function(confirmed)
         if not confirmed then return end
         if reload_counter ~= self._reload_counter then return end
         if not self._tree:get_item(path) then return end
@@ -1041,7 +1048,7 @@ function FileTree:_delete_dir_recurive(item)
     local parent_dir = vim.fn.fnamemodify(path, ":h")
     local reload_counter = self._reload_counter
     -- Pass 'true' to confirm_action if it supports a "danger" highlight
-    uitools.confirm_action("RECURSIVELY delete directory?\n" .. path, false, function(confirmed)
+    uitools.confirm_action("Permanently delete directory and all its contents?\n" .. path, false, function(confirmed)
         if not confirmed or reload_counter ~= self._reload_counter then return end
         if not self._tree:get_item(path) then return end
 

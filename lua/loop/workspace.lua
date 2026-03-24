@@ -92,6 +92,7 @@ local function _save_workspace()
         return false
     end
     extensionsmgr.on_save(_ws_data.config_dir)
+    sidebar.on_workspace_save(_ws_data.config_dir)
     return true
 end
 
@@ -266,7 +267,7 @@ local function _load_workspace(dir)
 
     -- resets must be before extentions are loaded
     taskmgr.reset_providers(dir)
-    sidebar.on_workspace_open()
+    sidebar.on_workspace_open(config_dir)
     -- init task runner
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
     -- load extensions
@@ -584,7 +585,7 @@ function M.workspace_subcommands(args)
     _ensure_init()
     if #args == 0 then
         if _ws_data then
-            return { "info", "create", "open", "close", "configure", "save", "find_files", "grep_files" }
+            return { "info", "create", "open", "close", "configure", "save" }
         else
             return { "create", "open" }
         end
@@ -617,14 +618,6 @@ function M.workspace_command(command)
     end
     if command == "save" then
         M.save_workspace_buffers()
-        return
-    end
-    if command == "find_files" then
-        M.find_workspace_files()
-        return
-    end
-    if command == "grep_files" then
-        M.grep_workspace_files()
         return
     end
     vim.notify("Invalid command: " .. command)
@@ -864,68 +857,6 @@ function M.save_workspace_buffers(quiet)
         return false, 0, err_str
     end
     return true, wssaveutil.save_workspace_buffers(_ws_data.ws_dir, ws_config)
-end
-
-function M.find_workspace_files()
-    _ensure_init()
-    if not _ws_data then
-        _notify_no_ws()
-        return
-    end
-    local ws_config, config_err = _load_workspace_config(_ws_data.ws_dir)
-    if not ws_config then
-        vim.notify("Invalid workspace configuration")
-        return
-    end
-    local history_file = vim.fs.joinpath(_ws_data.config_dir, "ffindhist.json")
-    ---@type loop.Picker.QueryHistoryProvider
-    local history_provider = {
-        load = function()
-            local ok, hist = jsoncodec.load_from_file(history_file)
-            return ok and (hist or {}) or {}
-        end,
-        store = function(hist)
-            jsoncodec.save_to_file(history_file, hist)
-        end
-    }
-    local filepicker = require("loop.utils.filepicker")
-    filepicker.open({
-        cwd = _ws_data.ws_dir,
-        include_globs = ws_config.files.include,
-        exclude_globs = ws_config.files.exclude,
-        history_provider = history_provider,
-    })
-end
-
-function M.grep_workspace_files()
-    _ensure_init()
-    if not _ws_data then
-        _notify_no_ws()
-        return
-    end
-    local ws_config, config_err = _load_workspace_config(_ws_data.ws_dir)
-    if not ws_config then
-        vim.notify("Invalid workspace configuration")
-        return
-    end
-    local history_file = vim.fs.joinpath(_ws_data.config_dir, "grephist.json")
-    ---@type loop.Picker.QueryHistoryProvider
-    local history_provider = {
-        load = function()
-            local ok, hist = jsoncodec.load_from_file(history_file)
-            return ok and (hist or {}) or {}
-        end,
-        store = function(hist)
-            jsoncodec.save_to_file(history_file, hist)
-        end
-    }
-    local livegrep = require("loop.utils.livegrep")
-    livegrep.open({
-        cwd = _ws_data.ws_dir,
-        include_globs = ws_config.files.include,
-        exclude_globs = ws_config.files.exclude,
-        history_provider = history_provider,
-    })
 end
 
 return M

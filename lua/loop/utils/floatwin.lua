@@ -17,6 +17,7 @@ local _current_win = nil
 ---@field title? string
 ---@field at_cursor? boolean
 ---@field move_to_bot? boolean
+---@field is_markdown boolean?
 
 ---@class loop.floatwin.InputOpts
 ---@field prompt? string
@@ -162,6 +163,21 @@ function M.show_floatwin(text, opts)
     -- 6. Window-local options
     vim.wo[win].wrap = false
     vim.wo[win].winfixbuf = true
+
+    if opts.is_markdown then
+        -- After creating the buffer and setting the filetype
+        vim.bo[buf].filetype = "markdown"
+        -- FORCE Tree-sitter to attach if it hasn't already
+        local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
+        if not ok then
+            -- Fallback to regex syntax if treesitter fails
+            vim.bo[buf].syntax = "on"
+        end
+        -- Now apply the window-local conceal settings
+        vim.wo[win].conceallevel = 3
+        vim.wo[win].concealcursor = "nv"
+    end
+
 
     -- 7. Modal Logic
     local function close_modal()

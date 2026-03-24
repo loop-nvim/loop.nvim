@@ -1,6 +1,5 @@
-local Spinner    = require("loop.utils.Spinner")
 local class      = require("loop.utils.class")
-local utils    = require("loop.utils.utils")
+local utils      = require("loop.utils.utils")
 
 ---@mod loop.picker
 ---@brief Floating async picker with fuzzy filtering and optional preview.
@@ -200,7 +199,6 @@ end
 ---@field pwin integer
 ---@field lwin integer
 ---@field vwin integer|nil
----@field spinner loop.utils.Spinner|nil
 ---@field closed boolean
 ---@field items_data any[]
 ---@field async_fetch_context number
@@ -591,41 +589,6 @@ function Picker:update_preview()
 end
 
 --------------------------------------------------------------------------------
--- Spinner
---------------------------------------------------------------------------------
-
-function Picker:start_spinner()
-    if self.spinner then return end
-
-    self.spinner = Spinner:new {
-        interval = 80,
-        on_update = function(frame)
-            if not vim.api.nvim_buf_is_valid(self.pbuf) then return end
-
-            vim.api.nvim_buf_clear_namespace(self.pbuf, NS_SPINNER, 0, -1)
-
-            vim.api.nvim_buf_set_extmark(self.pbuf, NS_SPINNER, 0, 0, {
-                virt_text = { { frame .. " ", "Comment" } },
-                virt_text_pos = "right_align"
-            })
-        end
-    }
-
-    self.spinner:start()
-end
-
-function Picker:stop_spinner()
-    if self.spinner then
-        self.spinner:stop()
-        self.spinner = nil
-    end
-
-    if vim.api.nvim_buf_is_valid(self.pbuf) then
-        vim.api.nvim_buf_clear_namespace(self.pbuf, NS_SPINNER, 0, -1)
-    end
-end
-
---------------------------------------------------------------------------------
 -- List manipulation
 --------------------------------------------------------------------------------
 
@@ -750,8 +713,6 @@ function Picker:run_fetch(query)
         self.async_fetch_cancel = nil
     end
 
-    self:stop_spinner()
-
     local fetch_opts = {
         list_width = math.max(1, self.layout.list_width - 2), -- -2 for borders
         list_height = math.max(1, self.layout.list_height - 2),
@@ -789,8 +750,6 @@ function Picker:run_fetch(query)
             end
 
             if new_items == nil then
-                complete = true
-                self:stop_spinner()
                 return
             end
 
@@ -807,10 +766,6 @@ function Picker:run_fetch(query)
         end
     )
     assert(type(self.async_fetch_cancel) == "function")
-
-    if not complete then
-        self:start_spinner()
-    end
 end
 
 function Picker:history_prev()
@@ -852,8 +807,6 @@ end
 function Picker:close(result)
     if self.closed then return end
     self.closed = true
-
-    self:stop_spinner()
 
     self.preview_timer = utils.stop_and_close_timer(self.preview_timer)
 
