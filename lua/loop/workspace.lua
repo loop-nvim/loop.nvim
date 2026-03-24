@@ -781,7 +781,7 @@ end
 function M.statuspanel_command(command)
     _ensure_init()
     if not command or command == "" then
-        M.toggle_window()
+        M.toggle_statuspanel()
     elseif command == "show" then
         statuspanel.show_window()
     elseif command == "hide" then
@@ -798,7 +798,7 @@ function M.sidebar_command(command, name)
     if command == nil or command == "" then
         sidebar.toggle()
     elseif command == "show" then
-        sidebar.show(name)
+        sidebar.show_by_name(name)
     elseif command == "hide" then
         sidebar.hide()
     else

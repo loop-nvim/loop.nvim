@@ -4,43 +4,28 @@ local M = {}
 ---@field name string
 ---@field provider loop.ViewProvider
 
----@type table<number, loop.ext.ViewInfo>
+---@type table<string, loop.ext.ViewInfo>
 local _registry = {}
-
-local _next_view_id = 1
-
----Validates that the ID contains only alphanumeric characters, hyphens, or underscores.
----@param name string
----@return boolean
-local function is_valid_name(name)
-    return name:match("^[a-zA-Z0-9%-_]+$") ~= nil
-end
 
 function M.clear_views()
     _registry = {}
 end
 
 ---Registers a new view provider.
----@param name string Unique identifier for the view.
+---@param view_id string Unique identifier for the view.
+---@param name string
 ---@param provider loop.ViewProvider The provider definition.
----@return number view_id
-function M.register_view(name, provider)
-    if not is_valid_name(name) then
-        error(string.format("Invalid view name: '%s'. IDs must only contain alphanumeric characters, '-', or '_'.", name))
-    end
-    assert(not _registry[name], string.format("View already registered: %s", name))
+function M.register_view(view_id, name, provider)
+    assert(not _registry[view_id], string.format("View already registered: %s", view_id))
     assert(type(provider) == "table")
-    local view_id = _next_view_id
-    _next_view_id = _next_view_id + 1
     _registry[view_id] = {
         name = name,
         provider = provider,
     }
-    return view_id
 end
 
 ---Returns a single view provider by ID.
----@return number[]
+---@return string[]
 function M.get_view_ids()
     return vim.tbl_keys(_registry)
 end
@@ -53,7 +38,7 @@ function M.get_views()
     return views
 end
 
----@param id number
+---@param id string
 ---@return loop.ext.ViewInfo?
 function M.get_view_info(id)
     local info = _registry[id]

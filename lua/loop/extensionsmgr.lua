@@ -45,6 +45,26 @@ local function _get_config_file_path(config_dir, ext_name, key, fileext)
 	return vim.fs.joinpath(config_dir, ("ext.%s.%s.%s"):format(ext_name, key, fileext))
 end
 
+local function _make_unique_id(ext_name, name, category)
+	if name:match("^[a-zA-Z0-9%-_]+$") == nil then
+		error(string.format("Invalid %s name: '%s'. IDs must only contain alphanumeric characters, '-', or '_'.",
+			category, name))
+	end
+	return ("%s:%s"):format(ext_name, name)
+end
+
+---@param ext_name string
+---@param preset loop.SidebarPreset
+---@return loop.ui.SidebarPresetView[]
+local function _convert_views(ext_name, preset)
+	local preset_views = {}
+	for _, v in ipairs(preset.views) do
+		---@type loop.ui.SidebarPresetView
+		local item = { id = _make_unique_id(ext_name, v.name), name = v.name, ratio = v.ratio }
+		table.insert(preset_views, item)
+	end
+	return preset_views
+end
 
 ---@param state table
 ---@return loop.ExtensionStorage
@@ -166,26 +186,26 @@ end
 function M.on_workspace_load(wsinfo, page_manager)
 	assert(next(_extension_contexts) == nil)
 	local names = extensions.ext_names()
-	for _, name in ipairs(names) do
+	for _, ext_name in ipairs(names) do
 		---@type loop.ExtentionContext
 		local ext_context = {
 			expired = false,
-			ext_name = name,
-			state = _load_state(wsinfo.config_dir, name),
+			ext_name = ext_name,
+			state = _load_state(wsinfo.config_dir, ext_name),
 			page_groups = {},
 			cmd_providers = {}
 		}
 		local function assert_ws()
 			assert(not ext_context.expired, "using extension API but workspace is closed")
 		end
-		_extension_contexts[name] = ext_context
+		_extension_contexts[ext_name] = ext_context
 		local storage_handler = _make_storage_handler(ext_context.state)
 		---@type loop.ExtensionAPI
 		local ext_api = {
 			ws_dir = wsinfo.ws_dir,
 			get_config_file_path = function(key, fileext)
 				assert_ws()
-				return _get_config_file_path(wsinfo.config_dir, name, key, fileext)
+				return _get_config_file_path(wsinfo.config_dir, ext_name, key, fileext)
 			end,
 			get_storage = function()
 				assert_ws()
@@ -195,16 +215,20 @@ function M.on_workspace_load(wsinfo, page_manager)
 				assert_ws()
 				return _register_cmd_provider(ext_context, lead_cmd, provider)
 			end,
-			register_view = function(id, provider)
+			register_view = function(view_name, provider)
 				assert_ws()
-				return views.register_view(id, provider)
+				local id = _make_unique_id(ext_name, view_name, "view")
+				return views.register_view(id, view_name, provider)
 			end,
-			register_sidebar_preset = function(preset)
+			register_sidebar_preset = function(name, preset)
 				assert_ws()
-				return sidebar.register_preset(preset)
+				local id = _make_unique_id(ext_name, name, "preset")
+				local preset_views = _convert_views(ext_name, preset)
+				sidebar.register_preset(id, name, preset_views)
 			end,
-			show_sidebar_preset = function(id)
+			show_sidebar_preset = function(name)
 				assert_ws()
+				local id = _make_unique_id(ext_name, name, "preset")
 				return sidebar.show_by_id(id)
 			end,
 			register_task_type = function(type, provider)
@@ -220,11 +244,11 @@ function M.on_workspace_load(wsinfo, page_manager)
 				return _run_process_for_ext(start_args, ext_context, page_manager)
 			end
 		}
-		_extension_api[name] = ext_api
-		local ext = extensions.get_extension(name)
+		_extension_api[ext_name] = ext_api
+		local ext = extensions.get_extension(ext_name)
 		if ext then
 			assert(ext.on_workspace_load and ext.on_workspace_unload,
-				"required function missing in extention: " .. name)
+				"required function missing in extention: " .. ext_name)
 			ext.on_workspace_load(ext_api)
 		end
 	end

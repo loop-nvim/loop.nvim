@@ -12,11 +12,19 @@ local _buffers_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideBarBuffe
 -- State
 -- ======================================
 
----@type table<number, loop.SidebarPreset>
-local _presets = {}
-local _next_id = 1
+---@class loop.ui.SidebarPresetView
+---@field id string
+---@field name string
+---@field ratio number?
 
----@type number?
+---@class loop.ui.SidebarPresetData
+---@field name string
+---@field views loop.ui.SidebarPresetView[]
+
+---@type table<string, loop.ui.SidebarPresetData>
+local _presets = {}
+
+---@type string?
 local _active_preset_id = nil
 
 ---@type {buffer:boolean}
@@ -125,11 +133,11 @@ local function _save_current_layout_to_state()
         local actual_h = vim.api.nvim_win_get_height(win)
         table.insert(current_ratios, actual_h / total_h)
     end
-    _state.ratios[preset.name] = current_ratios
+    _state.ratios[_active_preset_id] = current_ratios
 end
 
 local function _apply_ratios()
-    ---@type loop.SidebarPreset?
+    if not _active_preset_id then return end
     local preset = _presets[_active_preset_id]
     if not preset then
         return
@@ -146,13 +154,12 @@ local function _apply_ratios()
         return
     end
 
-    local active_ratios = _state.ratios[preset.name]
+    local active_ratios = _state.ratios[_active_preset_id]
 
     local width_ratio = _state.width_ratio or 0.2
     local ratios = {}
-    for i, viewdef in ipairs(preset.views) do
-        local view = views.get_view_info(viewdef.view_id)
-        local r = (active_ratios and active_ratios[i]) or view and viewdef.ratio or 0
+    for i, view in ipairs(preset.views) do
+        local r = (active_ratios and active_ratios[i]) or view and view.ratio or 0
         table.insert(ratios, r)
     end
 
@@ -259,7 +266,7 @@ local function _hide()
 end
 
 
----@param id number?
+---@param id string?
 ---@return boolean
 local function _show(id)
     if not id then
@@ -291,10 +298,10 @@ local function _show(id)
     _state.is_visible = true
 
     local buffers = {}
-    for _, viewdef in ipairs(def.views) do
-        local view = views.get_view_info(viewdef.view_id)
-        if view and view.provider then
-            local bufnr = view.provider.create_buffer()
+    for _, view in ipairs(def.views) do
+        local viewinfo = views.get_view_info(view.id)
+        if viewinfo and viewinfo.provider then
+            local bufnr = viewinfo.provider.create_buffer()
             if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
                 table.insert(buffers, bufnr)
             end
@@ -387,54 +394,29 @@ function M.on_workspace_open()
             return buf
         end,
     }
-    local view_id = views.register_view("files", provider)
-    M.register_preset({
-        name = "files",
-        views = { { view_id = view_id, ratio = 1 } }
-    })
+    views.register_view("builtin:files", "files", provider)
+    M.register_preset("builtin:files", "files",
+        { { id = "builtin:files", name = "files", ratio = 1 } }
+    )
     _workspace_open = true
     if _state.is_visible ~= false then
         _show()
     end
 end
 
----@param def loop.SidebarPreset
----@return number -- id
-function M.register_preset(def)
-    local id = _next_id
-    _next_id = _next_id + 1
-
-    -- Resolve naming conflicts
-    local original_name = def.name
-    local counter = 1
-    local is_duplicate = true
-
-    while is_duplicate do
-        is_duplicate = false
-        for _, existing in pairs(_presets) do
-            if existing.name == def.name then
-                def.name = original_name .. "_" .. counter
-                counter = counter + 1
-                is_duplicate = true
-                break
-            end
-        end
-    end
-
-    _presets[id] = def
-
+---@param id string
+---@param name string
+---@param view_list loop.ui.SidebarPresetView[]
+function M.register_preset(id, name, view_list)
+    assert(not _presets[id], "preset id already registered: " .. tostring(id))
+    _presets[id] = {
+        name = name,
+        views = view_list,
+    }
     if not _active_preset_id then
         _active_preset_id = id
     end
-
     return id
-end
-
----@param id number
-function M.show_by_id(id)
-    if _presets[id] then
-        _show(id)
-    end
 end
 
 ---@return boolean
@@ -445,13 +427,25 @@ end
 ---@return string[]
 function M.preset_names()
     local names = {}
-    for _, p in pairs(_presets) do table.insert(names, p.name) end
+    local name_counts = {}
+    -- First pass: Count occurrences of each name
+    for _, p in pairs(_presets) do
+        name_counts[p.name] = (name_counts[p.name] or 0) + 1
+    end
+    -- Second pass: Build the list, appending ID if name is not unique
+    for id, p in pairs(_presets) do
+        if name_counts[p.name] > 1 then
+            table.insert(names, id)
+        else
+            table.insert(names, p.name)
+        end
+    end
     table.sort(names)
     return names
 end
 
 ---@param name string?
-function M.show(name)
+function M.show_by_name(name)
     if not _workspace_open then
         vim.notify("[loop.nvim] No active workspace", vim.log.levels.ERROR)
         return
@@ -459,12 +453,36 @@ function M.show(name)
     if not name then
         return _show()
     end
+    -- First pass: Count occurrences
+    local name_counts = {}
+    for _, p in pairs(_presets) do
+        name_counts[p.name] = (name_counts[p.name] or 0) + 1
+    end
     for id, info in pairs(_presets) do
-        if name == info.name then
-            return _show(id)
+        if name_counts[info.name] == 1 then
+            if name == info.name then
+                return _show(id)
+            end
+        else
+            if name == id then
+                return _show(name)
+            end
         end
     end
     vim.notify("[loop.nvim] Invalid sidebar name: " .. tostring(name), vim.log.levels.WARN)
+end
+
+---@param id string
+function M.show_by_id(id)
+    if not _workspace_open then
+        vim.notify("[loop.nvim] No active workspace", vim.log.levels.ERROR)
+        return
+    end
+    if id and _presets[id] then
+        _show(id)
+    else
+        vim.notify("[loop.nvim] Invalid sidebar id: " .. tostring(id), vim.log.levels.WARN)
+    end
 end
 
 function M.is_visible()
