@@ -21,9 +21,8 @@ local utils          = require("loop.utils.utils")
 ---@field is_current boolean?
 ---@field error_flag boolean?
 ---@field error_icon string?
+---@field children_loading boolean?
 ---@field childrenload_req_id number
----@field children_loading boolean
----@field on_children_loaded fun()?
 
 ---@alias loop.comp.FileTree.ItemDef loop.comp.TreeBuffer.ItemData
 
@@ -132,10 +131,6 @@ end
 local FileTree = class()
 
 function FileTree:init()
-    local lru_evicting = false
-    -- limit the size of _expanded_lru for performance (these are stored in the persistence file)
-    self._expanded_lru = LRU:new(200)
-
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
             --vim.notify("removing monitor: " .. path)
@@ -145,8 +140,10 @@ function FileTree:init()
 
     self._viewport_monitor_fn = self:_get_viewport_monitor_fn()
     self._toggle_counter = 0
-    self._reveal_counter = 0
     self._reload_counter = 0
+
+    self._pending_expand = {}
+    self._pending_reveal = nil
 
     self:_setup_tree()
     self:_setup_keymaps()
@@ -159,7 +156,7 @@ function FileTree:_setup_tree()
         formatter = function(id, data)
             return _file_formatter(id, data)
         end,
-        header = { { "Worskpace files", "Title" } },
+        header = { { "Workspace files", "Title" } },
         base_opts = {
             name = "Workspace Files",
             filetype = "loop-filetree",
@@ -182,23 +179,11 @@ function FileTree:_setup_tree()
         end,
         on_toggle = function(id, data, expanded)
             self._toggle_counter = self._toggle_counter + 1
-            if data.is_dir then
-                if expanded then
-                    self._expanded_lru:put(data.path, true)
-                    do -- promote parents in LRU
-                        local current = data.path
-                        while current do
-                            current = self._tree:get_parent_id(current)
-                            if current then self._expanded_lru:promote(current) end
-                        end
-                    end
-                    local old = data.childrenload_req_id
-                    self._viewport_monitor_fn()
-                    if old == data.childrenload_req_id then
-                        self:_read_dir(data.path, self._reload_counter, true)
-                    end
-                else
-                    self._expanded_lru:delete(data.path)
+            if data.is_dir and expanded then
+                local old = data.childrenload_req_id
+                self._viewport_monitor_fn()
+                if old == data.childrenload_req_id then
+                    self:_read_dir(data.path, self._reload_counter, true)
                 end
             end
         end
@@ -287,7 +272,7 @@ function FileTree:_get_viewport_monitor_fn()
             end
 
             -- 1. Cleanup stale monitors
-            for path in self._monitor_lru:items() do
+            for _, path in ipairs(self._monitor_lru:keys()) do
                 if not active_folders[path] then
                     self._monitor_lru:delete(path)
                 end
@@ -356,7 +341,7 @@ function FileTree:_setup_keymaps()
     })
     self._tree:add_keymap("D!", {
         desc = "Permanenty delete folder and ALL it's content",
-        callback = function() with_item(function(i) self:_delete_dir_recurive(i) end) end
+        callback = function() with_item(function(i) self:_delete_dir_recursive(i) end) end
     })
 
     -- Utilities
@@ -436,7 +421,6 @@ function FileTree:_start_dir_monitor(path)
         return false
     end
     local cancel_fn, error_msg = filetools.monitor_dir(path, function(name, status)
-        path = vim.fs.normalize(path)
         local reload_counter = self._reload_counter
         ---@type loop.FileTree.ProcessDirEntry[]
         if reload_counter ~= self._reload_counter then return end
@@ -475,6 +459,8 @@ end
 
 function FileTree:_reload()
     self._reload_counter = self._reload_counter + 1
+    self._pending_reveal = nil
+
     local path = self._root
     if not path or not self._include_patterns or not self._exclude_patterns or self._follow_symlinks == nil then
         local error_msg = path and "Workspace configuration error" or "No workspace"
@@ -676,15 +662,14 @@ function FileTree:_read_dir(path, reload_counter, recursive)
                 data.error_flag = true
                 data.error_icon = "↺"
                 self._tree:refresh_item(path)
-                return -- no not scan to avoid infinite recursion
+                return -- do not scan to avoid infinite recursion
             end
         end
     end
 
     local req_id = (data.childrenload_req_id or 0) + 1
-    data.children_loading = true
     data.childrenload_req_id = req_id
-    data.on_children_loaded = nil
+    data.children_loading = true
 
     --vim.notify("Scanning dir: " .. path)
     -- Asynchronous scandir
@@ -693,6 +678,7 @@ function FileTree:_read_dir(path, reload_counter, recursive)
         vim.schedule(function() -- get out of the fast event context
             if reload_counter ~= self._reload_counter then return end
             if req_id ~= data.childrenload_req_id then return end
+            data.children_loading = false
             local prep_entries = {} ---@type loop.FileTree.PrepareDirEntry[]
             if handle then
                 while true do
@@ -708,10 +694,11 @@ function FileTree:_read_dir(path, reload_counter, recursive)
                 if reload_counter ~= self._reload_counter then return end
                 if req_id ~= data.childrenload_req_id then return end
                 self:_process_dir(path, resolved_entries, err ~= nil)
-                data.children_loading = false
-                if data.on_children_loaded then
-                    data.on_children_loaded()
-                    data.on_children_loaded = nil
+                -- resume reveal if needed
+                if self._pending_reveal then
+                    vim.schedule(function()
+                        self:_reveal_step()
+                    end)
                 end
                 -- Handle nested expansion for existing expanded folders
                 -- This ensures that if a folder was already expanded, we refresh its view too
@@ -753,17 +740,14 @@ function FileTree:_process_dir(path, entries, error_flag)
     local new_entries_map = {} ---@type table<string, loop.FileTree.UpsetSingleItemArgs>
     for _, entry in ipairs(entries) do
         local full_path = vim.fs.joinpath(path, entry.name)
-        local rel = vim.fs.relpath(root, full_path)
-        if rel and self:_should_include(rel, entry.is_dir) then
-            new_entries_map[full_path] = {
-                parent_path = path,
-                full_path = full_path,
-                name = entry.name,
-                loname = entry.name:lower(),
-                is_dir = entry.is_dir,
-                is_link = entry.is_link,
-            }
-        end
+        new_entries_map[full_path] = {
+            parent_path = path,
+            full_path = full_path,
+            name = entry.name,
+            loname = entry.name:lower(),
+            is_dir = entry.is_dir,
+            is_link = entry.is_link,
+        }
     end
 
     -- Identify and remove children that are no longer present
@@ -778,11 +762,13 @@ function FileTree:_process_dir(path, entries, error_flag)
     for _, entry in pairs(new_entries_map) do
         -- Prepare the new item definition
         local icon, icon_hl = self:_get_icon_for_node(entry.name, entry.is_dir, entry.is_link)
+        local expanded = self._pending_expand[entry.full_path]
+        if expanded ~= nil then self._pending_expand[entry.full_path] = nil end
         ---@type loop.comp.TreeBuffer.ItemDef
         local child = {
             id = entry.full_path,
             expandable = entry.is_dir,
-            expanded = entry.is_dir and self._expanded_lru:has(entry.full_path),
+            expanded = expanded,
             data = {
                 path = entry.full_path,
                 name = entry.name,
@@ -821,15 +807,14 @@ end
 ---@param set_current boolean?
 function FileTree:_reveal(path, collapse_others, set_current)
     local root = self._root
-    if not root then return end
-    if not path or path == "" then return end
+    if not root or not path or path == "" then return end
+
+    path = vim.fs.normalize(path)
+    local rel = vim.fs.relpath(root, path)
+    if not rel then return end
 
     if collapse_others then
-        -- Collapse everything that isn't a parent of the target path
-        local items = self._tree:get_items()
-        for _, item in ipairs(items) do
-            -- Don't collapse the root and don't collapse if the item is a parent of our target
-            -- We check if 'id' is a prefix of 'path'
+        for _, item in ipairs(self._tree:get_items()) do
             if item.id ~= root and item.expanded then
                 if not vim.startswith(path, item.id) then
                     self._tree:collapse(item.id)
@@ -838,82 +823,79 @@ function FileTree:_reveal(path, collapse_others, set_current)
         end
     end
 
-    -- Unset the flag on the previous item
+    -- clear previous highlight
     if self._last_revealed_id then
-        local id = self._last_revealed_id
-        self._last_revealed_id = nil
-        local old_item = self._tree:get_item(id)
-        if old_item then
-            old_item.data.is_current = false
-            self._tree:refresh_item(id)
+        local old = self._tree:get_item(self._last_revealed_id)
+        if old then
+            old.data.is_current = false
+            self._tree:refresh_item(old.id)
         end
-    end
-
-    path = vim.fs.normalize(path)
-    local rel = vim.fs.relpath(root, path)
-    if not rel then
-        return
+        self._last_revealed_id = nil
     end
 
     local parts = rel ~= "" and vim.split(rel, "/", { plain = true }) or {}
-    self._reveal_counter = self._reveal_counter + 1
-    local token = {
-        reload_counter = self._reload_counter,
-        reveal_counter = self._reveal_counter
+
+    -- overwrite any previous reveal
+    self._pending_reveal = {
+        parts = parts,
+        idx = 1,
+        current = root,
+        set_current = set_current or false,
     }
-    self:_reveal_step(root, parts, 1, set_current or false, token)
+
+    self:_reveal_step()
 end
 
----@param parent string The current directory path we are looking inside
----@param parts string[] The split segments of the relative path to the target
----@param idx number The current index in parts we are looking for
----@param set_current boolean
----@param token {reload_counter:number,reveal_counter:number}
-function FileTree:_reveal_step(parent, parts, idx, set_current, token)
-    if token.reveal_counter ~= self._reveal_counter then return end
-    if token.reload_counter ~= self._reload_counter then return end
+function FileTree:_reveal_step()
+    local state = self._pending_reveal
+    if not state then return end
 
-    if idx > #parts then
-        self._tree:set_cursor_by_id(parent)
-        self._last_selection_id = parent
-        if set_current then
-            local data = self._tree:get_item(parent)
-            if data then
-                self._last_revealed_id = parent
-                data.data.is_current = true
-                self._tree:refresh_item(parent)
+    while true do
+        local parent = state.current
+        local idx = state.idx
+
+        if idx > #state.parts then
+            self._tree:set_cursor_by_id(parent)
+
+            if state.set_current then
+                local item = self._tree:get_item(parent)
+                if item then
+                    item.data.is_current = true
+                    self._tree:refresh_item(parent)
+                    self._last_revealed_id = parent
+                end
             end
+            self._pending_reveal = nil
+            return
         end
-        return
-    end
 
-    local next_path = vim.fs.joinpath(parent, parts[idx])
-    local parent_item = self._tree:get_item(parent)
-    if not parent_item then return end
-
-
-    local function continue()
-        if self._tree:have_item(next_path) then
-            self:_reveal_step(next_path, parts, idx + 1, set_current, token)
-        else
-            log.log("Reveal failed: path not found in tree: " .. next_path, vim.log.levels.DEBUG)
+        local next_path = vim.fs.joinpath(parent, state.parts[idx])
+        local parent_item = self._tree:get_item(parent)
+        if not parent_item then
+            self._pending_reveal = nil
+            return
         end
-    end
 
-    -- If it's a directory, we MUST expand it to see children
-    if not parent_item.expanded then
-        self._tree:expand(parent) -- This triggers _read_dir
-    end
-    -- Check if we are currently waiting on the disk I/O
-    if parent_item.data.children_loading then
-        parent_item.data.on_children_loaded = vim.schedule_wrap(function()
-            if token.reveal_counter ~= self._reveal_counter then return end
-            if token.reload_counter ~= self._reload_counter then return end
-            continue()
-        end)
-    else
-        -- Already loaded and expanded, proceed immediately
-        continue()
+        -- ensure expanded
+        if not parent_item.expanded then
+            self._tree:expand(parent)
+        end
+
+        -- if children still loading
+        if parent_item.data.children_loading then
+            return -- just stop, will resume later
+        end
+
+        -- if missing
+        if not self._tree:have_item(next_path) then
+            log.log("Reveal failed: " .. next_path, vim.log.levels.DEBUG)
+            self._pending_reveal = nil
+            return
+        end
+
+        -- advance
+        state.current = next_path
+        state.idx = idx + 1
     end
 end
 
@@ -1070,7 +1052,7 @@ end
 
 --- Delete a directory and all its contents
 ---@param item table The TreeBuffer item
-function FileTree:_delete_dir_recurive(item)
+function FileTree:_delete_dir_recursive(item)
     if not item.data.is_dir or item.data.is_link then
         vim.notify("Selected item is not a directory", vim.log.levels.WARN)
         return
@@ -1099,7 +1081,7 @@ function FileTree:_delete_dir_recurive(item)
 end
 
 function FileTree:set_persistent_state(state)
-    self._expanded_lru:clear()
+    self._pending_expand = {}
 
     if type(state) ~= "table" then return end
     if type(state.root) ~= "string" then return end
@@ -1109,7 +1091,7 @@ function FileTree:set_persistent_state(state)
     for _, rel in ipairs(state.expanded) do
         if type(rel) == "string" then
             local full_path = vim.fs.joinpath(root, rel)
-            self._expanded_lru:put(full_path, true)
+            self._pending_expand[full_path] = true
         end
     end
     if type(state.current) == "string" then
@@ -1124,8 +1106,28 @@ function FileTree:get_persistent_state()
     if not root then
         return { root = nil, expanded = {} }
     end
+
+    local expanded_map = {}
+    local expanded_count = 0
+
+    ---@param parent loop.comp.TreeBuffer.Item
+    local function walk(parent)
+        if parent.expanded then
+            expanded_map[parent.id] = true
+            expanded_count = expanded_count + 1
+            if expanded_count > 200 then return end -- limit persistence stored data
+            for _, child in ipairs(self._tree:get_children(parent.id)) do
+                walk(child)
+            end
+        end
+    end
+    do
+        local root_item = self._tree:get_item(root)
+        if root_item then walk(root_item) end
+    end
+
     local expanded = {}
-    for path, _ in self._expanded_lru:items() do
+    for path, _ in pairs(expanded_map) do
         local rel = vim.fs.relpath(root, path)
         if rel then
             table.insert(expanded, rel)

@@ -5,7 +5,7 @@ local LRU = require("loop.utils.LRU")
 -- Internal helper to get keys in order for assertions
 local function get_keys(cache)
     local keys = {}
-    for k in cache:items() do
+    for k in cache:iter_items() do
         table.insert(keys, k)
     end
     return keys

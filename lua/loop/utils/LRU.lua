@@ -140,7 +140,23 @@ function LRU:size()
     return self._count
 end
 
-function LRU:items()
+---Returns a list of all keys in the cache, ordered from MRU to LRU.
+---@return any[]
+function LRU:keys()
+    local keys = {}
+    local current = self._head
+    local i = 1
+
+    while current do
+        keys[i] = current.key
+        current = current.next
+        i = i + 1
+    end
+
+    return keys
+end
+
+function LRU:iter_items()
     local current = self._head
     return function()
         if not current then return nil end
