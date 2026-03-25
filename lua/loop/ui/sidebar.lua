@@ -570,6 +570,10 @@ function M.toggle()
     end
 end
 
+function M.save_layout()
+    _save_current_layout_to_state()
+end
+
 function M.fix_layout()
     return _fix_layout()
 end
