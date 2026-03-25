@@ -42,13 +42,26 @@ local function get_fd(file)
     return ffi.os == "Windows" and ffi.C._fileno(c_file) or ffi.C.fileno(c_file)
 end
 
+local function _create_if_missing(path)
+    -- "wx" : Open for Writing, fail if file eXists (Atomic)
+    -- 420  : Octal 0644 (Read/Write for owner, Read for others)
+    ---@diagnostic disable-next-line: undefined-field
+    local fd = vim.uv.fs_open(path, "wx", 420)
+    if fd then
+        ---@diagnostic disable-next-line: undefined-field
+        vim.uv.fs_close(fd)
+    end
+    return true
+end
+
 ---@param path string
----@return boolean,string?
+---@return boolean,string?,string?
 function M.lock(path)
     local abs_path = _normalize(path)
     if _LOCKS[abs_path] then return false, "already locked" end
 
-    local file, err = io.open(abs_path, "w")
+    _create_if_missing(path)
+    local file, err = io.open(abs_path, "r+")
     if not file then return false, err or "failed to open lock file" end
 
     local fd = get_fd(file)
@@ -70,8 +83,9 @@ function M.lock(path)
         return true
     else
         -- If lock fails, close the handle immediately and do NOT add to _LOCKS
+        local pid = tostring(file:read("*n"))
         file:close()
-        return false, nil
+        return false, "", pid
     end
 end
 

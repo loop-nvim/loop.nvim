@@ -243,12 +243,12 @@ local function _load_workspace(dir)
 
     local lockfile_path = vim.fs.joinpath(config_dir, "wslock")
     do
-        local locked, err = flock.lock(lockfile_path)
+        local locked, err, pid = flock.lock(lockfile_path)
         if not locked then
-            if err then
-                return "unexpected", "lock error (" .. tostring(err) .. ")"
+            if pid then
+                return "locked", ("Workspace already open in another instance (pid: %s)"):format(pid)
             else
-                return "locked"
+                return "unexpected", "lock error (" .. tostring(err) .. ")"
             end
         end
     end
@@ -476,10 +476,11 @@ function M.open_workspace(dir, at_startup)
             if status == "no_ws" then
                 ui_msg = "No workspace in " .. dir
             elseif status == "locked" then
-                ui_msg = "Workspace open in another instance"
+                ui_msg = err_msg
             elseif status == "badconfig" then
                 ui_msg = "Workspace configuration error"
-            else
+            end
+            if not ui_msg then
                 ui_msg = "Workspace not loaded (:Loop log for details)"
             end
             vim.notify(ui_msg, vim.log.levels.ERROR)
