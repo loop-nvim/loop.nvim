@@ -20,6 +20,7 @@ local utils          = require("loop.utils.utils")
 ---@field icon_hl string
 ---@field is_current boolean?
 ---@field error_flag boolean?
+---@field error_icon string?
 ---@field childrenload_req_id number
 ---@field children_loading boolean
 ---@field on_children_loaded fun()?
@@ -76,11 +77,11 @@ local _error_node_id = {} -- unique id for the error node
 local function _file_formatter(id, data)
     if not data then return {}, {} end
     local virt_chunks = {}
-    if data.error_flag then
-        table.insert(virt_chunks, { "⚠", "ErrorMsg" })
-    end
     if data.is_link then
         table.insert(virt_chunks, { "↗", "Special" })
+    end
+    if data.error_flag then
+        table.insert(virt_chunks, { data.error_icon or "⚠", "ErrorMsg" })
     end
     local chunks = {
         { data.icon, data.icon_hl },
@@ -131,12 +132,15 @@ end
 local FileTree = class()
 
 function FileTree:init()
-    self._expanded_lru = LRU:new(1000) -- limit to 1000 for performance (note that those are stored in the persistence)
+    local lru_evicting = false
+    -- limit the size of _expanded_lru for performance (these are stored in the persistence file)
+    self._expanded_lru = LRU:new(200)
+
     self._monitor_lru = LRU:new(loopconfig.filetree.max_monitored_folders, {
         on_removed = function(path, cancel_fn)
             --vim.notify("removing monitor: " .. path)
             cancel_fn()
-        end
+        end,
     })
 
     self._viewport_monitor_fn = self:_get_viewport_monitor_fn()
@@ -172,7 +176,7 @@ function FileTree:_setup_tree()
             self:_on_buffer_delete()
         end,
         on_selection = function(id, data)
-            if not data.is_dir then
+            if not data.is_dir and filetools.file_exists(data.path) then
                 uitools.smart_open_file(data.path)
             end
         end,
@@ -181,6 +185,13 @@ function FileTree:_setup_tree()
             if data.is_dir then
                 if expanded then
                     self._expanded_lru:put(data.path, true)
+                    do -- promote parents in LRU
+                        local current = data.path
+                        while current do
+                            current = self._tree:get_parent_id(current)
+                            if current then self._expanded_lru:promote(current) end
+                        end
+                    end
                     local old = data.childrenload_req_id
                     self._viewport_monitor_fn()
                     if old == data.childrenload_req_id then
@@ -648,10 +659,27 @@ end
 ---@param recursive boolean
 function FileTree:_read_dir(path, reload_counter, recursive)
     if reload_counter ~= self._reload_counter then return end
+
+
     local item = self._tree:get_item(path)
     if not item then return end
     ---@type loop.comp.FileTree.ItemData
     local data = item.data
+
+    -- check symlink recursion
+    do
+        ---@diagnostic disable-next-line: undefined-field
+        local realpath = vim.uv.fs_realpath(path)
+        if realpath then
+            local normalized = vim.fs.normalize(realpath)
+            if normalized ~= path and self._tree:have_item(normalized) then
+                data.error_flag = true
+                data.error_icon = "↺"
+                self._tree:refresh_item(path)
+                return -- no not scan to avoid infinite recursion
+            end
+        end
+    end
 
     local req_id = (data.childrenload_req_id or 0) + 1
     data.children_loading = true
@@ -865,7 +893,7 @@ function FileTree:_reveal_step(parent, parts, idx, set_current, token)
 
 
     local function continue()
-        if self._tree:get_item(next_path) then
+        if self._tree:have_item(next_path) then
             self:_reveal_step(next_path, parts, idx + 1, set_current, token)
         else
             log.log("Reveal failed: path not found in tree: " .. next_path, vim.log.levels.DEBUG)
@@ -879,6 +907,8 @@ function FileTree:_reveal_step(parent, parts, idx, set_current, token)
     -- Check if we are currently waiting on the disk I/O
     if parent_item.data.children_loading then
         parent_item.data.on_children_loaded = vim.schedule_wrap(function()
+            if token.reveal_counter ~= self._reveal_counter then return end
+            if token.reload_counter ~= self._reload_counter then return end
             continue()
         end)
     else

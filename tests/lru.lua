@@ -2,22 +2,22 @@
 require("plenary.busted")
 local LRU = require("loop.utils.LRU")
 
-describe("loop.utils.LRU", function()
-    -- Internal helper to get keys in order for assertions
-    local function get_keys(cache)
-        local keys = {}
-        for k in cache:items() do
-            table.insert(keys, k)
-        end
-        return keys
+-- Internal helper to get keys in order for assertions
+local function get_keys(cache)
+    local keys = {}
+    for k in cache:items() do
+        table.insert(keys, k)
     end
+    return keys
+end
 
+describe("loop.utils.LRU", function()
     it("should initialize with correct capacity and empty state", function()
         local cache = LRU:new(3)
-        assert.are.equal(3, cache.capacity)
+        assert.are.equal(3, cache._capacity)
         assert.are.equal(0, cache:size())
-        assert.is_nil(cache.head)
-        assert.is_nil(cache.tail)
+        assert.is_nil(cache._head)
+        assert.is_nil(cache._tail)
     end)
 
     it("should store and retrieve values", function()
@@ -39,11 +39,11 @@ describe("loop.utils.LRU", function()
         assert.are.same({ "a", "c", "b" }, get_keys(cache))
     end)
 
-    it("should evict the tail when capacity is exceeded", function()
+    it("should evict the _tail when capacity is exceeded", function()
         local cache = LRU:new(2)
         cache:put("a", 1)
         cache:put("b", 2)
-        cache:put("c", 3) -- 'a' (the tail) should be evicted
+        cache:put("c", 3) -- 'a' (the _tail) should be evicted
 
         assert.is_false(cache:has("a"))
         assert.is_true(cache:has("b"))
@@ -70,7 +70,7 @@ describe("loop.utils.LRU", function()
 
         assert.are.equal(2, cache:size())
         assert.are.same({ "c", "a" }, get_keys(cache))
-        assert.are.equal(cache.head.next, cache.tail)
+        assert.are.equal(cache._head.next, cache._tail)
     end)
 
     it("should peek without affecting order", function()
@@ -78,7 +78,7 @@ describe("loop.utils.LRU", function()
         cache:put("a", 1)
         cache:put("b", 2)
 
-        -- Peek 'a' (the tail)
+        -- Peek 'a' (the _tail)
         assert.are.equal(1, cache:peek("a"))
 
         -- Order should still be b, a
@@ -99,8 +99,8 @@ describe("loop.utils.LRU", function()
         cache:clear()
 
         assert.are.equal(0, cache:size())
-        assert.is_nil(cache.head)
-        assert.is_nil(cache.tail)
+        assert.is_nil(cache._head)
+        assert.is_nil(cache._tail)
         -- clear() iterates MRU -> LRU
         assert.are.same({ "b", "a" }, removed_keys)
     end)
@@ -157,7 +157,7 @@ describe("loop.utils.LRU", function()
 
         -- Add first item
         cache:put("a", 1)
-        assert.are.equal(cache.head, cache.tail)
+        assert.are.equal(cache._head, cache._tail)
         assert.are.equal(1, cache:get("a"))
 
         -- Add second item (should evict "a")
@@ -168,8 +168,53 @@ describe("loop.utils.LRU", function()
         assert.is_false(cache:has("a"))
 
         -- Verify pointers in 1-node list
-        assert.are.equal(cache.head, cache.tail)
-        assert.is_nil(cache.head.next)
-        assert.is_nil(cache.head.prev)
+        assert.are.equal(cache._head, cache._tail)
+        assert.is_nil(cache._head.next)
+        assert.is_nil(cache._head.prev)
     end)
+end)
+
+it("should promote an item to the front without changing value", function()
+    local cache = LRU:new(3)
+    cache:put("a", 1)
+    cache:put("b", 2)
+    cache:put("c", 3)
+
+    -- Order: c, b, a
+    cache:promote("a")
+
+    -- Order should now be: a, c, b
+    assert.are.same({ "a", "c", "b" }, get_keys(cache))
+    assert.are.equal(1, cache:peek("a"))
+
+    -- Promoting an already-front item should do nothing
+    cache:promote("a")
+    assert.are.same({ "a", "c", "b" }, get_keys(cache))
+
+    -- Promoting a non-existent key should not error
+    assert.has_no.errors(function() cache:promote("non-existent") end)
+end)
+
+it("should maintain valid _head/_tail pointers through complex sequences", function()
+    local cache = LRU:new(2)
+
+    cache:put("a", 1) -- [a]
+    cache:put("b", 2) -- [b, a]
+    cache:get("a")    -- [a, b]
+    cache:delete("a") -- [b]
+
+    assert.are.equal(cache._head, cache._tail)
+    assert.are.equal("b", cache._head.key)
+
+    cache:put("c", 3) -- [c, b]
+    cache:delete("b") -- [c]
+
+    assert.are.equal(cache._head, cache._tail)
+    assert.is_nil(cache._head.next)
+    assert.is_nil(cache._head.prev)
+
+    cache:delete("c") -- []
+    assert.is_nil(cache._head)
+    assert.is_nil(cache._tail)
+    assert.are.equal(0, cache:size())
 end)

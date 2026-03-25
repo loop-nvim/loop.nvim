@@ -910,6 +910,10 @@ function TreeBuffer:get_roots()
     return items
 end
 
+function TreeBuffer:get_children_ids(parent_id)
+    return self._tree:get_children_ids(parent_id)
+end
+
 ---@return loop.comp.TreeBuffer.Item[]
 function TreeBuffer:get_children(parent_id)
     local items = {}
