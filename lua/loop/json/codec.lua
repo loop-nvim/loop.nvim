@@ -127,7 +127,7 @@ end
 function M.save_to_file(filepath, data, schema)
     local json
     if schema then
-        json_encode_pretty(data, schema)
+        json = json_encode_pretty(data, schema)
     else
         json = vim.json.encode(data)
     end
