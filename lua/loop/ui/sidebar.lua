@@ -119,6 +119,7 @@ local function _save_current_layout_to_state()
     if not _active_preset_id then return end
     local wins = _get_managed_windows()
     if #wins == 0 then return end
+    if not _are_windows_stacked_vertically(wins) then return end
 
     local preset = _presets[_active_preset_id]
     if not preset then return end
@@ -128,6 +129,8 @@ local function _save_current_layout_to_state()
 
     -- 1. Save Width
     local actual_w = vim.api.nvim_win_get_width(wins[1])
+    if actual_w == total_w then return end
+
     _state.width_ratio = actual_w / total_w
 
     -- 2. Save Vertical Ratios and View-specific States
