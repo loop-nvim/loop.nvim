@@ -1,5 +1,4 @@
 local class    = require('loop.utils.class')
-local uitools  = require('loop.utils.uitools')
 local strtools = require('loop.utils.strtools')
 
 ---@class loop.utils.TermProc

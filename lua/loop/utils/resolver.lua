@@ -1,6 +1,7 @@
 local M = {}
 
 local loopconfig = require('loop').config
+local builtin_macros = require("loop.utils.macros")
 
 ---@class loop.TaskContext
 ---@field ws_dir string
@@ -129,8 +130,7 @@ local function expand_recursive(str, ctx)
 
 			local fn = loopconfig.macros[macro_name]
 			if not fn then
-				local builtin = require("loop.utils.macros")
-				fn = builtin[macro_name]
+				fn = builtin_macros[macro_name]
 			end
 			if not fn then return nil, "Unknown macro: '" .. macro_name .. "'" end
 
@@ -230,4 +230,3 @@ function M.resolve_macros(val, ctx, callback)
 end
 
 return M
-
