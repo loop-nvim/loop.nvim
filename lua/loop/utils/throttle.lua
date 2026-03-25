@@ -9,7 +9,7 @@ end
 -- Throttle that:
 -- • Runs the first call immediately
 -- • Guarantees at least `ms` between executions
--- • Never drops a call – if called during cooldown, it will run again exactly when allowed
+-- • If called during cooldown, it will run again exactly when allowed
 -- • No arguments, pure side-effect trigger
 function M.throttle_wrap(ms, fn)
     local timer = nil

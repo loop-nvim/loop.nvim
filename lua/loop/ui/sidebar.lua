@@ -6,8 +6,8 @@ local jsoncodec = require("loop.json.codec")
 local KEY_MARKER = "LoopPlugin_SideWin"
 local INDEX_MARKER = "LoopPlugin_SideWinlIdx"
 
-local _resize_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideBarResize", { clear = true })
-local _buffers_auto_group = vim.api.nvim_create_augroup("LoopPlugin_SideBarBuffers", { clear = true })
+local _layout_augroup = vim.api.nvim_create_augroup("LoopPlugin_SideBarLayout", { clear = true })
+local _buffers_augroup = vim.api.nvim_create_augroup("LoopPlugin_SideBarBuffers", { clear = true })
 
 -- ======================================
 -- State
@@ -304,7 +304,7 @@ local function _hide()
     if #wins > 0 then
         _save_current_layout_to_state()
     end
-    vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
+    vim.api.nvim_clear_autocmds({ group = _layout_augroup })
     -- destroy_buffers()
     for _, win in ipairs(wins) do
         if vim.api.nvim_win_is_valid(win) then
@@ -366,14 +366,14 @@ local function _show(id)
         return false
     end
 
-    vim.api.nvim_clear_autocmds({ group = _buffers_auto_group })
+    vim.api.nvim_clear_autocmds({ group = _buffers_augroup })
     for i, buf in ipairs(buffers) do
         _active_buffers[buf] = true
         -- Detect if buffer is deleted externally
         vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
             buffer = buf,
             once = true,
-            group = _buffers_auto_group,
+            group = _buffers_augroup,
             callback = function(args)
                 _active_buffers[args.buf] = nil
             end,
@@ -416,15 +416,19 @@ local function _show(id)
         vim.api.nvim_set_current_win(original)
     end
 
-    -- Resize handling
-    vim.api.nvim_clear_autocmds({ group = _resize_auto_group })
+    -- Layout handling
+    vim.api.nvim_clear_autocmds({ group = _layout_augroup })
     vim.api.nvim_create_autocmd("VimResized", {
-        group = _resize_auto_group,
+        group = _layout_augroup,
         callback = function()
             _on_vim_resize()
         end,
     })
-
+    vim.api.nvim_create_autocmd("QuitPre", {
+        callback = function()
+            _save_current_layout_to_state()
+        end,
+    })
     return true
 end
 
@@ -564,10 +568,6 @@ function M.toggle()
     else
         _show()
     end
-end
-
-function M.save_layout()
-    _save_current_layout_to_state()
 end
 
 function M.fix_layout()
