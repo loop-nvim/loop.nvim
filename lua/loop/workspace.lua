@@ -94,6 +94,7 @@ local function _save_workspace()
     end
     extensionsmgr.on_save(_ws_data.config_dir)
     sidebar.on_workspace_save(_ws_data.config_dir)
+    statuspanel.on_workspace_save(_ws_data.config_dir)
     return true
 end
 
@@ -269,6 +270,7 @@ local function _load_workspace(dir)
     -- resets must be before extentions are loaded
     taskmgr.reset_providers(dir)
     sidebar.on_workspace_open(config_dir)
+    statuspanel.on_workspace_open(config_dir)
     -- init task runner
     runner.on_workspace_open(ws_info, _ws_data.page_manager)
     -- load extensions

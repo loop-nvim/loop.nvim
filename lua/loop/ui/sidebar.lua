@@ -234,12 +234,42 @@ local function _apply_ratios()
     end
 end
 
+---@return boolean
+local function _is_layout_valid()
+    local windows = _get_managed_windows()
+    local num_managed = #windows
+    if num_managed <= 0 then return false end
+    -- 1. Initial State: Get stats from the first managed window
+    -- We need the column (must be 0) and the width (all others must match)
+    local _, sidebar_col = unpack(vim.api.nvim_win_get_position(windows[1]))
+    local sidebar_width = vim.api.nvim_win_get_width(windows[1])
+    -- REQUIREMENT: Must be anchored at the far left
+    if sidebar_col ~= 0 then return false end
+    -- 2. Iterate through ALL windows in the tabpage
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        local is_managed = _is_managed_window(win)
+        local _, win_col = unpack(vim.api.nvim_win_get_position(win))
+        local win_width = vim.api.nvim_win_get_width(win)
+        if is_managed then
+            -- LOGIC: Managed windows MUST be at col 0 AND match the target width
+            if win_col ~= 0 or win_width ~= sidebar_width then
+                return false
+            end
+        else
+            -- LOGIC: External windows MUST NOT be at col 0
+            -- (Prevents other windows from "sneaking" into the sidebar column)
+            if win_col == 0 then
+                return false
+            end
+        end
+    end
+    return true
+end
+
 local function _fix_layout()
+    if _is_layout_valid() then return end
     local windows = _get_managed_windows()
     if #windows <= 0 then return end
-    if not _are_windows_stacked_vertically(windows) then
-        return
-    end
     -- 1. Setup the Anchor (Move first window to far left)
     local anchor_win = windows[1]
     local width = vim.api.nvim_win_get_width(anchor_win)
@@ -261,8 +291,6 @@ end
 local function _load_layout(config_dir)
     if not config_dir then return end
     local filepath = vim.fs.joinpath(config_dir, "sidebar.json")
-    if vim.fn.filereadable(filepath) == 0 then return end
-
     local ok, data = jsoncodec.load_from_file(filepath)
     if ok and data then
         _state.width_ratio = data.width_ratio or _state.width_ratio
@@ -290,9 +318,6 @@ local function _save_layout(config_dir)
     jsoncodec.save_to_file(vim.fs.joinpath(config_dir, "sidebar.json"), data_to_save)
 end
 
-local function _on_vim_resize(r)
-    _apply_ratios()
-end
 local function _destroy_buffers()
     for bufnr, _ in pairs(_active_buffers) do
         if vim.api.nvim_buf_is_valid(bufnr) then
@@ -424,14 +449,24 @@ local function _show(id)
     vim.api.nvim_create_autocmd("VimResized", {
         group = _layout_augroup,
         callback = function()
-            _on_vim_resize()
+            _apply_ratios()
         end,
     })
+
+    vim.api.nvim_create_autocmd("WinNew", {
+        group = _layout_augroup,
+        callback = function()
+            _fix_layout()
+        end,
+    })
+    
     vim.api.nvim_create_autocmd("QuitPre", {
+        group = _layout_augroup,
         callback = function()
             _save_current_layout_to_state()
         end,
     })
+
     return true
 end
 
@@ -571,14 +606,6 @@ function M.toggle()
     else
         _show()
     end
-end
-
-function M.save_layout()
-    _save_current_layout_to_state()
-end
-
-function M.fix_layout()
-    return _fix_layout()
 end
 
 ---@param config_dir string

@@ -1,7 +1,6 @@
 local M = {}
 local loopconfig = require('loop').config
 local Page = require('loop.ui.Page')
-local sidebar = require('loop.ui.sidebar')
 local throttle = require('loop.utils.throttle')
 local uitools = require('loop.utils.uitools')
 local strtools = require('loop.utils.strtools')
@@ -10,6 +9,7 @@ local BaseBuffer = require('loop.buf.BaseBuffer')
 local OutputBuffer = require('loop.buf.OutputBuffer')
 local ReplBuffer = require('loop.buf.ReplBuffer')
 local logger = require('loop.log')
+local jsoncodec = require("loop.json.codec")
 
 ---@class loop.TabInfo
 ---@field label string
@@ -310,9 +310,7 @@ local function _create_window()
 
     local prev_win = vim.api.nvim_get_current_win()
 
-    sidebar.save_layout()
     vim.cmd('bot 1split') -- Open a bottom split.
-    sidebar.fix_layout()
 
     -- Get the new window ID.
     _loop_win = vim.api.nvim_get_current_win()
@@ -331,10 +329,17 @@ local function _create_window()
     _setup_tabs()
 end
 
+local function _store_window_height()
+    if _loop_win ~= -1 and not uitools.is_win_full_height(_loop_win) then
+        _loop_win_height_ratio = vim.api.nvim_win_get_height(_loop_win) / vim.o.lines
+    end
+end
+
 local function _apply_window_height()
-    if _loop_win ~= -1 and _loop_win_height_ratio then
+    if _loop_win ~= -1 then
         if not uitools.is_win_full_height(_loop_win) then
-            vim.api.nvim_win_set_height(_loop_win, math.floor(vim.o.lines * _loop_win_height_ratio))
+            local ratio = _loop_win_height_ratio or 0.2
+            vim.api.nvim_win_set_height(_loop_win, math.floor(vim.o.lines * ratio))
         end
     end
 end
@@ -416,6 +421,7 @@ end
 function M.hide_window()
     assert(_init_done, _init_err_msg)
     if _loop_win and vim.api.nvim_win_is_valid(_loop_win) then
+        _store_window_height()
         vim.api.nvim_win_close(_loop_win, false)
         _loop_win = -1
     end
@@ -742,6 +748,25 @@ function M.create_page_manager()
     return _create_page_manager()
 end
 
+function M.on_workspace_open(config_dir)
+    if not config_dir then return end
+    local filepath = vim.fs.joinpath(config_dir, "statusbar.json")
+    local ok, data = jsoncodec.load_from_file(filepath)
+    if ok and data then
+        _loop_win_height_ratio = data.height_ratio
+        _apply_window_height()
+    end
+end
+
+---@param config_dir string
+function M.on_workspace_save(config_dir)
+    if not config_dir then return end
+    local data_to_save = {
+        height_ratio = _loop_win_height_ratio
+    }
+    jsoncodec.save_to_file(vim.fs.joinpath(config_dir, "statusbar.json"), data_to_save)
+end
+
 function M.init()
     if _init_done then
         error('Loop.nvim: init() cannot be called more than once')
@@ -811,6 +836,12 @@ function M.init()
             if _loop_win ~= -1 then
                 _throttled_setup_tabs()
             end
+        end,
+    })
+
+    vim.api.nvim_create_autocmd("QuitPre", {
+        callback = function()
+            _store_window_height()
         end,
     })
 
