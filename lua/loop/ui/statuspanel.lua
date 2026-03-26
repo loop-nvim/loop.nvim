@@ -750,7 +750,7 @@ end
 
 function M.on_workspace_open(config_dir)
     if not config_dir then return end
-    local filepath = vim.fs.joinpath(config_dir, "statusbar.json")
+    local filepath = vim.fs.joinpath(config_dir, "statuspanel.json")
     local ok, data = jsoncodec.load_from_file(filepath)
     if ok and data then
         _loop_win_height_ratio = data.height_ratio
@@ -764,7 +764,7 @@ function M.on_workspace_save(config_dir)
     local data_to_save = {
         height_ratio = _loop_win_height_ratio
     }
-    jsoncodec.save_to_file(vim.fs.joinpath(config_dir, "statusbar.json"), data_to_save)
+    jsoncodec.save_to_file(vim.fs.joinpath(config_dir, "statuspanel.json"), data_to_save)
 end
 
 function M.init()
