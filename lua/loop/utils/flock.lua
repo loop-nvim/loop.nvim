@@ -78,7 +78,7 @@ function M.lock(path)
     if success then
         -- Only store in the registry if the lock was actually acquired
         _LOCKS[abs_path] = file
-        file:write(tostring(vim.fn.getpid()))
+        file:write(tostring(vim.fn.getpid()).. "\n")
         file:flush()
         return true
     else
