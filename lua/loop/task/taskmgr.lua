@@ -13,13 +13,17 @@ local log = require("loop.log")
 ---@return table
 local function _build_taskfile_schema()
     local schema_data = require("loop.task.tasksschema")
-    local base_schema = schema_data.base_schema
-    local base_items = schema_data.base_items
 
-    local schema = vim.deepcopy(base_schema)
+    -- 1. Deep copy the base structures to avoid polluting the cache
+    local base_items = vim.deepcopy(schema_data.base_items)
+    local schema = vim.deepcopy(schema_data.base_schema)
 
-    local items = schema.properties.tasks.items
-    items.allOf = items.allOf or {}
+    -- Shortcut to the task list items
+    local tasks_items = schema.properties.tasks.items
+    tasks_items.allOf = tasks_items.allOf or {}
+
+    -- Ensure the base type enum exists
+    tasks_items.properties.type.enum = tasks_items.properties.type.enum or {}
 
     local task_types = providers.task_types()
 
@@ -27,47 +31,61 @@ local function _build_taskfile_schema()
         local provider = providers.get_task_type_provider(task_type)
 
         if provider then
-            assert(provider.get_task_schema,
-                "get_task_schema() not implemented for: " .. task_type)
+            assert(provider.get_task_schema, "get_task_schema() not implemented for: " .. task_type)
 
-            table.insert(items.properties.type.enum, task_type)
+            local raw_provider_schema = provider.get_task_schema()
+            if raw_provider_schema then
+                -- 2. Defensive copy immediately
+                local then_schema = vim.deepcopy(raw_provider_schema)
+                local provider_props = then_schema.properties or {}
 
-            local provider_schema = provider.get_task_schema()
-
-            if provider_schema then
-                local providers_props = provider_schema.properties or {}
-                assert(type(providers_props) == "table")
-
-                -- prevent overriding base props
-                for name, _ in pairs(providers_props) do
-                    assert(
-                        not base_items.properties[name],
-                        ("task provider '%s' defines a reserved property: '%s'")
-                        :format(task_type, name)
-                    )
+                -- 3. Validate no reserved property collisions
+                for name, _ in pairs(provider_props) do
+                    if base_items.properties[name] then
+                        error(string.format("task provider '%s' defines reserved property: '%s'", task_type, name))
+                    end
                 end
 
-                local then_schema = vim.fn.deepcopy(base_items)
+                -- 4. Setup 'then' schema metadata
                 then_schema.description = ("Definition of a `%s` task"):format(task_type)
-                then_schema.properties = vim.tbl_extend("error", then_schema.properties, providers_props)
-                if provider_schema["x-order"] then vim.list_extend(then_schema["x-order"], provider_schema["x-order"]) end
-                then_schema.properties.type = {
+                then_schema.additionalProperties = false
+
+                -- 5. Merge Properties: Base items take precedence for core fields
+                then_schema.properties = vim.tbl_extend("force", then_schema.properties or {}, base_items.properties)
+
+                -- Fix the 'type' to the specific constant for this branch
+                then_schema.properties.type = vim.tbl_extend("force", {}, base_items.properties.type, {
                     const = task_type,
-                    description = base_items.properties.type.description,
-                    ["x-valueSelector"] = base_items.properties.type["x-valueSelector"]
-                }
-                then_schema.additionalProperties = false -- providers are not allowed to change this
-                then_schema["x-valueSelector"] = schema.properties.tasks.items["x-valueSelector"]
-                for _, req in ipairs(provider_schema.required or {}) do
-                    table.insert(then_schema.required, req)
+                })
+
+                -- 6. Safe Required Merge
+                local combined_required = vim.deepcopy(base_items.required or {})
+                for _, req in ipairs(then_schema.required or {}) do
+                    if not vim.tbl_contains(combined_required, req) then
+                        table.insert(combined_required, req)
+                    end
+                end
+                then_schema.required = combined_required
+
+                -- 7. Compose x-order
+                local x_order = {}
+                vim.list_extend(x_order, base_items["x-order"] or {})
+                vim.list_extend(x_order, raw_provider_schema["x-order"] or {})
+                then_schema["x-order"] = x_order
+
+                -- 8. Inherit value selector from the task item level
+                then_schema["x-valueSelector"] = tasks_items["x-valueSelector"]
+
+                -- 9. Register task type in the main enum
+                if not vim.tbl_contains(tasks_items.properties.type.enum, task_type) then
+                    table.insert(tasks_items.properties.type.enum, task_type)
                 end
 
-                table.insert(items.allOf, {
+                -- 10. Add the conditional branch
+                table.insert(tasks_items.allOf, {
                     ["if"] = {
                         type = "object",
-                        properties = {
-                            type = { const = task_type }
-                        }
+                        properties = { type = { const = task_type } }
                     },
                     ["then"] = then_schema
                 })
@@ -77,6 +95,7 @@ local function _build_taskfile_schema()
 
     return schema
 end
+
 ---@param task_type  string
 ---@return table|nil
 local function _get_single_task_schema(task_type)

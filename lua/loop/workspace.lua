@@ -197,7 +197,7 @@ local function _get_or_create_ws_config_file(ws_dir)
         end
         local data = {}
         data["$schema"] = './wsschema.json'
-        data["workspace"] = vim.fn.deepcopy(require('loop.ws.template'))
+        data["workspace"] = vim.deepcopy(require('loop.ws.template'))
         data["workspace"].name = vim.fn.fnamemodify(ws_dir, ":p:h:t")
         jsoncodec.save_to_file(filepath, data)
     end
@@ -222,7 +222,7 @@ local function _configure_workspace()
         -- ensure workspace was not changed/closed
         if _ws_data and ws_dir == _ws_data.ws_dir then
             local config = _load_workspace_config(ws_dir)
-            local configcopy = config and vim.fn.deepcopy(config) or nil
+            local configcopy = config and vim.deepcopy(config) or nil
             _monitor.on_config_change(ws_dir, configcopy)
         end
     end)

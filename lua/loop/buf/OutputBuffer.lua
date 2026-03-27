@@ -61,81 +61,60 @@ end
 function OutputBuffer:add_lines(lines)
     if self:is_destroyed() then return end
     local bufnr = self:get_or_create_buf()
-    if bufnr < 0 then return end
+    if bufnr <= 0 then return end
 
+    -- 1. Standardize input
     if type(lines) == "string" then
         lines = { lines }
     end
 
     lines = strtools.prepare_buffer_lines(lines)
+    local num_new_lines = #lines
+    if num_new_lines == 0 then return end
 
-    vim.bo[bufnr].modifiable = true
-
-    local on_last_line, winid = self:_is_on_last_line()
-
+    -- 2. Capture state before modification
+    local autoscrool_wins
     local line_count = vim.api.nvim_buf_line_count(bufnr)
 
-    -- ------------------------------------------------------------
-    -- 1. REMOVE excess lines FIRST (preserve trailing empty line)
-    -- ------------------------------------------------------------
-    local total_after_add = line_count - 1 + #lines + 1 -- replace empty + add new empty
-    if total_after_add > self._max_lines then
-        local excess = total_after_add - self._max_lines
+    if self._auto_scroll then
+        autoscrool_wins = {}
+        local wins = vim.fn.win_findbuf(bufnr)
+        for _, win in ipairs(wins) do
+            local cursor = vim.api.nvim_win_get_cursor(win)
+            -- If the cursor is on the very last line, mark it for scrolling
+            if cursor[1] >= line_count then
+                autoscrool_wins[win] = true
+            end
+        end
+    end
 
-        -- never delete the trailing empty line
-        local delete_to = math.min(excess, line_count - 1)
+    -- 3. Handle Overflow (FIFO)
+    vim.bo[bufnr].modifiable = true
+    if (line_count + num_new_lines) > self._max_lines then
+        local excess = (line_count + num_new_lines) - self._max_lines
+        local delete_to = math.min(excess, line_count)
 
         if delete_to > 0 then
             vim.api.nvim_buf_set_lines(bufnr, 0, delete_to, false, {})
-
-            -- adjust cursor if needed
-            local win = vim.fn.bufwinid(bufnr)
-            if win ~= -1 then
-                local cursor = vim.api.nvim_win_get_cursor(win)
-                local new_line = math.max(1, cursor[1] - delete_to)
-                vim.api.nvim_win_set_cursor(win, { new_line, cursor[2] })
-            end
+            line_count = line_count - delete_to
         end
-
-        line_count = vim.api.nvim_buf_line_count(bufnr)
     end
 
-    -- ------------------------------------------------------------
-    -- 2. REPLACE the trailing empty line with new content
-    -- ------------------------------------------------------------
-    local insert_at = line_count - 1
-    vim.api.nvim_buf_set_lines(bufnr, insert_at, line_count, false, lines)
-
-    -- ------------------------------------------------------------
-    -- 3. ALWAYS append a new empty line at the end
-    -- ------------------------------------------------------------
-    vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, { "" })
-
+    -- 4. Append New Lines
+    -- Using line_count (old count minus deletions) as the index to append
+    vim.api.nvim_buf_set_lines(bufnr, line_count, -1, false, lines)
     vim.bo[bufnr].modifiable = false
 
-    -- ------------------------------------------------------------
-    -- 4. Auto-scroll (only if user was already at bottom)
-    -- ------------------------------------------------------------
-    if self._auto_scroll and on_last_line and winid > 0 then
-        local new_count = vim.api.nvim_buf_line_count(bufnr)
-        vim.api.nvim_win_set_cursor(winid, { new_count, 0 })
+    -- 5. Auto-scroll
+    if self._auto_scroll then
+        local new_line_count = vim.api.nvim_buf_line_count(bufnr)
+        for win, _ in pairs(autoscrool_wins) do
+            -- Move cursor to the new last line, keeping column 0
+            vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+        end
     end
 
     self:request_change_notif()
-end
-
----@return boolean,number
-function OutputBuffer:_is_on_last_line()
-    local win = vim.fn.bufwinid(self._buf)
-    if win == -1 then return false, -1 end -- no visible window
-
-    local last_line = vim.api.nvim_buf_line_count(self._buf)
-    local cur_line = vim.api.nvim_win_get_cursor(win)[1]
-
-    if cur_line < last_line then
-        return false, -1
-    end
-    return true, win
 end
 
 return OutputBuffer

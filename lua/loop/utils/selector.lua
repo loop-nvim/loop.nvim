@@ -121,8 +121,8 @@ end
 ---@return loop.Picker.AsyncPreviewLoader|nil
 local function _create_previewer(opts)
     if opts.file_preview then
-        return function(data, opts, callback)
-            return pickertools.default_file_preview(data.file, {
+        return function(data, preview_opts, callback)
+            return pickertools.default_file_preview(data.file or "", {
                 lnum = data.lnum,
             }, callback)
         end

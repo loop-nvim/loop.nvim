@@ -115,4 +115,19 @@ function M.leading_idle_debounce(ms, fn)
     end
 end
 
+-- Trailing idle debounce
+-- • Never runs immediately
+-- • Each call resets the timer
+-- • Runs only after ms of inactivity
+function M.trailing_idle_debounce(ms, fn)
+    local timer
+    return function()
+        if timer then
+            if timer:is_active() then timer:stop() end
+            if not timer:is_closing() then timer:close() end
+        end
+        timer = vim.defer_fn(function() if not _is_exiting() then fn() end end, ms)
+    end
+end
+
 return M

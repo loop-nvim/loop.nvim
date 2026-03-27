@@ -1155,7 +1155,7 @@ function JsonEditor:_paste(item, where)
         -- If 'under', we append to the end. If sibling, use insert_pos.
         local pos = insert_pos or (#target_item.data.value + 1)
         self:_push_undo()
-        table.insert(target_item.data.value, pos, vim.fn.deepcopy(_json_clipboard.value))
+        table.insert(target_item.data.value, pos, vim.deepcopy(_json_clipboard.value))
         self:_apply_changes(jsontools.join_path(target_item.data.path, tostring(pos)))
     elseif vt == "object" then
         floatwin.input_at_cursor({
@@ -1168,14 +1168,14 @@ function JsonEditor:_paste(item, where)
                 return
             end
             self:_push_undo()
-            target_item.data.value[new_key] = vim.fn.deepcopy(_json_clipboard.value)
+            target_item.data.value[new_key] = vim.deepcopy(_json_clipboard.value)
             self:_apply_changes(jsontools.join_path(target_item.data.path, new_key))
         end)
     end
 end
 
 function JsonEditor:_push_undo()
-    table.insert(self._undo_stack, vim.fn.deepcopy(self._data))
+    table.insert(self._undo_stack, vim.deepcopy(self._data))
     self._redo_stack = {}
     self._is_dirty = true
 end
@@ -1191,7 +1191,7 @@ function JsonEditor:undo()
         return
     end
 
-    table.insert(self._redo_stack, vim.fn.deepcopy(self._data))
+    table.insert(self._redo_stack, vim.deepcopy(self._data))
     self._data = self:_pop_undo() or self._data
     self:_apply_changes()
 end
@@ -1201,7 +1201,7 @@ function JsonEditor:redo()
         vim.notify("Nothing to redo", vim.log.levels.INFO)
         return
     end
-    table.insert(self._undo_stack, vim.fn.deepcopy(self._data))
+    table.insert(self._undo_stack, vim.deepcopy(self._data))
     self._data = table.remove(self._redo_stack)
     self:_apply_changes()
 end
