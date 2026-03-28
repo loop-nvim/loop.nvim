@@ -20,7 +20,7 @@ Workspace and task management for Neovim.
 - **Tasks** — Run shell commands or composite workflows. Dependencies run in sequence or parallel.
 - **Macros** — `${macro}` substitution in commands (paths, env vars, prompts, workspace variables).
 - **UI** — Built-in window for task output and status.
-- **Extensions** — Add task types and templates via plugins (For Building, Debugging etc...)
+- **Extensions** — Add task types, task templates etc... (For Building, Debugging etc...)
 
 ## 🎬 Demo Videos (toggle to watch)
 
@@ -77,7 +77,7 @@ Neovim >= 0.10
 3. Use `:Loop task configure` to open the task list editor and create new tasks.
 4. Use `:Loop task run` to run tasks.
 5. Use `:Loop statuspanel` to show or hide the Loop status panel (task output).
-5. Use `:Loop sidebar` to show or hide the Loop status side bar (file tree or other plugin dependant views).
+5. Use `:Loop sidebar` to show or hide the Loop side bar (file tree or other plugin dependant views).
 
 Workspaces in the current directory are opened automatically on startup when neovim is started without arguments.
 
