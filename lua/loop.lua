@@ -32,7 +32,6 @@ local M = {}
 ---@field statuspanel loop.Config.Window
 ---@field filetree loop.Config.FileTree
 ---@field files loop.Config.WorkspaceFiles
----@field macros table<string, (fun(ctx:loop.TaskContext, ...): any, string|nil)>
 ---@field debug boolean Enable debug/verbose mode for development
 ---@field state_autosave_interval integer Auto-save interval in minutes (default: 5)
 ---@field logs_count integer Number of recent logs to show (default: 50)
@@ -65,7 +64,6 @@ local function _get_default_config()
             monitor_file_system = true,
             max_monitored_folders = 200,
         },
-        macros = {},
         debug = false,
         state_autosave_interval = 5, -- 5 minutes
         logs_count = 50,             -- Number of recent logs to show
@@ -75,6 +73,9 @@ end
 
 ---@type loop.Config
 M.config = _get_default_config()
+
+---@type table<string, (fun(ctx:loop.TaskContext, ...): any, string|nil)>
+M.user_macros = {}
 
 -----------------------------------------------------------
 -- Setup (user config)
@@ -87,6 +88,14 @@ function M.setup(opts)
     end
 
     M.config = vim.tbl_deep_extend("force", _get_default_config(), opts or {})
+end
+
+---@type function
+function M.register_macro(name, fn)
+    assert(type(name) == 'string' and name:match("[_%a][_%w]*") ~= nil,
+    "Invalid macro name in register_macro(): " .. tostring(name))
+    assert(type(fn) == "function", "Invalid macro function in register_macro()")
+    M.user_macros[name] = fn
 end
 
 return M

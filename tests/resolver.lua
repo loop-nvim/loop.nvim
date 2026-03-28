@@ -2,7 +2,7 @@
 require("plenary.busted")
 
 local M = require("loop.utils.resolver")
-local loopconfig = require('loop').config
+local loop = require('loop')
 
 describe("loop.utils.resolver (variadic args)", function()
     --- Mock task context for testing
@@ -30,11 +30,11 @@ describe("loop.utils.resolver (variadic args)", function()
     end
 
     before_each(function()
-        loopconfig.macros = {}
+        loop.user_macros = {}
     end)
 
     it("supports an arbitrary number of arguments", function()
-        loopconfig.macros.join = function(ctx, ...)
+        loop.user_macros.join = function(ctx, ...)
             return table.concat({ ... }, "-")
         end
 
@@ -44,11 +44,11 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles nested macros with inner-to-outer resolution", function()
-        loopconfig.macros.inner = function(ctx)
+        loop.user_macros.inner = function(ctx)
             return "foo"
         end
 
-        loopconfig.macros.outer = function(ctx, arg)
+        loop.user_macros.outer = function(ctx, arg)
             return "result_" .. arg
         end
 
@@ -58,7 +58,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("respects escape sequences for colons and commas", function()
-        loopconfig.macros.echo = function(ctx, arg)
+        loop.user_macros.echo = function(ctx, arg)
             return arg
         end
 
@@ -70,11 +70,11 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles complex nesting: macros inside argument lists", function()
-        loopconfig.macros.add = function(ctx, a, b)
+        loop.user_macros.add = function(ctx, a, b)
             return tonumber(a) + tonumber(b)
         end
 
-        loopconfig.macros.val = function(ctx)
+        loop.user_macros.val = function(ctx)
             return "5"
         end
 
@@ -84,7 +84,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("successfully escapes closing braces inside arguments", function()
-        loopconfig.macros.wrap = function(ctx, arg)
+        loop.user_macros.wrap = function(ctx, arg)
             return "[" .. arg .. "]"
         end
 
@@ -101,7 +101,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles deeply nested tables and strings correctly", function()
-        loopconfig.macros.get_env = function(ctx, key)
+        loop.user_macros.get_env = function(ctx, key)
             local envs = { user = "ghost", home = "/home/ghost" }
             return envs[key]
         end
@@ -124,7 +124,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles literal dollars via $$", function()
-        loopconfig.macros.echo = function(ctx, arg)
+        loop.user_macros.echo = function(ctx, arg)
             return arg
         end
 
@@ -134,7 +134,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles macros that return errors via (nil, err)", function()
-        loopconfig.macros.bad = function(ctx)
+        loop.user_macros.bad = function(ctx)
             return nil, "api offline"
         end
 
@@ -144,7 +144,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles the 'Large List' of edge cases", function()
-        loopconfig.macros = {
+        loop.user_macros = {
             echo       = function(ctx, arg) return arg end,
             prefix     = function(ctx) return "real_macro" end,
             real_macro = function(ctx, arg) return "works_" .. arg end,
@@ -168,7 +168,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles mixed content and adjacent macros", function()
-        loopconfig.macros = {
+        loop.user_macros = {
             host = function(ctx) return "localhost" end,
             port = function(ctx) return "8080" end,
             user = function(ctx) return "root" end,
@@ -202,7 +202,7 @@ describe("loop.utils.resolver (variadic args)", function()
     end)
 
     it("handles various bad inputs and malformed syntax", function()
-        loopconfig.macros = {
+        loop.user_macros = {
             crash = function(ctx) error("system explosion") end,
             fail  = function(ctx) return nil, "database offline" end,
         }
