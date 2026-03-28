@@ -22,6 +22,16 @@ Workspace and task management for Neovim.
 - **UI** — Built-in window for task output and status.
 - **Extensions** — Add task types and templates via plugins (For Building, Debugging etc...)
 
+## 🎬 Demo Videos (toggle to watch)
+
+<details>
+<summary>Workspace Creation</summary>
+
+https://github.com/user-attachments/assets/fbcc9ed7-7a27-4986-8919-4f05f9f29c22
+
+</details>
+
+
 ## Requirements
 
 Neovim >= 0.10
