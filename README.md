@@ -20,7 +20,7 @@ Workspace and task management for Neovim.
 - **Tasks** — Run shell commands or composite workflows. Dependencies run in sequence or parallel.
 - **Macros** — `${macro}` substitution in commands (paths, env vars, prompts, workspace variables).
 - **UI** — Built-in window for task output and status.
-- **Extensions** — Add task types and templates via plugins (For Building, Debugging etc...)
+- **Extensions** — Add task types, task templates etc... (For Building, Debugging etc...)
 
 ## 🎬 Demo Videos (toggle to watch)
 
@@ -28,6 +28,27 @@ Workspace and task management for Neovim.
 <summary>Workspace Creation</summary>
 
 https://github.com/user-attachments/assets/fbcc9ed7-7a27-4986-8919-4f05f9f29c22
+
+</details>
+
+<details>
+<summary>Adding a build task (requires loop-build extension)</summary>
+
+https://github.com/user-attachments/assets/323dc168-01a4-4940-99ec-7c47ab9c59f5
+
+</details>
+
+<details>
+<summary>Adding a 'run' task with dependency on the a build task </summary>
+
+https://github.com/user-attachments/assets/f505fb02-6591-4049-97a3-5f34391f17fd
+
+</details>
+
+<details>
+<summary>Adding a debug task (requires loop-debug extension)</summary>
+
+https://github.com/user-attachments/assets/606f6a37-0b9d-426f-a89f-e4d1e1375def
 
 </details>
 
@@ -56,7 +77,7 @@ Neovim >= 0.10
 3. Use `:Loop task configure` to open the task list editor and create new tasks.
 4. Use `:Loop task run` to run tasks.
 5. Use `:Loop statuspanel` to show or hide the Loop status panel (task output).
-5. Use `:Loop sidebar` to show or hide the Loop status side bar (file tree or other plugin dependant views).
+5. Use `:Loop sidebar` to show or hide the Loop side bar (file tree or other plugin dependant views).
 
 Workspaces in the current directory are opened automatically on startup when neovim is started without arguments.
 
@@ -99,8 +120,7 @@ require("loop").setup({
 
 ## Commands
 
-Commands be selected using the command selector by typing `:Loop`
-
+> 💡 You can always type `:Loop` to list all available commands (dynamic list depending on workspace, extensions etc...)
 
 | Command | Description |
 |--------|-------------|
@@ -118,6 +138,9 @@ Commands be selected using the command selector by typing `:Loop`
 | `:Loop task terminate_all` | Stop all tasks |
 | `:Loop var list` | List variables |
 | `:Loop var configure` | Edit variables.json |
+| `:Loop sidebar` | Toggle the sidebar |
+| `:Loop sidebar show <preset>` | Show the sidebar (with opional preset argument if many are available) |
+| `:Loop sidebar hide` | Hide the sidebar |
 | `:Loop statuspanel` | Toggle status panel |
 | `:Loop statuspanel show` | Show status panel |
 | `:Loop statuspanel hide` | Hide status panel |
@@ -191,8 +214,8 @@ lualine_c = { function() return require("loop.statusline").status() end, "filena
 
 - [loop-build.nvim](https://github.com/loop-nvim/loop-build.nvim) — Defines a "build" task type and provides templates for various build tasks
 - [loop-debug.nvim](https://github.com/loop-nvim/loop-debug.nvim) — Defines a "debug" task type and provides templates for various debug tasks
-- [loop-cmake.nvim](https://github.com/loop-nvim/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
 - [loop-marks.nvim](https://github.com/loop-nvim/loop-marks.nvim) - Workspace based named bookmarks and notes
+- [loop-cmake.nvim](https://github.com/loop-nvim/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
 
 
 ## License
