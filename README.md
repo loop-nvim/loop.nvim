@@ -212,8 +212,8 @@ lualine_c = { function() return require("loop.statusline").status() end, "filena
 
 - [loop-build.nvim](https://github.com/loop-nvim/loop-build.nvim) — Defines a "build" task type and provides templates for various build tasks
 - [loop-debug.nvim](https://github.com/loop-nvim/loop-debug.nvim) — Defines a "debug" task type and provides templates for various debug tasks
-- [loop-cmake.nvim](https://github.com/loop-nvim/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
 - [loop-marks.nvim](https://github.com/loop-nvim/loop-marks.nvim) - Workspace based named bookmarks and notes
+- [loop-cmake.nvim](https://github.com/loop-nvim/loop-cmake.nvim) — Provides task templates generated automatically from CMake files
 
 
 ## License
