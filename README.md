@@ -41,9 +41,14 @@ https://github.com/user-attachments/assets/323dc168-01a4-4940-99ec-7c47ab9c59f5
 <details>
 <summary>Adding a 'run' task with dependency on the a build task </summary>
 
-
 https://github.com/user-attachments/assets/f505fb02-6591-4049-97a3-5f34391f17fd
 
+</details>
+
+<details>
+<summary>Adding a debug task (requires loop-debug extension)</summary>
+
+https://github.com/user-attachments/assets/606f6a37-0b9d-426f-a89f-e4d1e1375def
 
 </details>
 
