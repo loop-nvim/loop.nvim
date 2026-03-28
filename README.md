@@ -31,6 +31,22 @@ https://github.com/user-attachments/assets/fbcc9ed7-7a27-4986-8919-4f05f9f29c22
 
 </details>
 
+<details>
+<summary>Adding a build task (requires loop-build extension)</summary>
+
+https://github.com/user-attachments/assets/323dc168-01a4-4940-99ec-7c47ab9c59f5
+
+</details>
+
+<details>
+<summary>Adding a 'run' task with dependency on the a build task </summary>
+
+
+https://github.com/user-attachments/assets/f505fb02-6591-4049-97a3-5f34391f17fd
+
+
+</details>
+
 
 ## Requirements
 
