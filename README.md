@@ -134,7 +134,7 @@ Example task in `tasks.json`:
 
 ## Macros
 
-Use `${macro}` or `${macro:arg}` in task definitions:
+Use `${macro}` or `${macro:args}` in task definitions:
 
 | Macro | Description |
 |-------|-------------|
@@ -153,9 +153,22 @@ Use `${macro}` or `${macro:arg}` in task definitions:
 | `${time}` | Time (HH:MM:SS) |
 | `${timestamp}` | ISO timestamp |
 | `${env:NAME}` | Environment variable |
-| `${var:NAME}` | Workspace variable |
+| `${var:NAME}` | Workspace variable, use `:Loop var configure` to define variables |
 | `${prompt:Message}` | Prompt for input |
 | `${prompt:Port,8000}` | Prompt with default |
+
+## User defined macros
+
+Use can define your own macros, example:
+```lua
+local loop = require('loop')
+loop.register_macro('add', function(_, value1, value2)
+			local n1 = tonumber(value1) or 0
+			local n2 = tonumber(value2) or 0
+			return tostring(n1 + n2)
+		end)
+```
+Then it can by used in tasks definitions, for example `${add:1,2}` will be replaced by 3.
 
 ## Statusline
 
