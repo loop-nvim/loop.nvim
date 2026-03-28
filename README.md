@@ -48,7 +48,7 @@ https://github.com/user-attachments/assets/f505fb02-6591-4049-97a3-5f34391f17fd
 <details>
 <summary>Adding a debug task (requires loop-debug extension)</summary>
 
-https://github.com/user-attachments/assets/606f6a37-0b9d-426f-a89f-e4d1e1375def
+https://github.com/user-attachments/assets/070cf6b0-9d88-41e6-b3f1-7708045a1af9
 
 </details>
 
