@@ -73,15 +73,18 @@ function OutputBuffer:add_lines(lines)
     if num_new_lines == 0 then return end
 
     -- 2. Capture state before modification
-    local autoscrool_wins
     local line_count = vim.api.nvim_buf_line_count(bufnr)
+    
+    -- Check if the buffer is currently just a single empty line
+    local is_empty_start = line_count == 1 and vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == ""
 
+    local autoscrool_wins
     if self._auto_scroll then
         autoscrool_wins = {}
         local wins = vim.fn.win_findbuf(bufnr)
         for _, win in ipairs(wins) do
             local cursor = vim.api.nvim_win_get_cursor(win)
-            -- If the cursor is on the very last line, mark it for scrolling
+            -- If cursor is on the last line, mark for scrolling
             if cursor[1] >= line_count then
                 autoscrool_wins[win] = true
             end
@@ -96,20 +99,26 @@ function OutputBuffer:add_lines(lines)
 
         if delete_to > 0 then
             vim.api.nvim_buf_set_lines(bufnr, 0, delete_to, false, {})
-            line_count = line_count - delete_to
+            line_count = vim.api.nvim_buf_line_count(bufnr)
+            -- If we deleted content, it's no longer a "fresh" empty buffer
+            is_empty_start = false
         end
     end
 
-    -- 4. Append New Lines
-    -- Using line_count (old count minus deletions) as the index to append
-    vim.api.nvim_buf_set_lines(bufnr, line_count, -1, false, lines)
+    -- 4. Append or Replace New Lines
+    if is_empty_start then
+        -- Replace the initial placeholder [""] with the new lines
+        vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines)
+    else
+        -- Append to the end of the buffer
+        vim.api.nvim_buf_set_lines(bufnr, line_count, -1, false, lines)
+    end
     vim.bo[bufnr].modifiable = false
 
     -- 5. Auto-scroll
     if self._auto_scroll then
         local new_line_count = vim.api.nvim_buf_line_count(bufnr)
         for win, _ in pairs(autoscrool_wins) do
-            -- Move cursor to the new last line, keeping column 0
             vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
         end
     end

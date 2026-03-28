@@ -68,7 +68,7 @@ function M.open_centered_window(buf, opts)
 end
 
 ---@param text string
-function M.show_tooltip(text)
+function M.show_hoverwindow(text)
     local lines              = vim.split(text, "\n", { plain = true, trimempty = true })
     -- This mimics what LSP hover does
     local bufnr, winnr       = vim.lsp.util.open_floating_preview(

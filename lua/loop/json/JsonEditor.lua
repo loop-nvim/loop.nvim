@@ -50,7 +50,6 @@ local _json_clipboard = nil
 
 local function _show_help()
     local help_text = {[[
-
 EDITING
 =======
 `i`       Add element under current object or array
@@ -258,7 +257,7 @@ local function _show_node_help(item)
         table.insert(lines, "_No information available_")
     end
 
-    floatwin.show_tooltip(table.concat(lines, '\n'))
+    floatwin.show_hoverwindow(table.concat(lines, '\n'))
 end
 
 ---@param _ any
