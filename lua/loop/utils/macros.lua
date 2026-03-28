@@ -105,6 +105,7 @@ function M.prompt(ctx, prompt, default, completion)
 
     prompt = prompt .. ': '
     vim.schedule(function()
+        vim.cmd("redraw!")
         vim.ui.input({ prompt = prompt, default = default, completion = completion }, function(input)
             coroutine.resume(co, input)
         end)
