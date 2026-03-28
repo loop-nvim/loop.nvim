@@ -120,8 +120,7 @@ require("loop").setup({
 
 ## Commands
 
-Commands be selected using the command selector by typing `:Loop`
-
+> 💡 You can always type `:Loop` to list all available commands (dynamic list depending on workspace, extensions etc...)
 
 | Command | Description |
 |--------|-------------|
@@ -139,6 +138,9 @@ Commands be selected using the command selector by typing `:Loop`
 | `:Loop task terminate_all` | Stop all tasks |
 | `:Loop var list` | List variables |
 | `:Loop var configure` | Edit variables.json |
+| `:Loop sidebar` | Toggle the sidebar |
+| `:Loop sidebar show <preset>` | Show the sidebar (with opional preset argument if many are available) |
+| `:Loop sidebar hide` | Hide the sidebar |
 | `:Loop statuspanel` | Toggle status panel |
 | `:Loop statuspanel show` | Show status panel |
 | `:Loop statuspanel hide` | Hide status panel |
