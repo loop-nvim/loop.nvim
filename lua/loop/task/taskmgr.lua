@@ -13,9 +13,9 @@ local log = require("loop.log")
 ---@return table
 local function _build_taskfile_schema()
     local schema_data = require("loop.task.tasksschema")
+    local base_items = schema_data.base_items
 
-    -- 1. Deep copy the base structures to avoid polluting the cache
-    local base_items = vim.deepcopy(schema_data.base_items)
+    -- 1. Create the new shema based on the  base_schema (deep copy)
     local schema = vim.deepcopy(schema_data.base_schema)
 
     -- Shortcut to the task list items
@@ -48,18 +48,17 @@ local function _build_taskfile_schema()
 
                 -- 4. Setup 'then' schema metadata
                 then_schema.description = ("Definition of a `%s` task"):format(task_type)
+                then_schema.type = "object"
                 then_schema.additionalProperties = false
 
                 -- 5. Merge Properties: Base items take precedence for core fields
-                then_schema.properties = vim.tbl_extend("force", then_schema.properties or {}, base_items.properties)
+                then_schema.properties = vim.tbl_extend("force",  then_schema.properties or {}, vim.deepcopy(base_items.properties))
 
                 -- Fix the 'type' to the specific constant for this branch
-                then_schema.properties.type = vim.tbl_extend("force", {}, base_items.properties.type, {
-                    const = task_type,
-                })
+                then_schema.properties.type.const = task_type
 
                 -- 6. Safe Required Merge
-                local combined_required = vim.deepcopy(base_items.required or {})
+                local combined_required = vim.deepcopy(base_items.required)
                 for _, req in ipairs(then_schema.required or {}) do
                     if not vim.tbl_contains(combined_required, req) then
                         table.insert(combined_required, req)

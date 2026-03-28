@@ -49,7 +49,7 @@ local _buf_filetype = "loop-jsoneditor"
 local _json_clipboard = nil
 
 local function _show_help()
-    local help_text = {[[
+    local help_text = { [[
 EDITING
 =======
 `i`       Add element under current object or array
@@ -85,7 +85,7 @@ OTHER
 `K`       Show element help (hover window)
 `ge`      Show validation errors
 `g?`      Show this help]]
-}
+    }
 
     floatwin.show_floatwin(table.concat(help_text, "\n"), { title = "JSON Editor help", is_markdown = true })
 end
@@ -313,6 +313,10 @@ local function _formatter(_, data, expanded)
         if #virt_chunks > 0 then table.insert(virt_chunks, { " ", nil }) end -- spacing
         table.insert(virt_chunks, { "● " .. err_msg, "DiagnosticError" })
     end
+    --if not data.schema then
+    --    if #virt_chunks > 0 then table.insert(virt_chunks, { " ", nil }) end -- spacing
+    --    table.insert(virt_chunks, { "● Invalid value or attribute", "DiagnosticWarn" })
+    --end
 
     return text_chunks, virt_chunks
 end
