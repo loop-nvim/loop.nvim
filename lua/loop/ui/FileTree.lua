@@ -95,27 +95,29 @@ local function _show_help()
     local help_text = { [[
 NAVIGATION
 ==========
-`ENTER`   Open file / Toggle directory
-`R`       Refresh tree
+`<CR>`    Open file / Toggle directory
 
-CREATION (FILE)
-===============
-`a`       Create in parent directory
-`i`       Create inside selected directory
-
-CREATION (DIRECTORY)
-====================
-`A`       Create in parent directory
-`I`       Create inside selected directory
+FOLDING
+=======
+`za`      Toggle expand/collapse
+`zc`      Collapse
+`zo`      Expand
+`zC`      Collapse (recursive)
+`zO`      Expand (recursive)
 
 MANAGEMENT
 ==========
+`a`       Create file in parent directory
+`i`       Create file inside selected directory
+`A`       Create directory in parent directory
+`I`       Create directory inside selected directory
 `r`       Rename file or directory
 `d!`      **Permanently** delete file or empty directory
-`D!`      **Permanently** delete directory and **all** its contents (recursive)
+`D!`      **Permanently** delete directory and **all** its contents
 
 OTHER
 =====
+`R`       Refresh tree
 `g?`      Show this help]]
     }
 

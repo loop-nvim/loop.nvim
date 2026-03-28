@@ -50,30 +50,36 @@ local _json_clipboard = nil
 
 local function _show_help()
     local help_text = {[[
-NAVIGATION
-==========
-`ENTER`   Toggle expand/collapse
-`u`       Undo last change
-`C-r`     Redo last change
 
 EDITING
 =======
-`i`       Add element inside (to object or array)
+`i`       Add element under current object or array
 `a`       Add element after
 `A`       Add element before
 `c`       Change value
 `C`       Change multiline string
 `r`       Rename key
-`d`       Delete element
+`d`       Delete node
+`u`       Undo last change
+`<C-r>`   Redo last change
 
-CLIPBOARD & MOVEMENT
-====================
-`gy`      Yank (copy) node
-`gp`      Paste node after current
-`gP`      Paste node before current
-`gi`      Paste node under current (append)
-`o`       Move array item down
-`O`       Move array item up
+FOLDING
+=======
+`<CR>`    Toggle expand/collapse
+`za`      Toggle expand/collapse
+`zc`      Collapse
+`zo`      Expand
+`zC`      Collapse (recursive)
+`zO`      Expand (recursive)
+
+CLIPBOARD & REORDERING
+======================
+`gy`     Yank node
+`gp`     Paste node after current
+`gP`     Paste node before current
+`gi`     Paste node under current object or array
+`>`      Move array item forward
+`<`      Move array item backward
 
 OTHER
 =====
@@ -433,13 +439,12 @@ function JsonEditor:_setup()
         desc = "Paste node inside (append)",
         callback = function() with_current_item(function(i) self:_paste(i, "under") end) end,
     })
-    self._tree:add_keymap("o", {
-        desc = "Move item down",
+    self._tree:add_keymap(">", {
+        desc = "Move item forward",
         callback = function() with_current_item(function(i) self:_move_item(i, "down") end) end,
     })
-
-    self._tree:add_keymap("O", {
-        desc = "Move item up",
+    self._tree:add_keymap("<", {
+        desc = "Move item backward",
         callback = function() with_current_item(function(i) self:_move_item(i, "up") end) end,
     })
     self._tree:add_keymap("K", {
