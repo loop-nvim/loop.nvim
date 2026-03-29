@@ -234,6 +234,59 @@ local function _apply_ratios()
     end
 end
 
+---@return boolean
+local function _is_layout_valid()
+    local windows = _get_managed_windows()
+    local num_managed = #windows
+    if num_managed <= 0 then return false end
+    -- 1. Initial State: Get stats from the first managed window
+    -- We need the column (must be 0) and the width (all others must match)
+    local _, sidebar_col = unpack(vim.api.nvim_win_get_position(windows[1]))
+    local sidebar_width = vim.api.nvim_win_get_width(windows[1])
+    -- REQUIREMENT: Must be anchored at the far left
+    if sidebar_col ~= 0 then return false end
+    -- 2. Iterate through ALL windows in the tabpage
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        local is_managed = _is_managed_window(win)
+        local _, win_col = unpack(vim.api.nvim_win_get_position(win))
+        local win_width = vim.api.nvim_win_get_width(win)
+        if is_managed then
+            -- LOGIC: Managed windows MUST be at col 0 AND match the target width
+            if win_col ~= 0 or win_width ~= sidebar_width then
+                return false
+            end
+        else
+            -- LOGIC: External windows MUST NOT be at col 0
+            -- (Prevents other windows from "sneaking" into the sidebar column)
+            if win_col == 0 then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+local function _fix_layout()
+    if _is_layout_valid() then return end
+    local windows = _get_managed_windows()
+    if #windows <= 0 then return end
+    -- 1. Setup the Anchor (Move first window to far left)
+    local anchor_win = windows[1]
+    local width = vim.api.nvim_win_get_width(anchor_win)
+    -- Force the anchor to the FAR LEFT using the layout-breaking command
+    vim.api.nvim_win_call(anchor_win, function()
+        vim.cmd(("vertical resize %d | wincmd H"):format(width))
+    end)
+    -- 2. Move existing windows into the stack
+    local last_win = anchor_win
+    for i = 2, #windows do
+        local win = windows[i]
+        vim.fn.win_splitmove(win, last_win, { vertical = false, rightbelow = true })
+        last_win = win
+    end
+    _apply_ratios()
+end
+
 local function _load_layout(config_dir)
     if not config_dir then return end
     local filepath = vim.fs.joinpath(config_dir, "sidebar.json")
@@ -396,6 +449,13 @@ local function _show(id)
         group = _layout_augroup,
         callback = function()
             _apply_ratios()
+        end,
+    })
+
+    vim.api.nvim_create_autocmd("WinNew", {
+        group = _layout_augroup,
+        callback = function()
+            _fix_layout()
         end,
     })
 
