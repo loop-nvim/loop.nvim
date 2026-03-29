@@ -102,20 +102,32 @@ Workspace config (`workspace.json`), tasks (`tasks.json`), and variables (`varia
 
 ## Configuration
 
+Full configuration options
 ```lua
 require("loop").setup({
-    workspace_data_dir = ".loop", -- workspace data directory
-    state_autosave_interval = 5,   -- minutes (0 to disable)
-    statuspanel = {
-        symbols = {
-            change  = "●",
-            success = "✓",
-            failure = "✗",
-            waiting = "⧗",
-            running = "▶",
+        workspace_data_dir = ".loop", -- change if you are already using .loop/ folders for something else
+        files = {
+            always_excluded_globs = { ".git/", "node_modules/", ".cache/" },
+            include_data_dir = false,
         },
-    },
-})
+        statuspanel = {
+            symbols = {
+                change  = "●",
+                success = "✓",
+                failure = "✗",
+                waiting = "⧗",
+                running = "▶",
+            },
+        },
+        filetree = {
+            track_current_file = { -- auto reaveal current file in the tree 
+                enabled = true,
+                auto_collapse_others = false,
+            },
+            monitor_file_system = true, -- track file system changes
+        },
+        logs_count = 50, -- Number of recent logs to show in `:Loop log`
+    })
 ```
 
 ## Commands
