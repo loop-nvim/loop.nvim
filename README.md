@@ -217,6 +217,8 @@ Then it can by used in tasks definitions, for example `${add:1,2}` will be repla
 
 ## Statusline
 
+If you you use lualine, you can show the current workspace name in one of the sections.
+Example
 ```lua
 -- lualine
 lualine_c = { function() return require("loop.statusline").status() end, "filename" }
