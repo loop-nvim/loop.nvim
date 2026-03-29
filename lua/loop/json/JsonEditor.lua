@@ -279,7 +279,7 @@ local function _formatter(_, data, expanded)
     if expanded == false and vt == "object" then
         if type(data.summary) == "string" then
             table.insert(text_chunks, { " ", nil }) -- spacing
-            table.insert(text_chunks, { data.summary, "Comment" })
+            table.insert(text_chunks, { data.summary, "Special" })
         end
     end
 
