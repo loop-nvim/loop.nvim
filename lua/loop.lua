@@ -35,7 +35,6 @@ local M = {}
 ---@field debug boolean Enable debug/verbose mode for development
 ---@field state_autosave_interval integer Auto-save interval in minutes (default: 5)
 ---@field logs_count integer Number of recent logs to show (default: 50)
----@field use_fd_find boolean
 
 -- IMPORTANT: keep this module light for lazy loading
 
@@ -62,12 +61,11 @@ local function _get_default_config()
                 auto_collapse_others = false,
             },
             monitor_file_system = true,
-            max_monitored_folders = 200,
+            max_monitored_folders = 100,
         },
         debug = false,
         state_autosave_interval = 5, -- 5 minutes
         logs_count = 50,             -- Number of recent logs to show
-        use_fd_find = false,
     }
 end
 
