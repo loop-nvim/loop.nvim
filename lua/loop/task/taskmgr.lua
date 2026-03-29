@@ -47,12 +47,14 @@ local function _build_taskfile_schema()
                 end
 
                 -- 4. Setup 'then' schema metadata
+                then_schema["x-summaryBuilder"] = base_items["x-summaryBuilder"]
                 then_schema.description = ("Definition of a `%s` task"):format(task_type)
                 then_schema.type = "object"
                 then_schema.additionalProperties = false
 
                 -- 5. Merge Properties: Base items take precedence for core fields
-                then_schema.properties = vim.tbl_extend("force",  then_schema.properties or {}, vim.deepcopy(base_items.properties))
+                then_schema.properties = vim.tbl_extend("force", then_schema.properties or {},
+                vim.deepcopy(base_items.properties))
 
                 -- Fix the 'type' to the specific constant for this branch
                 then_schema.properties.type.const = task_type

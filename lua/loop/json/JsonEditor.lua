@@ -580,17 +580,21 @@ function JsonEditor:_upsert_tree_items(tbl, path, parent_id, parent_schema, erro
         end
     end
 
+    for _, item in ipairs(items) do
+        local data = item.data
+        local summary_builder = data.schema and data.schema["x-summaryBuilder"]
+        if summary_builder then
+            data.summary = _call_lua_function(summary_builder, data.value)
+            assert(not data.summary or type(data.summary) == "string")
+        end
+    end
+
     self._tree:set_children(parent_id, items)
 
     for _, item in ipairs(items) do
         if type(item.data.value) == "table" then
             local data = item.data
             self:_upsert_tree_items(data.value, data.path, item.id, data.schema, errors)
-            local summary_builder = data.schema and data.schema["x-summaryBuilder"]
-            if summary_builder then
-                data.summary = _call_lua_function(summary_builder, data.value)
-                assert(not data.summary or type(data.summary) == "string")
-            end
         end
     end
 end
