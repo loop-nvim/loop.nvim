@@ -452,13 +452,6 @@ local function _show(id)
         end,
     })
 
-    vim.api.nvim_create_autocmd("WinNew", {
-        group = _layout_augroup,
-        callback = function()
-            _fix_layout()
-        end,
-    })
-
     vim.api.nvim_create_autocmd("QuitPre", {
         group = _layout_augroup,
         callback = function()
@@ -610,6 +603,14 @@ end
 ---@param config_dir string
 function M.on_workspace_save(config_dir)
     _save_layout(config_dir)
+end
+
+function M.save_layout()
+    _save_current_layout_to_state()
+end
+
+function M.fix_layout()
+    _fix_layout()
 end
 
 return M
