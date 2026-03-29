@@ -102,7 +102,7 @@ Workspace config (`workspace.json`), tasks (`tasks.json`), and variables (`varia
 
 ## Configuration
 
-Full configuration options
+Configuration defaults
 ```lua
 require("loop").setup({
         workspace_data_dir = ".loop", -- change if you are already using .loop/ folders for something else
