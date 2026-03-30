@@ -425,8 +425,8 @@ function M.hide_window()
     assert(_init_done, _init_err_msg)
     if _loop_win and vim.api.nvim_win_is_valid(_loop_win) then
         _store_window_height()
-        vim.api.nvim_win_close(_loop_win, false)
-        _loop_win = -1
+        local closed = pcall(vim.api.nvim_win_close, _loop_win, false)
+        if closed then _loop_win = -1 end
     end
 end
 
