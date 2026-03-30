@@ -335,7 +335,7 @@ local function _hide()
     -- destroy_buffers()
     for _, win in ipairs(wins) do
         if vim.api.nvim_win_is_valid(win) then
-            -- avoid error when closing last window on vim exit
+            -- avoid error when closing last window
             pcall(vim.api.nvim_win_close, win)
         end
     end
